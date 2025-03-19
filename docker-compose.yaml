@@ -1,0 +1,15 @@
+services:
+  ##############################
+  ##   THIRD PARTY SERVICES   ##
+  ##############################
+  postgres:
+    container_name: estate_code_postgres
+    image: postgres:15-alpine
+    ports:
+      - '5445:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    restart: always
+    volumes:
+      - ./local-configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
