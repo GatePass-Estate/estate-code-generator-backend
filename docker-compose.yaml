@@ -26,6 +26,7 @@ services:
       - postgres
     environment:
       DB_HOST: estate_code_postgres
+      DB_PORT: 5432
     build:
       context: .
       dockerfile: services/db-service/Dockerfile

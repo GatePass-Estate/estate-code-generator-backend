@@ -22,7 +22,7 @@ logs:
 
 clean-db:
 	docker compose down estate_code_postgres
-	docker volume rm postgres_data
+	docker volume rm estate_code_postgres_data
 	docker compose up -d estate_code_postgres
 	$(MAKE) run_migrations
 

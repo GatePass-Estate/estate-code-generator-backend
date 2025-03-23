@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "estate_code_db")
-    DB_PORT: str = os.getenv("DB_PORT", "5432")
+    DB_PORT: str = os.getenv("DB_PORT", "5445")
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_CONFIG: str = os.getenv(
         "DB_CONFIG",
