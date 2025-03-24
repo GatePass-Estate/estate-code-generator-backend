@@ -1,64 +1,116 @@
 import logging
 
-from sqlalchemy import Column, DateTime, Enum, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import BaseModelDB
-from app.schemas.code_service.visitor_log import Relation
+from app.repositories.code_service.visitor_log import (
+    VisitorLogRepository as Repository,
+)
+from app.schemas.code_service.visitor_log import (
+    CreateRequest,
+    CreateResponse,
+    DeleteResponse,
+    GetResponse,
+    ListResponse,
+    SearchRequest,
+    UpdateRequest,
+    UpdateResponse,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class VisitorLog(BaseModelDB):
+class VisitorLogService:
     """
-    SQLAlchemy model for workflow steps table in the database.
+    Service class for workflows.workflows table.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
-        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
-        user_id (UUID): Reference to the visited resident.
-        visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
-            friend, delivery, taxi, technician
-        hashed_code (str): Visitor's generated access code.
-        security_id (UUID): Security personnel who validated the visit
-        visit_time (DateTime): Timestamp of visitor validation
+        repository: Repository logic for the table.
     """
 
-    __tablename__ = "visitorlog"
-    __table_args__ = {"schema": "core"}
+    def __init__(self, db_session: AsyncSession) -> None:
+        self.repository = Repository(db_session)
 
-    user_id = Column(
-        UUID(as_uuid=True),
-        nullable=False,
-    )
-    visitor_fullname = Column(
-        type_=String,
-        nullable=False,
-    )
-    relationship_with_resident = Column(
-        type_=Enum(
-            Relation,
-            name="agent_type",
-            schema="workflows",
-            create_type=False,
-        ),
-        nullable=False,
-        doc="Category of the step",
-    )
-    hashed_code = Column(
-        type_=String,
-        nullable=False,
-    )
-    security_id = Column(
-        UUID(as_uuid=True),
-        nullable=False,
-    )
-    visit_time = Column(
-        type_=DateTime(timezone=True),
-        nullable=False,
-        server_default=func.timezone("UTC", func.now()),
-        doc="UTC Timestamp of visit validation",
-    )
+    async def create(self, request: CreateRequest) -> CreateResponse:
+        """
+        Create a new item in the table.
+
+        Arguments:
+            request: The request body for creating a new item in the table.
+
+        Returns:
+            The CreateResponse object after creating the item in the table.
+        """
+        return await self.repository.create(request=request)
+
+    async def delete(self, id: str) -> DeleteResponse:
+        """
+        Soft Deletes an item from the table.
+
+        Arguments:
+            id: The ID of the item to delete.
+        Returns:
+            The DeleteResponse object after deleting the item from the table.
+        """
+        return await self.repository.delete(id=id)
+
+    async def get(self, id: str) -> GetResponse:
+        """
+        Get an item by ID.
+
+        Arguments:
+            id: The ID of the item to retrieve.
+
+        Returns:
+            A GetResponse object after retrieving the item by id.
+        """
+        return await self.repository.get(id=id)
+
+    async def update(self, id: str, request: UpdateRequest) -> UpdateResponse:
+        """
+        Update an existing item with matching id.
+
+        Arguments:
+            id: The ID of the item to update.
+            request: The request body for updating a item matching the id.
+
+        Returns:
+            An UpdateResponse object after updating the item in the table.
+
+        Raises:
+            NotFoundError: If the item with the provided ID is not found.
+            DatabaseError: If there's an error during the database operation.
+        """
+        return await self.repository.update(id=id, request=request)
+
+    async def list(self, page: int = 1, limit: int = 20) -> ListResponse:
+        """
+        List all items from the database that are not archived.
+        The list is sorted by the created_at field in descending order.
+
+        Arguments:
+            page: The page number to retrieve.
+            limit: The max number of items per page.
+
+        Returns:
+            A ListResponse object containing the list of items which are not
+            archived.
+        """
+        return await self.repository.list(page=page, limit=limit)
+
+    async def search(
+        self, request: SearchRequest, page: int = 1, limit: int = 20
+    ) -> ListResponse:
+        """
+        Filters items based on the provided search criteria and returns
+        a list of them meeting the criteria.
+
+        Arguments:
+            request: The request body for searching items.
+
+        Returns:
+            A ListResponse object containing all the items found from the table
+            which match the requested criteria.
+        """
+        return await self.repository.search(
+            request=request, page=page, limit=limit
+        )

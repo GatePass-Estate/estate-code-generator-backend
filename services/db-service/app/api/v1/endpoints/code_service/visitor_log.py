@@ -1,64 +1,293 @@
+import datetime
 import logging
 
-from sqlalchemy import Column, DateTime, Enum, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import UUID4
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import BaseModelDB
-from app.schemas.code_service.visitor_log import Relation
+from app.core.exceptions import NotFoundError
+from app.db.session import get_db_session
+from app.schemas.code_service.visitor_log import (
+    CreateRequest,
+    CreateResponse,
+    DeleteResponse,
+    GetResponse,
+    ListResponse,
+    SearchRequest,
+    UpdateRequest,
+    UpdateResponse,
+)
+from app.services.code_service.visitor_log import VisitorLogService as Service
 
 logger = logging.getLogger(__name__)
 
 
-class VisitorLog(BaseModelDB):
+router = APIRouter()
+
+
+def get_service(
+    db_session: AsyncSession = Depends(get_db_session),
+) -> Service:
     """
-    SQLAlchemy model for workflow steps table in the database.
+    Get an instance of Service.
 
-    Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
-        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
-        user_id (UUID): Reference to the visited resident.
-        visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
-            friend, delivery, taxi, technician
-        hashed_code (str): Visitor's generated access code.
-        security_id (UUID): Security personnel who validated the visit
-        visit_time (DateTime): Timestamp of visitor validation
+    Returns:
+        Service: Instance of Service
     """
+    return Service(db_session=db_session)
 
-    __tablename__ = "visitorlog"
-    __table_args__ = {"schema": "core"}
 
-    user_id = Column(
-        UUID(as_uuid=True),
-        nullable=False,
-    )
-    visitor_fullname = Column(
-        type_=String,
-        nullable=False,
-    )
-    relationship_with_resident = Column(
-        type_=Enum(
-            Relation,
-            name="agent_type",
-            schema="workflows",
-            create_type=False,
-        ),
-        nullable=False,
-        doc="Category of the step",
-    )
-    hashed_code = Column(
-        type_=String,
-        nullable=False,
-    )
-    security_id = Column(
-        UUID(as_uuid=True),
-        nullable=False,
-    )
-    visit_time = Column(
-        type_=DateTime(timezone=True),
-        nullable=False,
-        server_default=func.timezone("UTC", func.now()),
-        doc="UTC Timestamp of visit validation",
-    )
+@router.post(
+    "",
+    response_model=CreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "item saved successfully"},
+    },
+    description="Create a new item",
+)
+async def create(
+    request: CreateRequest,
+    service: Service = Depends(get_service),
+) -> CreateResponse:
+    """
+    Creates a new record in the database if it doesn't exist, otherwise
+    updates the existing record.
+
+    Arguments:
+        request: The request model to CREATE a new record.
+
+    Returns:
+        The response model to CREATE a new record.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.create(request=request)
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while creating the item"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.patch(
+    "/{id}",
+    response_model=UpdateResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Updated the item"},
+    },
+    description="Update a item by ID",
+)
+async def update(
+    id: UUID4,
+    request: UpdateRequest,
+    service: Service = Depends(get_service),
+) -> UpdateResponse:
+    """
+    Update an existing item in the database.
+
+    Arguments:
+        id: The unique ID of the item to UPDATE.
+        request: The request body for updating an item.
+
+    Returns:
+        An UPDATE response model containing reference to the updated item.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.update(id=id, request=request)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while updating the item"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
+    "/{id}",
+    response_model=DeleteResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Deleted the item"},
+    },
+    description="Delete a item by ID",
+)
+async def delete(
+    id: UUID4,
+    service: Service = Depends(get_service),
+) -> DeleteResponse:
+    """
+    Deletes a record from the database.
+
+    Arguments:
+        id: The unique ID of the item to DELETE.
+
+    Returns:
+        A DELETE response model containing reference to the deleted item.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.delete(id=id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while deleting the item"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/search",
+    response_model=ListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "Retrieved the search results"},
+    },
+    description="Search for items",
+)
+async def search(
+    user_id: UUID4 | None = None,
+    visitor_fullname: str | None = None,
+    relationship_with_resident: str | None = None,
+    hashed_code: str | None = None,
+    security_id: UUID4 | None = None,
+    visit_time: datetime.date | None = None,
+    from_date: datetime.date | None = None,
+    to_date: datetime.date | None = None,
+    page: int = 1,
+    limit: int = 10,
+    service: Service = Depends(get_service),
+) -> ListResponse:
+    """
+    Searches for items constrained to the criteria given.
+    It searches for all the items matching the criteria given and are not
+    archived. The list is sorted by the created_at field in descending.
+
+    Arguments:
+        access: Access level of the item.
+        status: Availability status of the item.
+        from_date: The creation date (from).
+        to_date: The creation date (to).
+        page: The number of pages of results.
+        limit: The number of items per page.
+        org_id: The organization ID.
+        name: The name of the workflow template.
+        version: The version of the workflow template.
+        state: The progress state of the workflow.
+
+    Returns:
+        A chronologically sorted LIST model containing a list of items.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        request = SearchRequest(**vars())
+        return await service.search(request=request, page=page, limit=limit)
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while searching for matches"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/{id}",
+    response_model=GetResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Retrieved the item"},
+    },
+    description="Get an item by ID",
+)
+async def get(
+    id: UUID4,
+    service: Service = Depends(get_service),
+) -> GetResponse:
+    """
+    Get an item by its unique ID from the database.
+
+    Arguments:
+        id: The unique ID of the item to retrieve.
+
+    Returns:
+        A GET response model containing reference to the retrieved item.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.get(id=id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception("An unexpected error happened while getting the item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "",
+    response_model=ListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "Retrieved a list of items"},
+    },
+    description="Retrievs a list of items",
+)
+async def list_all(
+    page: int | None = 1,
+    limit: int | None = 20,
+    service: Service = Depends(get_service),
+) -> ListResponse:
+    """
+    lists all the items that are not archived. The list is sorted by the
+    created_at field in descending.
+
+    Arguments:
+        page: The page number to retrieve.
+        limit: The number of items per page.
+
+    Returns:
+        A chronologically sorted LIST model containing a list of items.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.list(page=page, limit=limit)
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while listing the encounters"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
