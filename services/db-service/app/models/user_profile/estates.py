@@ -26,4 +26,6 @@ class Estates(BaseModelDB):
 
     name = Column(String, nullable=False)
     location = Column(Text, nullable=False)
-    primary_admin_id = Column(UUID(as_uuid=True), ForeignKey("core.users.id"))
+    primary_admin_id = Column(
+        UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
+    )

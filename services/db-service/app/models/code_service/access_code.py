@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, String, func
+from sqlalchemy import Column, DateTime, String, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -24,10 +24,12 @@ class AccessCode(BaseModelDB):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
         nullable=False,
     )
     estate_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("core.estates.id"),
         nullable=False,
     )
     hashed_code = Column(
