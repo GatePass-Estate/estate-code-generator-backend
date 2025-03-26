@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, DateTime, Enum, String, func
+from sqlalchemy import Column, DateTime, Enum, String, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -32,6 +32,7 @@ class VisitorLog(BaseModelDB):
 
     user_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
         nullable=False,
     )
     visitor_fullname = Column(
@@ -54,6 +55,7 @@ class VisitorLog(BaseModelDB):
     )
     security_id = Column(
         UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
         nullable=False,
     )
     visit_time = Column(

@@ -1,4 +1,22 @@
+# Code Service Models
 from app.models.code_service.access_code import AccessCode
 from app.models.code_service.visitor_log import VisitorLog
 
-__all__ = ["AccessCode", "VisitorLog"]
+# User Profile Service Models
+from app.models.user_profile.users import Users
+from app.models.user_profile.estates import Estates
+from app.models.user_profile.role_permission import RolePermission
+from app.models.user_profile.admin_management import AdminManagement
+from app.models.user_profile.household import Household
+from app.models.user_profile.resident_departure_log import ResidentDepartureLog
+
+__all__ = [
+    "AccessCode",
+    "VisitorLog",
+    "Users",
+    "Estates",
+    "RolePermission",
+    "AdminManagement",
+    "Household",
+    "ResidentDepartureLog",
+]
