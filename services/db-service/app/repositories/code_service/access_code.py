@@ -16,11 +16,9 @@ from app.schemas.code_service.access_code import (
     GetResponse,
     ListResponse,
     SearchRequest,
-    Status,
     UpdateRequest,
     UpdateResponse,
 )
-from app.schemas.code_service.base import Access
 
 logger = logging.getLogger(__name__)
 
@@ -215,76 +213,19 @@ class AccessCodeRepository:
             DatabaseError: If there's an error during the database operation.
         """
         try:
-            # Extract steps from the request before converting to dict
-            steps = request.steps.copy() if request.steps else []
-
-            request_dict = request.model_dump(
-                exclude_unset=True, exclude_none=True, exclude={"steps"}
-            )
-            # Filter out string 'None' values
-            request_dict = {
-                k: v for k, v in request_dict.items() if v != "None"
-            }
-
-            # Create the workflow record in the database
-            workflow_record = await self._setitem(
+            # Create the record in the database
+            record = await self._setitem(
                 session=self.session,
                 request=TableModel(
-                    **request_dict
+                    **request.model_dump(exclude_unset=True)
                 ),  # convert the request to a database model instance.
             )
-
-            for step in steps:
-                # Extract resource and instruction from step
-                resource_data = step.resource
-                instruction_data = step.instruction
-
-                # Create resource if provided
-                if resource_data:
-                    # Create a dictionary with the resource data
-                    resource_dict = {
-                        "type": resource_data.get("type"),
-                        "name": resource_data.get("name"),
-                        "content": resource_data.get("content"),
-                        "access": Access.PUBLIC,
-                        "status": Status.AVAILABLE,
-                    }
-                    # Filter out None values
-                    resource_dict = {
-                        k: v for k, v in resource_dict.items() if v is not None
-                    }
-                    # add resource id to step data
-
-                # Create instruction if provided
-                if instruction_data:
-                    # Create a dictionary with the instruction data
-                    instruction_dict = {
-                        "content": instruction_data.get("content"),
-                        "context": instruction_data.get("context"),
-                        "system_prompt": instruction_data.get("system_prompt"),
-                        "model": instruction_data.get("model"),
-                        "output": instruction_data.get("output"),
-                        "access": Access.PUBLIC,
-                        "status": Status.AVAILABLE,
-                    }
-                    # Filter out None values
-                    instruction_dict = {
-                        k: v
-                        for k, v in instruction_dict.items()
-                        if v is not None
-                    }
-                    # add instruction id to step data
-
-            # Convert the record to a CREATE schema model.
-            created_record = CreateResponse.model_validate(workflow_record)
-            # Return the created record.
+            # convert the record to a CREATE schema model.
+            created_record = CreateResponse.model_validate(record.__dict__)
+            # return the created record.
             return created_record
         except DatabaseError as e:
-            message = "Database error in creating the workflow record"
-            logger.exception(message)
-            raise DatabaseError(message) from e
-        except Exception as e:
-            message = f"Unexpected error in creating the workflow: {str(e)}"
+            message = "Database error in creating the prompt template"
             logger.exception(message)
             raise DatabaseError(message) from e
 
@@ -304,11 +245,8 @@ class AccessCodeRepository:
         try:
             # Get the record from the database, then delete it.
             record = await self._getitem(session=self.session, id=id)
-            # Mark the record as deleted and set timestamps.
             record.is_deleted = True
-            record.archived_at = datetime.now(tz=timezone.utc)
             record.deleted_at = datetime.now(tz=timezone.utc)
-            record.status = Status.DELETED
             # Commit the changes to the database.
             await self.session.flush()
             # return the DELETE response.
@@ -404,8 +342,9 @@ class AccessCodeRepository:
         """
         # Create a query to get all records from the database.
         query = select(TableModel).where(
-            (TableModel.is_deleted == False)  # noqa E712
-            & (TableModel.access == "PUBLIC")
+            (
+                TableModel.is_deleted == False  # noqa E712
+            )
         )
         # Order the records by the created_at timestamp in descending order.
         order_by = (TableModel.created_at.desc(),)

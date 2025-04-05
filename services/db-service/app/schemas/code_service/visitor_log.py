@@ -57,6 +57,11 @@ class VisitorLogBase(BaseModel):
     user_id: UUID4 = Field(
         ..., description="Reference to the visited resident"
     )
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
     visitor_fullname: str = Field(..., description="Full name of the visitor")
     relationship_with_resident: Relation = Field(
         ...,
@@ -69,6 +74,11 @@ class VisitorLogBase(BaseModel):
         ...,
         description="Security personnel who validated the visit",
     )
+
+    @field_serializer("security_id")
+    def serialize_security_id(self, value: UUID4) -> str:
+        return str(value)
+
     visit_time: datetime = Field(
         ..., description="Timestamp of visitor validation"
     )
@@ -155,6 +165,9 @@ class DeleteResponse(BaseModel):
         deleted_at: UTC Time when the item was deleted.
     """
 
+    is_deleted: bool = Field(
+        default=True, description="Flag to indicate if the record is deleted"
+    )
     deleted_at: datetime = Field(..., description="UTC timestamp of deletion")
     model_config = model_config
 
@@ -195,14 +208,17 @@ class SearchRequest(BaseSearchRequest):
         visit_time (DateTime): Timestamp of visitor validation
     """
 
-    visitor_fullname: str = Field(..., description="Name of the workflow")
+    visitor_fullname: str | None = Field(
+        default=None, description="Name of the workflow"
+    )
     relationship_with_resident: str | None = Field(
         default=None, description="Description of the workflow"
     )
-    hashed_code: str = Field(
-        ..., description="Version of the workflow in the format 'vX.Y.Z'"
+    hashed_code: str | None = Field(
+        default=None,
+        description="Version of the workflow in the format 'vX.Y.Z'",
     )
-    security_id: str | None = Field(
+    security_id: UUID4 | None = Field(
         default=None,
         description="Unique URL to access and share the results of a "
         "workflow execution",

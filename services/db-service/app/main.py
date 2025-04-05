@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
+from app.api.v1 import api_router
 from app.core.config import settings
 
 logger = logging.getLogger("db-service")
@@ -70,3 +71,6 @@ app.openapi = custom_openapi
 @app.get("/healthz", status_code=200)
 async def healthz():
     return JSONResponse(content={"status": "ok"})
+
+
+app.include_router(api_router, prefix="/api/v1")

@@ -40,7 +40,17 @@ class AccessCodeBase(BaseModel):
     user_id: UUID4 = Field(
         ..., description="Reference to the visited resident"
     )
-    estate_id: str = Field(..., description="Full name of the visitor")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 = Field(..., description="Full name of the visitor")
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
     )
@@ -126,6 +136,9 @@ class DeleteResponse(BaseModel):
         deleted_at: UTC Time when the item was deleted.
     """
 
+    is_deleted: bool = Field(
+        default=True, description="Flag to indicate if the record is deleted"
+    )
     deleted_at: datetime = Field(..., description="UTC timestamp of deletion")
     model_config = model_config
 
@@ -163,12 +176,15 @@ class SearchRequest(BaseSearchRequest):
         valid_until (DateTime): Expiration timestamp for the access code.
     """
 
-    user_id: str = Field(..., description="Name of the workflow")
-    estate_id: str | None = Field(
-        default=None, description="Description of the workflow"
+    user_id: UUID4 | None = Field(
+        default=None, description="Reference to the visited resident"
     )
-    hashed_code: str = Field(
-        ..., description="Version of the workflow in the format 'vX.Y.Z'"
+    estate_id: UUID4 | None = Field(
+        default=None, description="Full name of the visitor"
+    )
+    hashed_code: str | None = Field(
+        default=None,
+        description="Version of the workflow in the format 'vX.Y.Z'",
     )
     valid_until: datetime | None = Field(
         default=None, description="Time when the workflow was deployed"

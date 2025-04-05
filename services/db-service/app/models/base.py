@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from sqlalchemy import Column, DateTime, func
+from sqlalchemy import Boolean, Column, DateTime, func, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.session import Base
@@ -49,6 +49,12 @@ class BaseModelDB(Base):
         nullable=True,
         default=None,
         doc="UTC Timetamp when the record was (soft) deleted",
+    )
+    is_deleted = Column(
+        type_=Boolean,
+        nullable=True,
+        server_default=text("false"),
+        doc="is deleted",
     )
 
     def __repr__(self):

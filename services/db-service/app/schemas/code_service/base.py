@@ -34,6 +34,9 @@ class SharedModel(BaseModel):
 
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last updated timestamp")
+    is_deleted: bool | None = Field(
+        default=False, description="Flag to indicate if the record is deleted"
+    )
     model_config = model_config
 
 

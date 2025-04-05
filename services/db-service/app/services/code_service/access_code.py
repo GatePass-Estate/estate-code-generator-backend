@@ -3,7 +3,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.code_service.access_code import (
-    AccessCode as Repository,
+    AccessCodeRepository as Repository,
 )
 from app.schemas.code_service.access_code import (
     CreateRequest,

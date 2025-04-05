@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, DateTime, Enum, String, ForeignKey, func
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -42,8 +42,8 @@ class VisitorLog(BaseModelDB):
     relationship_with_resident = Column(
         type_=Enum(
             Relation,
-            name="agent_type",
-            schema="workflows",
+            name="relation",
+            schema="core",
             create_type=False,
         ),
         nullable=False,
