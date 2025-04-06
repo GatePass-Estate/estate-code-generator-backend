@@ -1,7 +1,8 @@
 services:
-  ##############################
-  ##   THIRD PARTY SERVICES   ##
-  ##############################
+  ############################
+  ##  THIRD PARTY SERVICES  ##
+  ############################
+
   postgres:
     container_name: estate_code_postgres
     image: postgres:15-alpine
@@ -12,4 +13,39 @@ services:
       POSTGRES_PASSWORD: postgres
     restart: always
     volumes:
+      - estate_code_postgres_data:/var/lib/postgresql/data
       - ./local-configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # redis:
+  #   container_name: redis
+  #   image: redis:7.4-alpine
+  #   ports:
+  #     - '7380:7379'
+  #   restart: always
+
+  #####################################
+  ## ESTATE CODE APP NATIVE SERVICES ##
+  #####################################
+
+  db-service:
+    container_name: db-service
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: estate_code_postgres
+      DB_PORT: 5432
+    build:
+      context: .
+      dockerfile: services/db-service/Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9032", "--reload"]
+    volumes:
+      - ./services/db-service/app:/src/service/app
+      - ./services/db-service/alembic:/src/service/alembic
+    env_file:
+      - ./services/db-service/.env.localdocker
+    ports:
+      - '9032:9032'
+
+volumes:
+  estate_code_postgres_data:
+    name: estate_code_postgres_data
