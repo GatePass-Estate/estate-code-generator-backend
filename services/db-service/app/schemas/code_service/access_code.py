@@ -27,10 +27,6 @@ class AccessCodeBase(BaseModel):
     Model for Composer Workflows table.
 
     Attributes:
-        id (UUID): Unique identifier for the access code.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
-        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
         user_id (UUID): Reference to the resident generating code.
         estate_id (UUID): Reference to the estate.
         hashed_code (str): Securely stored hash of access code.
@@ -66,10 +62,6 @@ class CreateRequest(AccessCodeBase):
     Base request model to CREATE a record.
 
     Attributes:
-        id (UUID): Unique identifier for the access code.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
-        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
         user_id (UUID): Reference to the resident generating code.
         estate_id (UUID): Reference to the estate.
         hashed_code (str): Securely stored hash of access code.

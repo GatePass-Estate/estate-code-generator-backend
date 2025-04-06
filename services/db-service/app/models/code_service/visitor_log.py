@@ -18,6 +18,8 @@ class VisitorLog(BaseModelDB):
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,

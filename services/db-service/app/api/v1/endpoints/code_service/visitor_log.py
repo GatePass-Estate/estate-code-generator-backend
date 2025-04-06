@@ -186,16 +186,17 @@ async def search(
     archived. The list is sorted by the created_at field in descending.
 
     Arguments:
-        access: Access level of the item.
-        status: Availability status of the item.
         from_date: The creation date (from).
         to_date: The creation date (to).
         page: The number of pages of results.
         limit: The number of items per page.
-        org_id: The organization ID.
-        name: The name of the workflow template.
-        version: The version of the workflow template.
-        state: The progress state of the workflow.
+        user_id: Reference to the visited resident.
+        visitor_fullname: Full name of the visitor.
+        relationship_with_resident: Relation: family, spouse,
+            friend, delivery, taxi, technician.
+        hashed_code: Visitor's generated access code.
+        security_id: Security personnel who validated the visit.
+        visit_time: Timestamp of visitor validation
 
     Returns:
         A chronologically sorted LIST model containing a list of items.

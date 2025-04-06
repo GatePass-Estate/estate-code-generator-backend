@@ -24,6 +24,8 @@ class SharedModel(BaseModel):
         id: Unique identifier of the record
         created_at: Creation timestamp
         updated_at: Last updated timestamp
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
     """
 
     id: UUID4 = Field(..., description="Unique identifier of the record")

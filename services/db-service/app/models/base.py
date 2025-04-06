@@ -19,6 +19,8 @@ class BaseModelDB(Base):
         created_at (DateTime): Time when the item was created.
         updated_at (DateTime): Time when the item was last updated.
         deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
     """
 
     __abstract__ = True

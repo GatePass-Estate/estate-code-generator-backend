@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, String, ForeignKey, func
+from sqlalchemy import Column, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -13,6 +13,8 @@ class AccessCode(BaseModelDB):
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         user_id (UUID): Reference to the resident generating code.
         estate_id (UUID): Reference to the estate.
         hashed_code (str): Securely stored hash of access code.

@@ -42,9 +42,6 @@ class VisitorLogBase(BaseModel):
     Model for Composer Workflows table.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
@@ -91,9 +88,6 @@ class CreateRequest(VisitorLogBase):
     Base request model to CREATE a record.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
@@ -162,6 +156,8 @@ class DeleteResponse(BaseModel):
     Base response model to DELETE a record by id.
 
     Attributes:
+        is_deleted: Flag to indicate if the item is (soft)
+                deleted.
         deleted_at: UTC Time when the item was deleted.
     """
 
@@ -176,7 +172,8 @@ class GetResponse(SharedModel, VisitorLogBase):
     """
     Base response model to GET a record by id.
 
-    id (UUID): Unique identifier for visitor log entry.
+    Attributes:
+        id (UUID): Unique identifier for visitor log entry.
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
