@@ -41,7 +41,7 @@ def generate_unique_code(
 
 if __name__ == "__main__":
     user_id = "123e4567-e89b-12d3-a456-426614174000"
-    visitor_name = "Ashley"
+    visitor_name = "Michael"
     relationship = "friend"
     date_of_visit = "2025-04-06"
     print(

@@ -1,4 +1,3 @@
-from datetime import datetime
 from enum import Enum
 
 from pydantic import (
@@ -99,9 +98,7 @@ class CreateResponse(BaseModel):
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
     )
-    valid_until: datetime = Field(
-        ..., description="Timestamp of entry code expiry"
-    )
+    valid_until: str = Field(..., description="Timestamp of entry code expiry")
     model_config = model_config
 
 
@@ -122,9 +119,7 @@ class GetResponse(VisitorData):
         visit_time (DateTime): Timestamp of visitor validation
     """
 
-    valid_until: datetime = Field(
-        ..., description="Timestamp of entry code expiry"
-    )
+    valid_until: str = Field(..., description="Timestamp of entry code expiry")
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
     )

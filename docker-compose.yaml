@@ -20,12 +20,30 @@ services:
     container_name: estate_code_redis
     image: redis:7.4-alpine
     ports:
-      - '7380:7379'
+      - '7380:6379'
     restart: always
 
   #####################################
   ## ESTATE CODE APP NATIVE SERVICES ##
   #####################################
+
+  cache-service:
+    container_name: cache-service
+    depends_on:
+      - redis
+    environment:
+      REDIS_HOST: estate_code_redis
+      REDIS_PORT: 6379
+    build:
+      context: .
+      dockerfile: services/cache_service/Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9031", "--reload"]
+    volumes:
+      - ./services/cache_service/app:/src/service/app
+    env_file:
+      - ./services/db-service/.env.localdocker
+    ports:
+      - "9031:9031"
 
   db-service:
     container_name: db-service

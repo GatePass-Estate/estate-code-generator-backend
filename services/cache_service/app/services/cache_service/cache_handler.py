@@ -37,7 +37,7 @@ class CacheHandlerService:
         """
         return await self.repository.create(request=request)
 
-    async def get(self, id: str) -> GetResponse:
+    async def get(self, code: str) -> GetResponse:
         """
         Get an item by ID.
 
@@ -47,4 +47,4 @@ class CacheHandlerService:
         Returns:
             A GetResponse object after retrieving the item by id.
         """
-        return await self.repository.get(id=id)
+        return await self.repository.get(code=code)

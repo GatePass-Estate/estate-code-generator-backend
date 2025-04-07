@@ -1,8 +1,7 @@
 import logging
 
 import redis.asyncio as redis
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from pydantic import UUID4
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.exceptions import NotFoundError
 from app.db.session import get_redis_connection
@@ -17,8 +16,6 @@ from app.services.cache_service.cache_handler import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
-
 router = APIRouter()
 
 
@@ -31,7 +28,7 @@ def get_service(
     Returns:
         Service: Instance of Service
     """
-    return Service(db_session=redis_session)
+    return Service(redis_session=redis_session)
 
 
 @router.post(
@@ -73,7 +70,7 @@ async def create(
 
 
 @router.get(
-    "/{id}",
+    "/{code}",
     response_model=GetResponse,
     status_code=status.HTTP_200_OK,
     responses={
@@ -84,7 +81,7 @@ async def create(
     description="Get an item by ID",
 )
 async def get(
-    id: UUID4,
+    code: str,
     service: Service = Depends(get_service),
 ) -> GetResponse:
     """
@@ -100,7 +97,7 @@ async def get(
         HTTPException: If there is an internal server error
     """
     try:
-        return await service.get(id=id)
+        return await service.get(code=code)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail="Item not found") from e
     except Exception as e:

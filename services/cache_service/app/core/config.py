@@ -20,9 +20,9 @@ class Settings(BaseSettings):
 
     # Environment variables for Redis connection (defaulting to localhost for
     # local testing)
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT = int(os.getenv("REDIS_PORT", "7380"))
-    REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "7380"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_URL: str = os.getenv(
         "REDIS_URL",
         f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",

@@ -1,9 +1,9 @@
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as redis
 from fastapi import HTTPException
-from pydantic import UUID4
 
 from app.core.exceptions import DatabaseError, NotFoundError
 from app.schemas.cache_service.cache_schema import (
@@ -29,11 +29,15 @@ class CacheHandlerRepository:
         """
         self.session: redis.Redis = session
 
+    def _format_datetime(self, dt: datetime) -> str:
+        ms = int(dt.microsecond / 1000)
+        return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
+
     async def _getitem(
         self,
         session: redis.Redis,
         **kwargs,
-    ) -> GetResponse:
+    ) -> dict:
         """
         Get an item from the table by its ID.
 
@@ -50,9 +54,29 @@ class CacheHandlerRepository:
         """
         code = kwargs.get("code", None)
         try:
-            data = session.get(code)
+            data = await session.get(code)
+
             if data:
-                return json.loads(data)
+                result = json.loads(data)
+                valid_until = result.get("valid_until")
+
+                if valid_until:
+                    valid_until = datetime.strptime(
+                        valid_until, "%Y-%m-%d %H:%M:%S.%f%z"
+                    )
+                    now = datetime.now(timezone.utc)
+
+                    if now > valid_until:
+                        raise HTTPException(
+                            status_code=400, detail="Cached entry has expired"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Expiry timestamp missing in cached data",
+                    )
+                result["is_expired"] = False
+                return result
             else:
                 raise HTTPException(status_code=404, detail="Key not found")
         except Exception as e:
@@ -78,9 +102,17 @@ class CacheHandlerRepository:
             DatabaseError: If there's an error during the database operation.
         """
         try:
-            # Save the JSON data as a string in Redis
-            session.set(json_data.key, json.dumps(json_data.data))  # noqa
-            return {"message": "Data cached successfully"}
+            code = request.hashed_code
+            # visit_data = request.visit_data.model_dump_json()
+            visit_data = request.visit_data.model_dump()
+            valid_until = datetime.now(timezone.utc) + timedelta(hours=1)
+            valid_until = self._format_datetime(valid_until)
+            visit_data["valid_until"] = valid_until
+
+            visit_data = json.dumps(visit_data)
+            await session.set(code, visit_data, ex=3600)
+            response = {"hashed_code": code, "valid_until": valid_until}
+            return response
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -99,22 +131,17 @@ class CacheHandlerRepository:
         """
         try:
             # Create the record in the database
-            record = await self._setitem(
-                session=self.session,
-                request=TableModel(  # noqa
-                    **request.model_dump(exclude_unset=True)
-                ),  # convert the request to a database model instance.
+            response = await self._setitem(
+                session=self.session, request=request
             )
-            # convert the record to a CREATE schema model.
-            created_record = CreateResponse.model_validate(record.__dict__)
-            # return the created record.
+            created_record = CreateResponse.model_validate(response)
             return created_record
         except DatabaseError as e:
             message = "Database error in creating the prompt template"
             logger.exception(message)
             raise DatabaseError(message) from e
 
-    async def get(self, id: UUID4) -> GetResponse:
+    async def get(self, code: str) -> GetResponse:
         """
         Get an item by ID.
 
@@ -130,7 +157,7 @@ class CacheHandlerRepository:
         """
         try:
             # Get the record from the database
-            record = await self._getitem(session=self.session, id=id)
+            record = await self._getitem(session=self.session, code=code)
             # Convert the record to a GET schema model
             return GetResponse.model_validate(record, from_attributes=True)
         except NotFoundError as e:
