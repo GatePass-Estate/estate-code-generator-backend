@@ -31,9 +31,6 @@ services:
     container_name: cache-service
     depends_on:
       - redis
-    environment:
-      REDIS_HOST: estate_code_redis
-      REDIS_PORT: 6379
     build:
       context: .
       dockerfile: services/cache_service/Dockerfile
@@ -41,17 +38,32 @@ services:
     volumes:
       - ./services/cache_service/app:/src/service/app
     env_file:
-      - ./services/db-service/.env.localdocker
+      - ./services/cache_service/.env.secrets
+      - ./services/cache_service/.env.localdocker
     ports:
       - "9031:9031"
+
+  code-service:
+    container_name: code-service
+    depends_on:
+      - cache-service
+      - db-service
+    build:
+      context: .
+      dockerfile: services/code_service/Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9033", "--reload"]
+    volumes:
+      - ./services/code_service/app:/src/service/app
+    env_file:
+      - ./services/code_service/.env.secrets
+      - ./services/code_service/.env.localdocker
+    ports:
+      - "9033:9033"
 
   db-service:
     container_name: db-service
     depends_on:
       - postgres
-    environment:
-      DB_HOST: estate_code_postgres
-      DB_PORT: 5432
     build:
       context: .
       dockerfile: services/db-service/Dockerfile
@@ -63,6 +75,18 @@ services:
       - ./services/db-service/.env.localdocker
     ports:
       - '9032:9032'
+
+  db-migration:
+    container_name: db-migration
+    depends_on:
+      - postgres
+    build:
+      context: .
+      dockerfile: services/db-service/Dockerfile
+    env_file:
+      - ./services/db-service/.env.secrets
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
 
 volumes:
   estate_code_postgres_data:
