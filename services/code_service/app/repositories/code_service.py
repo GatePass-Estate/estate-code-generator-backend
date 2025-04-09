@@ -88,14 +88,16 @@ class CodeServiceRepository:
             if receiver == "visitor":
                 url = (
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
-                    f"/cachehandler/"
+                    f"/cachehandler"
                 )
 
             visit_data = request.model_dump()
             code = generate_unique_code(
                 user_id=visit_data.get("user_id"),
-                visitor_name=visit_data.get("visitor_name"),
-                relationship=visit_data.get("relationship"),
+                visitor_fullname=visit_data.get("visitor_fullname"),
+                relationship_with_resident=visit_data.get(
+                    "relationship_with_resident"
+                ),
                 date_of_visit=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             )
             visit_data["hashed_code"] = code

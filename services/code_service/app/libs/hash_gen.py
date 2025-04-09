@@ -2,7 +2,10 @@ import hashlib
 
 
 def generate_unique_code(
-    user_id: str, visitor_name: str, relationship: str, date_of_visit: str
+    user_id: str,
+    visitor_fullname: str,
+    relationship_with_resident: str,
+    date_of_visit: str,
 ) -> str:
     """
     Generate a unique 6-character alphanumeric code based on input details.
@@ -20,7 +23,10 @@ def generate_unique_code(
     """
 
     # Combine the input fields into a single string
-    combined = f"{user_id}|{visitor_name}|{relationship}|{date_of_visit}"
+    combined = (
+        f"{user_id}|{visitor_fullname}|"
+        f"{relationship_with_resident}|{date_of_visit}"
+    )
 
     # Compute the SHA256 hash of the combined string
     hash_obj = hashlib.sha256(combined.encode("utf-8"))
@@ -41,11 +47,14 @@ def generate_unique_code(
 
 if __name__ == "__main__":
     user_id = "123e4567-e89b-12d3-a456-426614174000"
-    visitor_name = "Michael"
-    relationship = "friend"
+    visitor_fullname = "Michael"
+    relationship_with_resident = "friend"
     date_of_visit = "2025-04-06"
     print(
         generate_unique_code(
-            user_id, visitor_name, relationship, date_of_visit
+            user_id,
+            visitor_fullname,
+            relationship_with_resident,
+            date_of_visit,
         )
     )
