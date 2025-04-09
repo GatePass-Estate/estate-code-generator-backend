@@ -50,7 +50,7 @@ class CodeServiceRepository:
             DatabaseError: If there's an error during the database operation.
         """
         code = kwargs.get("code", None)
-        receiver = kwargs.get("code", None)
+        receiver = kwargs.get("receiver", None)
 
         try:
             if receiver == "visitor":
@@ -86,7 +86,7 @@ class CodeServiceRepository:
         """
         try:
             if receiver == "visitor":
-                url = (
+                cache_url = (
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler"
                 )
@@ -102,7 +102,7 @@ class CodeServiceRepository:
             )
             visit_data["hashed_code"] = code
             data = {"hashed_code": code, "visit_data": visit_data}
-            response = await ahttp_client.async_post(url, json_data=data)
+            response = await ahttp_client.async_post(cache_url, json_data=data)
             return response
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -155,6 +155,33 @@ class CodeServiceRepository:
             record = await self._getitem(
                 ahttp_client=self.ahttp_client, code=code, receiver=receiver
             )
+            if record and (receiver == "visitor"):
+                # Record was retrieved from the cache. Now, persist to DB.
+                visitlog_data = {
+                    "user_id": record.get("user_id"),
+                    "visitor_fullname": record.get("visitor_fullname"),
+                    "relationship_with_resident": record.get(
+                        "relationship_with_resident"
+                    ),
+                    "hashed_code": record.get("hashed_code"),
+                    "security_id": "64b7d74d-bb97-45be-87c3-6c91243b69e8",
+                    "visit_time": datetime.now(timezone.utc).isoformat(),
+                }
+                try:
+                    db_url = (
+                        f"{settings.DB_SERVICE_URL}api/v1/"
+                        "codeservice/visitorlog"
+                    )
+                    persist_response = await self.ahttp_client.async_post(
+                        db_url, json_data=visitlog_data
+                    )
+                    logger.info("Record persisted to DB: %s", persist_response)
+                except Exception as persist_exception:
+                    logger.error(
+                        "Error persisting record with code %s to DB: %s",
+                        code,
+                        persist_exception,
+                    )
             # Convert the record to a GET schema model
             return GetResponse.model_validate(record, from_attributes=True)
         except NotFoundError as e:

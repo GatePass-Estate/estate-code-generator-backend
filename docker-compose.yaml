@@ -72,6 +72,7 @@ services:
       - ./services/db-service/app:/src/service/app
       - ./services/db-service/alembic:/src/service/alembic
     env_file:
+      - ./services/db-service/.env.secrets
       - ./services/db-service/.env.localdocker
     ports:
       - '9032:9032'
