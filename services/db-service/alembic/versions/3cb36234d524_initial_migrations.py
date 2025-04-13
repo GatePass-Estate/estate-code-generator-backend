@@ -277,7 +277,7 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.UUID,
-            sa.ForeignKey("core.users.id"),
+            # sa.ForeignKey("core.users.id"),
             nullable=False,
             unique=False,
         ),
@@ -287,7 +287,7 @@ def upgrade() -> None:
         sa.Column(
             "security_id",
             sa.UUID,
-            sa.ForeignKey("core.users.id"),
+            # sa.ForeignKey("core.users.id"),
             nullable=False,
         ),
         sa.Column(
@@ -314,6 +314,12 @@ def upgrade() -> None:
             server_default=sa.text("NULL"),
             nullable=True,
         ),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -330,12 +336,15 @@ def upgrade() -> None:
         "accesscode",
         sa.Column("id", sa.UUID, nullable=False),
         sa.Column(
-            "user_id", sa.UUID, sa.ForeignKey("core.users.id"), nullable=False
+            "user_id",
+            sa.UUID,
+            # sa.ForeignKey("core.users.id"),
+            nullable=False,
         ),
         sa.Column(
             "estate_id",
             sa.UUID,
-            sa.ForeignKey("core.estates.id"),
+            # sa.ForeignKey("core.estates.id"),
             nullable=False,
         ),
         sa.Column("hashed_code", sa.String, nullable=False),
@@ -362,6 +371,12 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("NULL"),
             nullable=True,
+        ),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
         ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",

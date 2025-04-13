@@ -16,6 +16,13 @@ services:
       - estate_code_postgres_data:/var/lib/postgresql/data
       - ./local-configs/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
 
+  # redis:
+  #   container_name: redis
+  #   image: redis:7.4-alpine
+  #   ports:
+  #     - '7380:7379'
+  #   restart: always
+
   #####################################
   ## ESTATE CODE APP NATIVE SERVICES ##
   #####################################

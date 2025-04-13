@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, DateTime, Enum, String, ForeignKey, func
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -18,6 +18,8 @@ class VisitorLog(BaseModelDB):
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
@@ -42,8 +44,8 @@ class VisitorLog(BaseModelDB):
     relationship_with_resident = Column(
         type_=Enum(
             Relation,
-            name="agent_type",
-            schema="workflows",
+            name="relation",
+            schema="core",
             create_type=False,
         ),
         nullable=False,
