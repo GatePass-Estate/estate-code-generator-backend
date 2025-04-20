@@ -11,7 +11,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
-    GetResponse,
+    GetResponseResident,
+    GetResponseVisitor,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,44 @@ class CodeServiceRepository:
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler/{code}"
                 )
+                response = await ahttp_client.async_get(url)
+                return response
+            else:
+                url = (
+                    f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                    f"/accesscode/search"
+                )
+                params = {"hashed_code": code}
+                response = await ahttp_client.async_get(url, params=params)
+                if not response.get("items"):
+                    raise Exception("Error retrieving record from Database!")
 
-            response = await ahttp_client.async_get(url)
-            return response
+                response = response.get("items")[0]
+                valid_until = response.get("valid_until")
+                resident_data = {
+                    "user_id": response.get("user_id"),
+                    "estate_id": response.get("estate_id"),
+                    "hashed_code": response.get("hashed_code"),
+                    "valid_until": valid_until,
+                    "visit_time": datetime.now(timezone.utc).isoformat(),
+                }
+                if valid_until:
+                    valid_until = datetime.fromisoformat(
+                        valid_until.replace("Z", "+00:00")
+                    )
+                    now = datetime.now(timezone.utc)
+
+                    if now > valid_until:
+                        raise HTTPException(
+                            status_code=400, detail="Code has expired"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Expiry timestamp missing in cached data",
+                    )
+                resident_data["is_expired"] = False
+                return resident_data
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -90,8 +126,6 @@ class CodeServiceRepository:
         Raises:
             DatabaseError: If there's an error during the database operation.
         """
-        # TODO: split by receiver type and account for resident and its
-        # CreateRequest pydantic model.
         try:
             if receiver == "visitor":
                 cache_url = (
@@ -122,7 +156,6 @@ class CodeServiceRepository:
                 db_url = (
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode"
                 )
-                print(db_url)
 
                 resident_data = request.model_dump()
                 now = datetime.now(timezone.utc)
@@ -188,7 +221,9 @@ class CodeServiceRepository:
             logger.exception(message)
             raise DatabaseError(message) from e
 
-    async def get(self, code: str, receiver: str) -> GetResponse:
+    async def get(
+        self, code: str, receiver: str
+    ) -> GetResponseVisitor | GetResponseResident:
         """
         Get an item by ID.
 
@@ -234,8 +269,14 @@ class CodeServiceRepository:
                         code,
                         persist_exception,
                     )
-            # Convert the record to a GET schema model
-            return GetResponse.model_validate(record, from_attributes=True)
+                # Convert the record to a GET schema model
+                return GetResponseVisitor.model_validate(
+                    record, from_attributes=True
+                )
+            else:
+                return GetResponseResident.model_validate(
+                    record, from_attributes=True
+                )
         except NotFoundError as e:
             message = "Record with ID %s not found" % id
             logger.exception(message)

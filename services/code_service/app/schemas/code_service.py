@@ -14,7 +14,8 @@ __all__ = [
     "CreateRequestVisitor",
     "CreateRequestResident",
     "CreateResponse",
-    "GetResponse",
+    "GetResponseVisitor",
+    "GetResponseResident",
 ]
 
 # Shared configuration for the pydantic models
@@ -141,7 +142,33 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class GetResponse(VisitorData):
+class GetResponseVisitor(VisitorData):
+    """
+    Base response model to GET a record by id.
+
+    Attributes:
+        id (UUID): Unique identifier for visitor log entry.
+        created_at (DateTime): Time when the model was created.
+        updated_at (DateTime): Time when the model was last updated.
+        user_id (UUID): Reference to the visited resident.
+        visitor_fullname (str): Full name of the visitor.
+        relationship_with_resident (Relationship): Relation: family, spouse,
+            friend, delivery, taxi, technician
+        hashed_code (str): Visitor's generated access code.
+        security_id (UUID): Security personnel who validated the visit
+        visit_time (DateTime): Timestamp of visitor validation
+    """
+
+    hashed_code: str = Field(
+        ..., description="Visitor's generated access code"
+    )
+    valid_until: str = Field(..., description="Timestamp of entry code expiry")
+    is_expired: bool = Field(
+        ..., description="Flag indicating whether code is expired or not"
+    )
+
+
+class GetResponseResident(ResidentData):
     """
     Base response model to GET a record by id.
 

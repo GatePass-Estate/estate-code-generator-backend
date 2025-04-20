@@ -8,7 +8,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
-    GetResponse,
+    GetResponseResident,
+    GetResponseVisitor,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,9 @@ class CodeService:
         """
         return await self.repository.create(request=request, receiver=receiver)
 
-    async def validate(self, code: str, receiver: str) -> GetResponse:
+    async def validate(
+        self, code: str, receiver: str
+    ) -> GetResponseResident | GetResponseVisitor:
         """
         Get an item by ID.
 

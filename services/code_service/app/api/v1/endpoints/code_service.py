@@ -8,7 +8,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
-    GetResponse,
+    GetResponseResident,
+    GetResponseVisitor,
 )
 from app.services.code_service import (
     CodeService as Service,
@@ -72,7 +73,7 @@ async def generate(
 
 @router.get(
     "/{code}",
-    response_model=GetResponse,
+    response_model=GetResponseResident | GetResponseVisitor,
     status_code=status.HTTP_200_OK,
     responses={
         500: {"description": "Internal server error"},
@@ -85,7 +86,7 @@ async def validate(
     receiver: str,
     code: str,
     service: Service = Depends(get_service),
-) -> GetResponse:
+) -> GetResponseResident | GetResponseVisitor:
     """
     Get an item by its unique ID from the database.
 
