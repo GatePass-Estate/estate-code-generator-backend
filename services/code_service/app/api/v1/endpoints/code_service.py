@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.exceptions import NotFoundError
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.schemas.code_service import (
-    CreateRequest,
+    CreateRequestResident,
+    CreateRequestVisitor,
     CreateResponse,
     GetResponse,
 )
@@ -42,7 +43,7 @@ def get_service(
 )
 async def generate(
     receiver: str,
-    request: CreateRequest,
+    request: CreateRequestVisitor | CreateRequestResident,
     service: Service = Depends(get_service),
 ) -> CreateResponse:
     """
@@ -62,7 +63,7 @@ async def generate(
         return await service.generate(request=request, receiver=receiver)
     except Exception as e:
         logger.exception(
-            "An unexpected error happened while creating the item"
+            f"An unexpected error happened while creating the item\nError: {e}"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"

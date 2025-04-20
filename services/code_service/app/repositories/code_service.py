@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -8,7 +8,8 @@ from app.core.exceptions import DatabaseError, NotFoundError
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
 from app.schemas.code_service import (
-    CreateRequest,
+    CreateRequestResident,
+    CreateRequestVisitor,
     CreateResponse,
     GetResponse,
 )
@@ -29,6 +30,10 @@ class CodeServiceRepository:
             session: The database session.
         """
         self.ahttp_client: AsyncHttpHandler = ahttp_client
+
+    def _format_datetime(self, dt: datetime) -> str:
+        ms = int(dt.microsecond / 1000)
+        return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
 
     async def _getitem(
         self,
@@ -52,6 +57,7 @@ class CodeServiceRepository:
         code = kwargs.get("code", None)
         receiver = kwargs.get("receiver", None)
 
+        # TODO: Account for receiver=resident and call from db-service instead
         try:
             if receiver == "visitor":
                 url = (
@@ -67,7 +73,7 @@ class CodeServiceRepository:
     async def _setitem(
         self,
         ahttp_client: AsyncHttpHandler,
-        request: CreateRequest,
+        request: CreateRequestVisitor | CreateRequestResident,
         receiver: str,
     ) -> CreateResponse:
         """
@@ -84,6 +90,8 @@ class CodeServiceRepository:
         Raises:
             DatabaseError: If there's an error during the database operation.
         """
+        # TODO: split by receiver type and account for resident and its
+        # CreateRequest pydantic model.
         try:
             if receiver == "visitor":
                 cache_url = (
@@ -91,24 +99,68 @@ class CodeServiceRepository:
                     f"/cachehandler"
                 )
 
-            visit_data = request.model_dump()
-            code = generate_unique_code(
-                user_id=visit_data.get("user_id"),
-                visitor_fullname=visit_data.get("visitor_fullname"),
-                relationship_with_resident=visit_data.get(
-                    "relationship_with_resident"
-                ),
-                date_of_visit=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            )
-            visit_data["hashed_code"] = code
-            data = {"hashed_code": code, "visit_data": visit_data}
-            response = await ahttp_client.async_post(cache_url, json_data=data)
-            return response
+                visit_data = request.model_dump()
+                now = datetime.now(timezone.utc)
+                code = generate_unique_code(
+                    user_id=visit_data.get("user_id"),
+                    estate_id=visit_data.get("estate_id"),
+                    visitor_fullname=visit_data.get("visitor_fullname"),
+                    relationship_with_resident=visit_data.get(
+                        "relationship_with_resident"
+                    ),
+                    date=now.strftime("%Y-%m-%d"),
+                    hour=now.strftime("%H"),
+                    receiver="visitor",
+                )
+                visit_data["hashed_code"] = code
+                data = {"hashed_code": code, "visit_data": visit_data}
+                response = await ahttp_client.async_post(
+                    cache_url, json_data=data
+                )
+                return response
+            else:
+                db_url = (
+                    f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode"
+                )
+                print(db_url)
+
+                resident_data = request.model_dump()
+                now = datetime.now(timezone.utc)
+                code = generate_unique_code(
+                    user_id=resident_data.get("user_id"),
+                    estate_id=resident_data.get("estate_id"),
+                    date=now.strftime("%Y-%m-%d"),
+                    hour=now.strftime("%H"),
+                    receiver="resident",
+                )
+                resident_data["hashed_code"] = code
+                valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+                valid_until = self._format_datetime(valid_until)
+                resident_data["valid_until"] = valid_until
+                try:
+                    persist_code = await self.ahttp_client.async_post(
+                        db_url, json_data=resident_data
+                    )
+                    logger.info("Record persisted to DB: %s", persist_code)
+                except Exception as persist_exception:
+                    logger.error(
+                        "Error persisting record with code %s to DB: %s",
+                        code,
+                        persist_exception,
+                    )
+                    raise Exception("Failed to generate code for resdient!")
+                response = {
+                    "hashed_code": code,
+                    "valid_until": valid_until,
+                }
+                return response
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def create(
-        self, request: CreateRequest, receiver: str
+        self,
+        request: CreateRequestVisitor | CreateRequestResident,
+        receiver: str,
     ) -> CreateResponse:
         """
         Create a new item in the table.

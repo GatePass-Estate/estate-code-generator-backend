@@ -3,9 +3,12 @@ import hashlib
 
 def generate_unique_code(
     user_id: str,
-    visitor_fullname: str,
-    relationship_with_resident: str,
-    date_of_visit: str,
+    estate_id: str,
+    visitor_fullname: str = None,
+    relationship_with_resident: str = None,
+    date: str = None,
+    hour: str = None,
+    receiver: str = None,
 ) -> str:
     """
     Generate a unique 6-character alphanumeric code based on input details.
@@ -14,7 +17,7 @@ def generate_unique_code(
         user_id (str): The unique identifier for the user (e.g., a UUID).
         visitor_name (str): The name of the visitor.
         relationship (str): The relationship of the visitor to the user.
-        date_of_visit (str): The date of the visit, typically in YYYY-MM-DD
+        date (str): The date of the visit, typically in YYYY-MM-DD
             format.
 
     Returns:
@@ -23,10 +26,13 @@ def generate_unique_code(
     """
 
     # Combine the input fields into a single string
-    combined = (
-        f"{user_id}|{visitor_fullname}|"
-        f"{relationship_with_resident}|{date_of_visit}"
-    )
+    if receiver == "visitor":
+        combined = (
+            f"{user_id}|{estate_id}|{visitor_fullname}|"
+            f"{relationship_with_resident}|{date}|{hour}"
+        )
+    else:
+        combined = f"{user_id}|{estate_id}|{date}|{hour}"
 
     # Compute the SHA256 hash of the combined string
     hash_obj = hashlib.sha256(combined.encode("utf-8"))
@@ -47,14 +53,16 @@ def generate_unique_code(
 
 if __name__ == "__main__":
     user_id = "123e4567-e89b-12d3-a456-426614174000"
+    estate_id = "123e4567-e89b-12d3-a456-426614174000"
     visitor_fullname = "Michael"
     relationship_with_resident = "friend"
-    date_of_visit = "2025-04-06"
+    date = "2025-04-06"
     print(
         generate_unique_code(
             user_id,
+            estate_id,
             visitor_fullname,
             relationship_with_resident,
-            date_of_visit,
+            date,
         )
     )

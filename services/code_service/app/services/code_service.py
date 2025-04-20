@@ -5,7 +5,8 @@ from app.repositories.code_service import (
     CodeServiceRepository as Repository,
 )
 from app.schemas.code_service import (
-    CreateRequest,
+    CreateRequestResident,
+    CreateRequestVisitor,
     CreateResponse,
     GetResponse,
 )
@@ -25,7 +26,9 @@ class CodeService:
         self.repository = Repository(ahttp_client)
 
     async def generate(
-        self, request: CreateRequest, receiver: str
+        self,
+        request: CreateRequestVisitor | CreateRequestResident,
+        receiver: str,
     ) -> CreateResponse:
         """
         Create a new item in the table.

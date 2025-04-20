@@ -42,6 +42,7 @@ class VisitorData(BaseModel):
 
     Attributes:
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
             friend, delivery, taxi, technician
@@ -54,6 +55,14 @@ class VisitorData(BaseModel):
 
     @field_serializer("user_id")
     def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 = Field(
+        ..., description="Reference to the visited estate"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
     visitor_fullname: str = Field(..., description="Full name of the visitor")
@@ -111,6 +120,7 @@ class GetResponse(VisitorData):
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
             friend, delivery, taxi, technician

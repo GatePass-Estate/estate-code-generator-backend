@@ -10,7 +10,9 @@ from pydantic import (
 
 __all__ = [
     "VisitorData",
-    "CreateRequest",
+    "ResidentData",
+    "CreateRequestVisitor",
+    "CreateRequestResident",
     "CreateResponse",
     "GetResponse",
 ]
@@ -36,16 +38,18 @@ class Relation(str, Enum):
     DELIVERY = "delivery"
 
 
+# TODO: split pydantic models, using the current ones as visitor's model and
+# add more for resident's model
 class VisitorData(BaseModel):
     """
     Model for Composer Workflows table.
 
     Attributes:
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
             friend, delivery, taxi, technician
-        hashed_code (str): Visitor's generated access code.
     """
 
     user_id: UUID4 = Field(
@@ -54,6 +58,14 @@ class VisitorData(BaseModel):
 
     @field_serializer("user_id")
     def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 = Field(
+        ..., description="Reference to the visited estate"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
     visitor_fullname: str = Field(..., description="Full name of the visitor")
@@ -65,7 +77,45 @@ class VisitorData(BaseModel):
     model_config = model_config
 
 
-class CreateRequest(VisitorData):
+class ResidentData(BaseModel):
+    """
+    Model for Composer Workflows table.
+
+    Attributes:
+        user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
+    """
+
+    user_id: UUID4 = Field(
+        ..., description="Reference to the visited resident"
+    )
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 = Field(
+        ..., description="Reference to the visited estate"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    model_config = model_config
+
+
+class CreateRequestVisitor(VisitorData):
+    """
+    Base request model to CREATE a record.
+
+    Attributes:
+        hashed_code (str): Visitor's generated access code.
+        visit_data (UUID): Security personnel who validated the visit
+    """
+
+
+class CreateRequestResident(ResidentData):
     """
     Base request model to CREATE a record.
 
