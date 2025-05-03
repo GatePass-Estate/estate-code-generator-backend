@@ -42,15 +42,15 @@ class CacheHandlerRepository:
         Get an item from the table by its ID.
 
         Arguments:
-            session: The database session.
-            id: The ID of the item to retrieve.
+            session: The redis session.
+            code: The generated access code to be retrieved.
 
         Returns:
-            Returns an instance of orm_model if the requested item is found.
+            Returns a json object of the requested item is found.
 
         Raises:
-            NotFoundError: If the requested item is not found.
-            DatabaseError: If there's an error during the database operation.
+            HTTPException: If item is not found, cached extry is expired, time-
+                stamp is missing, or unexpected error occured during retrieval.
         """
         code = kwargs.get("code", None)
         try:
@@ -86,20 +86,19 @@ class CacheHandlerRepository:
         self,
         session: redis.Redis,
         request: CreateRequest,
-    ) -> CreateResponse:
+    ) -> dict:
         """
         Create a new record in the database.
 
         Args:
-            session (AsyncSession): The database session.
-            request (TableModel): The record to be created in the database.
+            session (AsyncSession): The redis session.
+            request (CreateRequest): The record to be persisted to the cache.
 
         Returns:
-            TableModel: Returns an instance of orm_model containing the
-            created record.
+            Returns a response dict with information on the performed insert.
 
         Raises:
-            DatabaseError: If there's an error during the database operation.
+            HTTPException: If there's an error during the insert operation.
         """
         try:
             code = request.hashed_code
@@ -121,10 +120,10 @@ class CacheHandlerRepository:
         Create a new item in the table.
 
         Arguments:
-            request: The request body for creating a new item in the table.
+            request (CreateRequest): The record to be persisted to the cache.
 
         Returns:
-            The CreateResponse object after creating the item in the table.
+            The CreateResponse object after inserting the item into the cache.
 
         Raises:
             DatabaseError: If there's an error during the database operation.
@@ -137,7 +136,7 @@ class CacheHandlerRepository:
             created_record = CreateResponse.model_validate(response)
             return created_record
         except DatabaseError as e:
-            message = "Database error in creating the prompt template"
+            message = "REDIS DB Error while inserting item into Cache"
             logger.exception(message)
             raise DatabaseError(message) from e
 
@@ -146,14 +145,14 @@ class CacheHandlerRepository:
         Get an item by ID.
 
         Arguments:
-            id: The ID of the item to retrieve.
+            code: The generated access code to be retrieved.
 
         Returns:
             A GetResponse object after retrieving the item by id.
 
         Raises:
-            DatabaseError: If there's an error during the database operation.
-            NotFoundError: If the item with the provided ID is not found.
+            DatabaseError: If there's an error during the retrieval operation.
+            NotFoundError: If the item is not found.
         """
         try:
             # Get the record from the database
@@ -161,10 +160,10 @@ class CacheHandlerRepository:
             # Convert the record to a GET schema model
             return GetResponse.model_validate(record, from_attributes=True)
         except NotFoundError as e:
-            message = "Record with ID %s not found" % id
+            message = f"Record with code {code} not found"
             logger.exception(message)
             raise NotFoundError(message) from e
         except DatabaseError as e:
-            message = "Database error in getting a record with ID %s" % id
+            message = "REDIS DB Error while retrieving item from Cache"
             logger.exception(message)
             raise DatabaseError(message) from e

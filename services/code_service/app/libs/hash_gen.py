@@ -15,10 +15,14 @@ def generate_unique_code(
 
     Arguments:
         user_id (str): The unique identifier for the user (e.g., a UUID).
-        visitor_name (str): The name of the visitor.
-        relationship (str): The relationship of the visitor to the user.
+        visitor_fullname (str): The name of the visitor.
+        relationship_with_resident (str): The relationship of the visitor to
+            the user.
         date (str): The date of the visit, typically in YYYY-MM-DD
             format.
+        hour (str): The hour of the visit.
+        recevier (str): The status of the code owner (visitor or resident),
+            which determines the logic pathway to execute.
 
     Returns:
         str: A 6-character alphanumeric code that uniquely represents the

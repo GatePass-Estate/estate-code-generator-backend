@@ -36,6 +36,7 @@ class CodeService:
 
         Arguments:
             request: The request body for creating a new item in the table.
+            receiver: The status of the code owner (visitor or resident).
 
         Returns:
             The CreateResponse object after creating the item in the table.
@@ -49,7 +50,8 @@ class CodeService:
         Get an item by ID.
 
         Arguments:
-            id: The ID of the item to retrieve.
+            code: The generated access code to be validated.
+            receiver: The status of the code owner (visitor or resident).
 
         Returns:
             A GetResponse object after retrieving the item by id.

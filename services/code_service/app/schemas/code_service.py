@@ -111,8 +111,11 @@ class CreateRequestVisitor(VisitorData):
     Base request model to CREATE a record.
 
     Attributes:
-        hashed_code (str): Visitor's generated access code.
-        visit_data (UUID): Security personnel who validated the visit
+        user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
+        visitor_fullname (str): Full name of the visitor.
+        relationship_with_resident (Relationship): Relation: family, spouse,
+            friend, delivery, taxi, technician
     """
 
 
@@ -121,8 +124,8 @@ class CreateRequestResident(ResidentData):
     Base request model to CREATE a record.
 
     Attributes:
-        hashed_code (str): Visitor's generated access code.
-        visit_data (UUID): Security personnel who validated the visit
+        user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
     """
 
 
@@ -131,8 +134,8 @@ class CreateResponse(BaseModel):
     Base response model to CREATE a record.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
+        hashed_code (str): Visitor's generated access code.
+        valid_until (DateTime): Timestamp of entry code expiry
     """
 
     hashed_code: str = Field(
@@ -147,16 +150,14 @@ class GetResponseVisitor(VisitorData):
     Base response model to GET a record by id.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, spouse,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
-        security_id (UUID): Security personnel who validated the visit
-        visit_time (DateTime): Timestamp of visitor validation
+        valid_until (DateTime): Timestamp of entry code expiry
+        is_expired (bool): Flag indicating whether code is expired or not
     """
 
     hashed_code: str = Field(
@@ -173,20 +174,16 @@ class GetResponseResident(ResidentData):
     Base response model to GET a record by id.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
-            friend, delivery, taxi, technician
-        hashed_code (str): Visitor's generated access code.
-        security_id (UUID): Security personnel who validated the visit
-        visit_time (DateTime): Timestamp of visitor validation
+        hashed_code (str): Resident's generated access code.
+        valid_until (DateTime): Timestamp of entry code expiry
+        is_expired (bool): Flag indicating whether code is expired or not
     """
 
     hashed_code: str = Field(
-        ..., description="Visitor's generated access code"
+        ..., description="Resident's generated access code"
     )
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
     is_expired: bool = Field(

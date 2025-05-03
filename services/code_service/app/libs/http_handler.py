@@ -71,27 +71,6 @@ class AsyncHttpHandler:
                 print(f"POST request unexpected error: {e}")
         return None
 
-    # async def main():
-    #     # Example endpoints (using a public testing API)
-    #     get_url = "https://jsonplaceholder.typicode.com/posts"
-    #     post_url = "https://jsonplaceholder.typicode.com/posts"
-
-    #     # Async GET example
-    #     print("Performing async GET request...")
-    #     get_response = await async_get(get_url, params={"userId": 1})
-    #     print("GET response:", get_response)
-
-    #     # Async POST example payload
-    #     payload = {
-    #         "title": "Sample Post",
-    #         "body": "This is the body of the post.",
-    #         "userId": 1,
-    #     }
-
-    #     print("Performing async POST request...")
-    #     post_response = await async_post(post_url, json_data=payload)
-    #     print("POST response:", post_response)
-
 
 handler = AsyncHttpHandler()
 

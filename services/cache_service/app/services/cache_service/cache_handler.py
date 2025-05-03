@@ -42,7 +42,7 @@ class CacheHandlerService:
         Get an item by ID.
 
         Arguments:
-            id: The ID of the item to retrieve.
+            code: The generated access code to be retrieved.
 
         Returns:
             A GetResponse object after retrieving the item by id.

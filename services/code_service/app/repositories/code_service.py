@@ -28,7 +28,7 @@ class CodeServiceRepository:
         Initializes the repository with the provided session.
 
         Arguments:
-            session: The database session.
+            session: The HttpClient session.
         """
         self.ahttp_client: AsyncHttpHandler = ahttp_client
 
@@ -45,15 +45,16 @@ class CodeServiceRepository:
         Get an item from the table by its ID.
 
         Arguments:
-            session: The database session.
-            id: The ID of the item to retrieve.
+            session: The HttpClient session.
+            code: The generated access code to be retrieved.
+            receiver: The status of the code owner (visitor or resident).
 
         Returns:
             Returns an instance of orm_model if the requested item is found.
 
         Raises:
-            NotFoundError: If the requested item is not found.
-            DatabaseError: If there's an error during the database operation.
+            HTTPException: If item is not found, is expired, timestamp is
+                missing, or unexpected error occured during retrieval.
         """
         code = kwargs.get("code", None)
         receiver = kwargs.get("receiver", None)
@@ -111,20 +112,23 @@ class CodeServiceRepository:
         ahttp_client: AsyncHttpHandler,
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: str,
-    ) -> CreateResponse:
+    ) -> dict:
         """
         Create a new record in the database.
 
         Args:
-            session (AsyncSession): The database session.
-            request (TableModel): The record to be created in the database.
+            session (AsyncHttpHandler): The HttpClient session.
+            request (CreateRequestVisito | CreateRequestResident): The record
+                to be created/inserted in the database/redis cache.
+            recevier (str): The status of the code owner (visitor or resident).
 
         Returns:
-            TableModel: Returns an instance of orm_model containing the
-            created record.
+            dict: Returns the response dict containing the details of the
+                operation.
 
         Raises:
-            DatabaseError: If there's an error during the database operation.
+            HTTPException: If there is an unexpected error occured during
+                retrieval.
         """
         try:
             if receiver == "visitor":
@@ -199,7 +203,8 @@ class CodeServiceRepository:
         Create a new item in the table.
 
         Arguments:
-            request: The request body for creating a new item in the table.
+            request: The request body for generating a new access code.
+            receiver: The status of the code owner (visitor of resident).
 
         Returns:
             The CreateResponse object after creating the item in the table.
@@ -217,7 +222,7 @@ class CodeServiceRepository:
             created_record = CreateResponse.model_validate(response)
             return created_record
         except DatabaseError as e:
-            message = "Database error in creating the prompt template"
+            message = "Database error in creating the access code"
             logger.exception(message)
             raise DatabaseError(message) from e
 
@@ -225,10 +230,12 @@ class CodeServiceRepository:
         self, code: str, receiver: str
     ) -> GetResponseVisitor | GetResponseResident:
         """
-        Get an item by ID.
+        Get an item by code. If the recevier is a visitor, the retrieved record
+        is persisted to the DB for permanent logging.
 
         Arguments:
-            id: The ID of the item to retrieve.
+            code: The generated access code to be validated.
+            receiver: The status of the code owner (visitor or resident).
 
         Returns:
             A GetResponse object after retrieving the item by id.
@@ -278,10 +285,10 @@ class CodeServiceRepository:
                     record, from_attributes=True
                 )
         except NotFoundError as e:
-            message = "Record with ID %s not found" % id
+            message = f"Record with code {code} not found"
             logger.exception(message)
             raise NotFoundError(message) from e
         except DatabaseError as e:
-            message = "Database error in getting a record with ID %s" % id
+            message = f"Database error in getting a record with code {code}"
             logger.exception(message)
             raise DatabaseError(message) from e

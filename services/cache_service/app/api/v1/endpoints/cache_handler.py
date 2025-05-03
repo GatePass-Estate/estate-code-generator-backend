@@ -88,7 +88,7 @@ async def get(
     Get an item by its unique ID from the database.
 
     Arguments:
-        id: The unique ID of the item to retrieve.
+        code: The generated access code to be retrieved.
 
     Returns:
         A GET response model containing reference to the retrieved item.

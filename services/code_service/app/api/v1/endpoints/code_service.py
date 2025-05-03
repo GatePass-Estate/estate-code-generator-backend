@@ -53,6 +53,7 @@ async def generate(
 
     Arguments:
         request: The request model to CREATE a new record.
+        receiver: The status of the code owner (visitor or resident).
 
     Returns:
         The response model to CREATE a new record.
@@ -91,7 +92,8 @@ async def validate(
     Get an item by its unique ID from the database.
 
     Arguments:
-        id: The unique ID of the item to retrieve.
+        code: The generated access code to be validated.
+        recevier: The status of the code owner (visitor and resident)
 
     Returns:
         A GET response model containing reference to the retrieved item.
