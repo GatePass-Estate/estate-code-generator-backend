@@ -388,7 +388,7 @@ class AccessCodeRepository:
             if key in ["from_date", "to_date"]:
                 query = (
                     query.where(TableModel.created_at >= request.from_date)
-                    if key == "from_data"
+                    if key == "from_date"
                     else query.where(TableModel.created_at <= request.to_date)
                 )
             elif hasattr(TableModel, key):
