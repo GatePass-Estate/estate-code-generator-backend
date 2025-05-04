@@ -83,16 +83,41 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(HouseholdBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
         estate_id (UUID): Estate the household is in.
         primary_resident_id (UUID): Lead resident in household.
         max_members (int): Max allowed residents.
     """
+
+    estate_id: UUID4 | None = Field(
+        default=None, description="Estate the household is in"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    primary_resident_id: UUID4 | None = Field(
+        default=None, description="Lead resident in household"
+    )
+
+    @field_serializer("primary_resident_id")
+    def serialize_primary_resident_id(self, value: UUID4) -> str:
+        return str(value)
+
+    max_members: int | None = Field(
+        default=None, description="Max allowed residents"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

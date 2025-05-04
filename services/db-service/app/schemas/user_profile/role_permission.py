@@ -95,15 +95,51 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(RolePermissionBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
         role_name (UserRole): Role enum key.
         can_*: Boolean flags for permissions per role.
     """
+
+    role_name: UserRole | None = Field(
+        default=None, description="Role enum key"
+    )
+    can_register_estates: bool | None = Field(
+        default=None, description="Can register estates"
+    )
+    can_register_admin: bool | None = Field(
+        default=None, description="Can register admin"
+    )
+    can_register_users: bool | None = Field(
+        default=None, description="Can register users"
+    )
+    can_set_household_limits: bool | None = Field(
+        default=None, description="Can set household limits"
+    )
+    can_generate_code: bool | None = Field(
+        default=None, description="Can generate code"
+    )
+    can_validate_code: bool | None = Field(
+        default=None, description="Can validate code"
+    )
+    can_remove_admin: bool | None = Field(
+        default=None, description="Can remove admin"
+    )
+    can_transfer_admin: bool | None = Field(
+        default=None, description="Can transfer admin"
+    )
+    can_add_household_member: bool | None = Field(
+        default=None, description="Can add household member"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

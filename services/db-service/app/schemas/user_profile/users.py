@@ -114,7 +114,7 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(UserBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
@@ -132,6 +132,34 @@ class UpdateRequest(UserBase):
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
+
+    first_name: str | None = Field(
+        default=None, description="First name of the user"
+    )
+    last_name: str | None = Field(
+        default=None, description="Last name of the user"
+    )
+    email: str | None = Field(default=None, description="Unique email address")
+    phone_number: str | None = Field(
+        default=None, description="Phone number of the user"
+    )
+    password: str | None = Field(default=None, description="Hashed password")
+    estate_id: UUID4 | None = Field(
+        default=None, description="Estate the user is registered to"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value) if value else None
+
+    role: UserRole | None = Field(
+        default=None, description="Role assigned to the user"
+    )
+    status: bool | None = Field(
+        default=None, description="Active/inactive status"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

@@ -77,16 +77,31 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(EstateBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
 
     Attributes:
+        id (UUID): Unique estate identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
         name (str): Estate name.
         location (str): Estate location.
         primary_admin_id (UUID): Reference to the primary admin.
     """
+
+    name: str | None = Field(default=None, description="Estate name")
+    location: str | None = Field(default=None, description="Estate location")
+    primary_admin_id: UUID4 | None = Field(
+        default=None, description="Reference to the primary admin"
+    )
+
+    @field_serializer("primary_admin_id")
+    def serialize_primary_admin_id(self, value: UUID4 | None) -> str:
+        return str(value) if value else None
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

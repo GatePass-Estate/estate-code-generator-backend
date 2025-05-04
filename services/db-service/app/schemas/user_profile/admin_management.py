@@ -81,16 +81,39 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(AdminManagementBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
         estate_id (UUID): Estate the admin belongs to.
         user_id (UUID): Admin user.
         is_primary (bool): Indicates primary admin.
     """
+
+    estate_id: UUID4 | None = Field(
+        default=None, description="Estate the admin belongs to"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4 | None) -> str:
+        return str(value) if value else None
+
+    user_id: UUID4 | None = Field(default=None, description="Admin user")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4 | None) -> str:
+        return str(value) if value else None
+
+    is_primary: bool | None = Field(
+        default=None, description="Indicates primary admin"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

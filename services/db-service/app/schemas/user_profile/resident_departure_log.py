@@ -85,17 +85,43 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(ResidentDepartureLogBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
+
+    user_id: UUID4 | None = Field(
+        default=None, description="Resident who left"
+    )
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 | None = Field(default=None, description="Related estate")
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    departure_time: datetime | None = Field(
+        default=None, description="Timestamp of exit"
+    )
+    reason: str | None = Field(
+        default=None, description="Optional reason for leaving"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):
