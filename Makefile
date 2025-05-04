@@ -26,5 +26,9 @@ clean-db:
 	docker compose up -d estate_code_postgres
 	$(MAKE) run_migrations
 
+# old run_migrations:
+# 	docker compose exec db-service /bin/bash -c "alembic upgrade head"
+
 run_migrations:
-	docker compose exec db-service /bin/bash -c "alembic upgrade head"
+	docker compose up --no-start db-migration
+	docker compose start db-migration
