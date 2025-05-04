@@ -25,12 +25,12 @@ __all__ = [
 
 class Relation(str, Enum):
     """
-    Enumeration of supported resident-guest relation: family, spouse,
+    Enumeration of supported resident-guest relation: family, partner,
             friend, delivery, taxi, technician
     """
 
     FAMILY = "family"
-    SPOUSE = "spouse"
+    PARTNER = "partner"
     FRIEND = "friend"
     TECHNICIAN = "technician"
     TAXI = "taxi"
@@ -44,7 +44,7 @@ class VisitorLogBase(BaseModel):
     Attributes:
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -62,7 +62,7 @@ class VisitorLogBase(BaseModel):
     visitor_fullname: str = Field(..., description="Full name of the visitor")
     relationship_with_resident: Relation = Field(
         ...,
-        description="Relation: family, spouse, friend, delivery, taxi, etc",
+        description="Relation: family, partner, friend, delivery, taxi, etc",
     )
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
@@ -90,7 +90,7 @@ class CreateRequest(VisitorLogBase):
     Attributes:
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -119,7 +119,7 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(VisitorLogBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
@@ -130,12 +130,45 @@ class UpdateRequest(VisitorLogBase):
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
     """
+
+    user_id: UUID4 | None = Field(
+        default=None, description="Reference to the visited resident"
+    )
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    visitor_fullname: str | None = Field(
+        default=None, description="Full name of the visitor"
+    )
+    relationship_with_resident: Relation | None = Field(
+        default=None,
+        description="Relation: family, partner, friend, delivery, taxi, etc",
+    )
+    hashed_code: str | None = Field(
+        default=None, description="Visitor's generated access code"
+    )
+    security_id: UUID4 | None = Field(
+        default=None,
+        description="Security personnel who validated the visit",
+    )
+
+    @field_serializer("security_id")
+    def serialize_security_id(self, value: UUID4) -> str:
+        return str(value)
+
+    visit_time: datetime | None = Field(
+        default=None, description="Timestamp of visitor validation"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):
@@ -178,7 +211,7 @@ class GetResponse(SharedModel, VisitorLogBase):
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -198,7 +231,7 @@ class SearchRequest(BaseSearchRequest):
         page: Page number for pagination
         limit: Number of items per page
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit

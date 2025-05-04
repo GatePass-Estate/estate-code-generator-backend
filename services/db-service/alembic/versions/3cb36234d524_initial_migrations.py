@@ -33,7 +33,7 @@ userrole = postgresql.ENUM(
 
 relation = postgresql.ENUM(
     "FAMILY",
-    "SPOUSE",
+    "PARTNER",
     "FRIEND",
     "TECHNICIAN",
     "TAXI",
