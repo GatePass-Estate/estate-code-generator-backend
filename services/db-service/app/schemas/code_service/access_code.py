@@ -90,7 +90,7 @@ class CreateResponse(BaseModel):
     model_config = model_config
 
 
-class UpdateRequest(AccessCodeBase):
+class UpdateRequest(BaseModel):
     """
     Base request model to UPDATE a record. All fields are optional and
     only the fields that need to be updated should be provided.
@@ -105,6 +105,31 @@ class UpdateRequest(AccessCodeBase):
         hashed_code (str): Securely stored hash of access code.
         valid_until (DateTime): Expiration timestamp for the access code.
     """
+
+    user_id: UUID4 | None = Field(
+        default=None, description="Reference to the visited resident"
+    )
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 | None = Field(
+        default=None, description="Full name of the visitor"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    hashed_code: str | None = Field(
+        default=None, description="Visitor's generated access code"
+    )
+    valid_until: datetime | None = Field(
+        default=None, description="Timestamp of visitor validation"
+    )
+
+    model_config = model_config
 
 
 class UpdateResponse(CreateResponse):

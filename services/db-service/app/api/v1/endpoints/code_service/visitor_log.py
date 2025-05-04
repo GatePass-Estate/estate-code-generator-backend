@@ -192,7 +192,7 @@ async def search(
         limit: The number of items per page.
         user_id: Reference to the visited resident.
         visitor_fullname: Full name of the visitor.
-        relationship_with_resident: Relation: family, spouse,
+        relationship_with_resident: Relation: family, partner,
             friend, delivery, taxi, technician.
         hashed_code: Visitor's generated access code.
         security_id: Security personnel who validated the visit.

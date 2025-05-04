@@ -27,12 +27,12 @@ model_config = ConfigDict(
 
 class Relation(str, Enum):
     """
-    Enumeration of supported resident-guest relation: family, spouse,
+    Enumeration of supported resident-guest relation: family, partner,
             friend, delivery, taxi, technician
     """
 
     FAMILY = "family"
-    SPOUSE = "spouse"
+    PARTNER = "partner"
     FRIEND = "friend"
     TECHNICIAN = "technician"
     TAXI = "taxi"
@@ -49,7 +49,7 @@ class VisitorData(BaseModel):
         user_id (UUID): Reference to the visited resident.
         estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
     """
 
@@ -72,7 +72,7 @@ class VisitorData(BaseModel):
     visitor_fullname: str = Field(..., description="Full name of the visitor")
     relationship_with_resident: Relation = Field(
         ...,
-        description="Relation: family, spouse, friend, delivery, taxi, etc",
+        description="Relation: family, partner, friend, delivery, taxi, etc",
     )
 
     model_config = model_config
@@ -114,7 +114,7 @@ class CreateRequestVisitor(VisitorData):
         user_id (UUID): Reference to the visited resident.
         estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
     """
 
@@ -153,7 +153,7 @@ class GetResponseVisitor(VisitorData):
         user_id (UUID): Reference to the visited resident.
         estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         valid_until (DateTime): Timestamp of entry code expiry

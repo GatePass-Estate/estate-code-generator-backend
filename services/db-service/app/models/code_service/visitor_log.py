@@ -22,7 +22,7 @@ class VisitorLog(BaseModelDB):
             deleted.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, spouse,
+        relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
