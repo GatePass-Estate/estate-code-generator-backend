@@ -74,6 +74,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -94,7 +100,7 @@ def upgrade() -> None:
             "estate_id",
             sa.UUID,
             sa.ForeignKey("core.estates.id"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("role", userrole, nullable=False),
         sa.Column("status", sa.Boolean, nullable=False, server_default="true"),
@@ -111,6 +117,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -134,6 +146,7 @@ def upgrade() -> None:
         "role_permission",
         sa.Column("id", sa.UUID, nullable=False),
         sa.Column("role_name", userrole, nullable=False, unique=True),
+        sa.Column("can_register_estates", sa.Boolean, default=False),
         sa.Column("can_register_admin", sa.Boolean, default=False),
         sa.Column("can_register_users", sa.Boolean, default=False),
         sa.Column("can_set_household_limits", sa.Boolean, default=False),
@@ -155,6 +168,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -193,6 +212,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -229,6 +254,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -266,6 +297,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_deleted",
+            sa.Boolean,
+            nullable=True,
+            server_default=sa.text("false"),
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema="core",
     )
@@ -338,13 +375,13 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.UUID,
-            # sa.ForeignKey("core.users.id"),
+            sa.ForeignKey("core.users.id"),
             nullable=False,
         ),
         sa.Column(
             "estate_id",
             sa.UUID,
-            # sa.ForeignKey("core.estates.id"),
+            sa.ForeignKey("core.estates.id"),
             nullable=False,
         ),
         sa.Column("hashed_code", sa.String, nullable=False),

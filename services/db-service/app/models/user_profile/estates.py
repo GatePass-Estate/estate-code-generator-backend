@@ -16,6 +16,8 @@ class Estates(BaseModelDB):
         created_at (DateTime): Created timestamp.
         updated_at (DateTime): Updated timestamp.
         deleted_at (Optional[DateTime]): Soft delete.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         name (str): Estate name.
         location (str): Estate location.
         primary_admin_id (UUID): Reference to the primary admin.

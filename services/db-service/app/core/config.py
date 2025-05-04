@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "db-service Service"
     APP_VERSION: str = "0.0.1"
-    APP_DESCRIPTION: str = "db-service Service for Estace Code Generator "
+    APP_DESCRIPTION: str = "db-service Service for Estate Code Generator "
     ENV: str = os.getenv("ENV", "local")
 
     # Configuration for the RDB Database
