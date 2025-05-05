@@ -12,6 +12,12 @@ class RolePermission(BaseModelDB):
     SQLAlchemy model for roles and their permissions.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
+        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         role_name (UserRole): Role enum key.
         can_*: Boolean flags for permissions per role.
     """
@@ -25,6 +31,7 @@ class RolePermission(BaseModelDB):
         unique=True,
     )
 
+    can_register_estates = Column(Boolean, default=False)
     can_register_admin = Column(Boolean, default=False)
     can_register_users = Column(Boolean, default=False)
     can_set_household_limits = Column(Boolean, default=False)

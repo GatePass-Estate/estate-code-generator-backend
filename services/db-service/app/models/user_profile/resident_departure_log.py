@@ -12,6 +12,12 @@ class ResidentDepartureLog(BaseModelDB):
     Tracks residents leaving the estate.
 
     Attributes:
+        id (UUID): Unique identifier.
+        created_at (DateTime): Created timestamp.
+        updated_at (DateTime): Updated timestamp.
+        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
+        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
+            deleted.
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
         departure_time (DateTime): Timestamp of exit.

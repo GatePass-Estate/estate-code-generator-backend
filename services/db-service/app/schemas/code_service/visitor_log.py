@@ -4,7 +4,7 @@ from typing import List
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
-from app.schemas.code_service.base import (
+from app.schemas.base import (
     BaseListResponse,
     BaseSearchRequest,
     SharedModel,
