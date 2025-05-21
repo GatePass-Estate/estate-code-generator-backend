@@ -11,12 +11,28 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from uuid import uuid4
+from datetime import datetime, timezone
 
 # revision identifiers, used by Alembic.
 revision: str = "12e5c9f5ad7a"
 down_revision: Union[str, None] = "3cb36234d524"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+# Define ENUM again to match existing PostgreSQL ENUM
+userrole_enum = sa.Enum(
+    "ROOT",
+    "PRIMARY_ADMIN",
+    "ADMIN",
+    "RESIDENT",
+    "SECURITY",
+    "GUEST",
+    name="userrole",
+    schema="core",
+    native_enum=True,
+)
+
+now = datetime.now(timezone.utc)
 
 
 def upgrade():
@@ -35,6 +51,7 @@ def upgrade():
     # Insert role permissions
     roles = [
         {
+            "id": uuid4(),
             "role_name": "ROOT",
             "can_register_estates": True,
             "can_register_admin": True,
@@ -45,8 +62,12 @@ def upgrade():
             "can_remove_admin": True,
             "can_transfer_admin": True,
             "can_add_household_member": True,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
         {
+            "id": uuid4(),
             "role_name": "PRIMARY_ADMIN",
             "can_register_estates": False,
             "can_register_admin": True,
@@ -57,8 +78,12 @@ def upgrade():
             "can_remove_admin": True,
             "can_transfer_admin": True,
             "can_add_household_member": True,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
         {
+            "id": uuid4(),
             "role_name": "ADMIN",
             "can_register_estates": False,
             "can_register_admin": False,
@@ -69,8 +94,12 @@ def upgrade():
             "can_remove_admin": False,
             "can_transfer_admin": False,
             "can_add_household_member": True,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
         {
+            "id": uuid4(),
             "role_name": "RESIDENT",
             "can_register_estates": False,
             "can_register_admin": False,
@@ -81,8 +110,12 @@ def upgrade():
             "can_remove_admin": False,
             "can_transfer_admin": False,
             "can_add_household_member": False,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
         {
+            "id": uuid4(),
             "role_name": "SECURITY",
             "can_register_estates": False,
             "can_register_admin": False,
@@ -93,8 +126,12 @@ def upgrade():
             "can_remove_admin": False,
             "can_transfer_admin": False,
             "can_add_household_member": False,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
         {
+            "id": uuid4(),
             "role_name": "GUEST",
             "can_register_estates": False,
             "can_register_admin": False,
@@ -105,81 +142,34 @@ def upgrade():
             "can_remove_admin": False,
             "can_transfer_admin": False,
             "can_add_household_member": False,
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": False,
         },
     ]
 
-    stmt = sa.text(
-        """
-        INSERT INTO core.role_permission (
-            id,
-            role_name,
-            can_register_estates,
-            can_register_admin,
-            can_register_users,
-            can_set_household_limits,
-            can_generate_code,
-            can_validate_code,
-            can_remove_admin,
-            can_transfer_admin,
-            can_add_household_member,
-            created_at,
-            updated_at,
-            is_deleted
-        ) VALUES (
-            :id,
-            CAST(:role_name AS core.userrole),
-            :can_register_estates,
-            :can_register_admin,
-            :can_register_users,
-            :can_set_household_limits,
-            :can_generate_code,
-            :can_validate_code,
-            :can_remove_admin,
-            :can_transfer_admin,
-            :can_add_household_member,
-            NOW(),
-            NOW(),
-            false
-        )
-        """
+    # Define a SQLAlchemy table (structure must match your actual table)
+    role_permission_table = sa.Table(
+        "role_permission",
+        sa.MetaData(),
+        sa.Column("id", sa.UUID, nullable=False),
+        sa.Column("role_name", userrole_enum, nullable=False),
+        sa.Column("can_register_estates", sa.Boolean),
+        sa.Column("can_register_admin", sa.Boolean),
+        sa.Column("can_register_users", sa.Boolean),
+        sa.Column("can_set_household_limits", sa.Boolean),
+        sa.Column("can_generate_code", sa.Boolean),
+        sa.Column("can_validate_code", sa.Boolean),
+        sa.Column("can_remove_admin", sa.Boolean),
+        sa.Column("can_transfer_admin", sa.Boolean),
+        sa.Column("can_add_household_member", sa.Boolean),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("is_deleted", sa.Boolean),
+        schema="core",
     )
 
-    for role in roles:
-        op.execute(
-            stmt.bindparams(
-                sa.bindparam("id", value=uuid4()),
-                sa.bindparam("role_name", value=role["role_name"]),
-                sa.bindparam(
-                    "can_register_estates", value=role["can_register_estates"]
-                ),
-                sa.bindparam(
-                    "can_register_admin", value=role["can_register_admin"]
-                ),
-                sa.bindparam(
-                    "can_register_users", value=role["can_register_users"]
-                ),
-                sa.bindparam(
-                    "can_set_household_limits",
-                    value=role["can_set_household_limits"],
-                ),
-                sa.bindparam(
-                    "can_generate_code", value=role["can_generate_code"]
-                ),
-                sa.bindparam(
-                    "can_validate_code", value=role["can_validate_code"]
-                ),
-                sa.bindparam(
-                    "can_remove_admin", value=role["can_remove_admin"]
-                ),
-                sa.bindparam(
-                    "can_transfer_admin", value=role["can_transfer_admin"]
-                ),
-                sa.bindparam(
-                    "can_add_household_member",
-                    value=role["can_add_household_member"],
-                ),
-            )
-        )
+    op.bulk_insert(role_permission_table, roles)
 
 
 def downgrade():
