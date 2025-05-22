@@ -25,6 +25,7 @@ class Users(BaseModelDB):
         phone_number (str): Optional phone number.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -39,6 +40,9 @@ class Users(BaseModelDB):
     password = Column(String, nullable=False)
     estate_id = Column(
         UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=True
+    )
+    household_id = Column(
+        UUID(as_uuid=True), ForeignKey("core.households.id"), nullable=True
     )
     role = Column(
         Enum(UserRole, name="userrole", schema="core", create_type=False),

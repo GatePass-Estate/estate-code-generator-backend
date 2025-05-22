@@ -27,7 +27,7 @@ __all__ = [
 class UserRole(str, Enum):
     """
     Enumeration of supported user roles: root, primary_admin, admin, resident,
-                security
+                security, guest
     """
 
     ROOT = "root"
@@ -35,6 +35,7 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     RESIDENT = "resident"
     SECURITY = "security"
+    GUEST = "guest"
 
 
 class UserBase(BaseModel):
@@ -48,6 +49,7 @@ class UserBase(BaseModel):
         phone_number (str): Optional phone number.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -70,6 +72,14 @@ class UserBase(BaseModel):
     def serialize_estate_id(self, value: UUID4) -> str:
         return str(value) if value else None
 
+    household_id: UUID4 | None = Field(
+        default=None, description="Household the user is registered to"
+    )
+
+    @field_serializer("household_id")
+    def serialize_household_id(self, value: UUID4) -> str:
+        return str(value) if value else None
+
     role: UserRole = Field(..., description="Role assigned to the user")
 
     status: bool = Field(default=True, description="Active/inactive status")
@@ -88,6 +98,7 @@ class CreateRequest(UserBase):
         phone_number (str): Optional phone number.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -129,6 +140,7 @@ class UpdateRequest(BaseModel):
         phone_number (str): Optional phone number.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -150,6 +162,14 @@ class UpdateRequest(BaseModel):
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value) if value else None
+
+    household_id: UUID4 | None = Field(
+        default=None, description="Household the user is registered to"
+    )
+
+    @field_serializer("household_id")
+    def serialize_household_id(self, value: UUID4) -> str:
         return str(value) if value else None
 
     role: UserRole | None = Field(
@@ -205,6 +225,7 @@ class GetResponse(SharedModel, UserBase):
         phone_number (str): Optional phone number.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -226,6 +247,7 @@ class SearchRequest(BaseSearchRequest):
         email (str): Unique email for authentication.
         phone_number (str): Optional phone number.
         estate_id (UUID): Reference to the estate.
+        household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
@@ -235,6 +257,7 @@ class SearchRequest(BaseSearchRequest):
     email: str = Field(None, description="Email of the user")
     phone_number: str = Field(None, description="Phone number of the user")
     estate_id: UUID4 = Field(None, description="Reference to the estate")
+    household_id: UUID4 = Field(None, description="Reference to the household")
     role: UserRole = Field(None, description="User role")
     status: bool = Field(None, description="Active/inactive status")
 

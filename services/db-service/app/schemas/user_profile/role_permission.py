@@ -35,6 +35,7 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     RESIDENT = "resident"
     SECURITY = "security"
+    GUEST = "guest"
 
 
 class RolePermissionBase(BaseModel):

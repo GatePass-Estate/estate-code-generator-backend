@@ -26,6 +26,7 @@ userrole = postgresql.ENUM(
     "ADMIN",
     "RESIDENT",
     "SECURITY",
+    "GUEST",
     name="userrole",
     schema="core",
     create_type=False,
@@ -314,7 +315,7 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.UUID,
-            # sa.ForeignKey("core.users.id"),
+            sa.ForeignKey("core.users.id"),
             nullable=False,
             unique=False,
         ),
@@ -324,7 +325,7 @@ def upgrade() -> None:
         sa.Column(
             "security_id",
             sa.UUID,
-            # sa.ForeignKey("core.users.id"),
+            sa.ForeignKey("core.users.id"),
             nullable=False,
         ),
         sa.Column(
