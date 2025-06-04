@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -182,10 +182,14 @@ class SearchRequest(BaseSearchRequest):
         reason (Text): Optional reason for leaving.
     """
 
-    user_id: UUID4 = Field(..., description="Resident who left")
-    estate_id: UUID4 = Field(..., description="Related estate")
-    departure_time: datetime = Field(..., description="Timestamp of exit")
-    reason: str = Field(..., description="Optional reason for leaving")
+    user_id: Optional[UUID4] = Field(..., description="Resident who left")
+    estate_id: Optional[UUID4] = Field(..., description="Related estate")
+    departure_time: Optional[datetime] = Field(
+        ..., description="Timestamp of exit"
+    )
+    reason: Optional[str] = Field(
+        ..., description="Optional reason for leaving"
+    )
 
 
 class ListResponse(BaseListResponse):

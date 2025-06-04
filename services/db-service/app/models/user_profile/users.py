@@ -42,10 +42,10 @@ class Users(BaseModelDB):
         UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=True
     )
     household_id = Column(
-        UUID(as_uuid=True), ForeignKey("core.households.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("core.household.id"), nullable=True
     )
     role = Column(
         Enum(UserRole, name="userrole", schema="core", create_type=False),
         nullable=False,
     )
-    status = Column(Boolean, default=True)
+    status = Column(Boolean, default=False)

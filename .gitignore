@@ -170,3 +170,6 @@ garbage/
 
 # Config
 service.yaml
+
+/ideas
+**/scrap.py

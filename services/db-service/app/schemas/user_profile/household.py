@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -176,11 +176,15 @@ class SearchRequest(BaseSearchRequest):
         max_members (int): Max allowed residents.
     """
 
-    estate_id: UUID4 = Field(..., description="Estate the household is in")
-    primary_resident_id: UUID4 = Field(
+    estate_id: Optional[UUID4] = Field(
+        ..., description="Estate the household is in"
+    )
+    primary_resident_id: Optional[UUID4] = Field(
         ..., description="Lead resident in household"
     )
-    max_members: int = Field(..., description="Max allowed residents")
+    max_members: Optional[int] = Field(
+        ..., description="Max allowed residents"
+    )
 
 
 class ListResponse(BaseListResponse):
