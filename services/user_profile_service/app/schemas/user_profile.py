@@ -9,7 +9,17 @@ from pydantic import (
 )
 from typing import Optional
 
-__all__ = ["RegisterUserRequest", "RegisterUserResponse"]
+__all__ = [
+    "RegisterUserRequest",
+    "RegisterUserResponse",
+    "UserProfileRequest",
+    "UserProfileResponse",
+    "EmailTokenRequest",
+    "EmailTokenResponse",
+    "SetPasswordRequest",
+    "SetPasswordResponse",
+    "UpdatePasswordRequest",
+]
 
 model_config = ConfigDict(
     from_attributes=True,
@@ -38,6 +48,7 @@ class RegisterUserRequest(BaseModel):
     Attributes:
         first_name (str): User's first name.
         last_name (str): User's last name
+        home_address (str): User's home address.
         email (EmailStr): User's email address.
         role (Role): User role.
         estate_id (UUID4): Estate the user belongs to.
@@ -46,6 +57,7 @@ class RegisterUserRequest(BaseModel):
 
     first_name: str = Field(..., description="User's first name")
     last_name: str = Field(..., description="User's last name")
+    home_address: str = Field(..., description="User's home address")
     email: EmailStr = Field(..., description="User's email address")
     role: Role = Field(..., description="User role")
     estate_id: UUID4 = Field(..., description="Estate the user belongs to")
@@ -74,6 +86,7 @@ class RegisterUserResponse(BaseModel):
         id (UUID4): Registered user ID.
         first_name (str): User's first name.
         last_name (str): User's last name.
+        home_address (str): User's home address.
         email (EmailStr): User's email address.
         role (Role): Assigned user role.
         estate_id (UUID4): Estate the user belongs to.
@@ -84,6 +97,7 @@ class RegisterUserResponse(BaseModel):
     id: UUID4 = Field(..., description="Registered user ID")
     first_name: str = Field(..., description="User's first name")
     last_name: str = Field(..., description="User's last name")
+    home_address: str = Field(..., description="User's home address")
     email: EmailStr = Field(..., description="User's email address")
     role: Role = Field(..., description="Assigned user role")
     estate_id: UUID4 = Field(..., description="Estate the user belongs to")
@@ -106,6 +120,55 @@ class RegisterUserResponse(BaseModel):
     ) -> Optional[str]:
         return str(household_id) if household_id else None
 
+    model_config = model_config
+
+
+class UserProfileRequest(BaseModel):
+    """
+    Request model for user profile.
+
+    Attributes:
+
+        user_id (UUID4): User ID.
+    """
+
+    user_id: UUID4 = Field(..., description="User ID")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, user_id: UUID4) -> str:
+        return str(user_id)
+
+    model_config = model_config
+
+
+class UserProfileResponse(BaseModel):
+    """
+    User profile model.
+
+    Attributes:
+
+        first_name (str): User's first name.
+        last_name (str): User's last name.
+        home_address (str): User's home address.
+        email (EmailStr): User's email address.
+        phone_number (str): User's phone number.
+        role (Role): User's role.
+        estate_name (str): Estate name.
+        household_primary_resident (str): Primary resident's name.
+        status (bool): User's status.
+    """
+
+    first_name: str = Field(..., description="User's first name")
+    last_name: str = Field(..., description="User's last name")
+    home_address: str = Field(..., description="User's home address")
+    email: EmailStr = Field(..., description="User's email address")
+    phone_number: str = Field(..., description="User's phone number")
+    role: Role = Field(..., description="User's role")
+    estate_name: str = Field(..., description="Estate name")
+    household_primary_resident: str | None = Field(
+        ..., description="Primary resident's name"
+    )
+    status: bool = Field(..., description="User's status")
     model_config = model_config
 
 
@@ -170,6 +233,66 @@ class SetPasswordResponse(BaseModel):
 
     Attributes:
 
+        success (bool): Success status.
+        message (str): Response message.
+    """
+
+    success: bool = Field(..., description="Success status")
+    message: str = Field(..., description="Response message")
+
+    model_config = model_config
+
+
+class UpdatePasswordRequest(BaseModel):
+    """
+    Request model for updating a user's password.
+
+    Attributes:
+        user_id (UUID4): User ID.
+        current_password (str): Current password.
+        new_password (str): New password.
+    """
+
+    user_id: UUID4 = Field(..., description="User ID")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, user_id: UUID4) -> str:
+        return str(user_id)
+
+    current_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., min_length=8, description="New password")
+
+    model_config = model_config
+
+
+class UpdateUserHouseholdRequest(BaseModel):
+    """
+    Request model for updating a user's household.
+
+    Attributes:
+        user_id (UUID4): User ID.
+        household_id (UUID4): Household ID.
+    """
+
+    user_id: UUID4 = Field(..., description="User ID")
+    household_id: UUID4 = Field(..., description="Household ID")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, user_id: UUID4) -> str:
+        return str(user_id)
+
+    @field_serializer("household_id")
+    def serialize_household_id(self, household_id: UUID4) -> str:
+        return str(household_id)
+
+    model_config = model_config
+
+
+class UpdateUserHouseholdResponse(BaseModel):
+    """
+    Response model for updating a user's household.
+
+    Attributes:
         success (bool): Success status.
         message (str): Response message.
     """

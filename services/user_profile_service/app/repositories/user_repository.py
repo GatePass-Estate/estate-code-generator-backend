@@ -2,7 +2,7 @@ import logging
 from fastapi import HTTPException
 
 from app.libs.http_handler import AsyncHttpHandler
-from app.schemas.register import RegisterUserRequest, RegisterUserResponse
+from app.schemas.user_profile import RegisterUserRequest, RegisterUserResponse
 from app.core.config import settings
 from passlib.context import CryptContext
 
@@ -51,6 +51,7 @@ class UserRepository:
         payload = {
             "first_name": request.first_name,
             "last_name": request.last_name,
+            "home_address": request.home_address,
             "email": request.email,
             "password": password,
             "role": request.role.value,
@@ -74,6 +75,7 @@ class UserRepository:
             id=response["id"],
             first_name=payload["first_name"],
             last_name=payload["last_name"],
+            home_address=payload["home_address"],
             email=payload["email"],
             role=payload["role"],
             estate_id=payload["estate_id"],
@@ -141,10 +143,42 @@ class UserRepository:
 
         return user_data
 
-    async def get_user_by_id(self, user_id: str) -> dict:
+    async def get_user_by_id(self, user_id: str) -> dict | None:
         url = f"{self.base_url}api/v1/userprofile/users/{user_id}"
+        return await self.client.async_get(url)
+
+    async def get_users_by_estate_id(
+        self, estate_id: str
+    ) -> list[dict] | None:
+        url = (
+            f"{self.base_url}api/v1/userprofile/users/"
+            f"search?estate_id={estate_id}"
+        )
         return await self.client.async_get(url)
 
     async def update_user(self, user_id: str, data: dict) -> dict:
         url = f"{self.base_url}api/v1/userprofile/users/{user_id}"
         return await self.client.async_patch(url, json_data=data)
+
+    async def get_estate_by_id(self, estate_id: str) -> dict | None:
+        url = f"{self.base_url}api/v1/userprofile/estates/{estate_id}"
+        return await self.client.async_get(url)
+
+    async def get_household_by_id(self, household_id: str) -> dict | None:
+        url = f"{self.base_url}api/v1/userprofile/household/{household_id}"
+        return await self.client.async_get(url)
+
+    async def create_household(self, household_data: dict) -> dict:
+        url = f"{self.base_url}api/v1/userprofile/household"
+        return await self.client.async_post(url, json_data=household_data)
+
+    async def update_household_primary_resident(
+        self, household_id: str, primary_resident_id: str
+    ) -> dict:
+        url = f"{self.base_url}api/v1/userprofile/household/{household_id}"
+        data = {"primary_resident_id": primary_resident_id}
+        return await self.client.async_patch(url, json_data=data)
+
+    async def add_admin_record(self, admin_data: dict) -> dict:
+        url = f"{self.base_url}api/v1/userprofile/adminmanagement"
+        return await self.client.async_post(url, json_data=admin_data)
