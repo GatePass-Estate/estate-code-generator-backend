@@ -147,13 +147,20 @@ class UserRepository:
         url = f"{self.base_url}api/v1/userprofile/users/{user_id}"
         return await self.client.async_get(url)
 
-    async def get_users_by_estate_id(
-        self, estate_id: str
+    async def get_estate_users(
+        self, estate_id: str | None, status: str
     ) -> list[dict] | None:
-        url = (
-            f"{self.base_url}api/v1/userprofile/users/"
-            f"search?estate_id={estate_id}"
-        )
+        base_url = f"{self.base_url}api/v1/userprofile/users/search"
+        params = []
+
+        if estate_id:
+            params.append(f"estate_id={estate_id}")
+        if status != "all":
+            params.append(f"status={status}")
+
+        query_string = "&".join(params)
+        url = f"{base_url}?{query_string}" if query_string else base_url
+
         return await self.client.async_get(url)
 
     async def update_user(self, user_id: str, data: dict) -> dict:

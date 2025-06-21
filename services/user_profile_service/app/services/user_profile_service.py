@@ -173,12 +173,12 @@ class UserProfileService:
         )
 
     async def get_all_users_in_estate(
-        self, estate_id: str
+        self, estate_id: str | None, status: str
     ) -> list[RegisterUserResponse]:
         """
         Retrieves all users in the estate.
         """
-        users = await self.repository.get_users_by_estate_id(estate_id)
+        users = await self.repository.get_estate_users(estate_id, status)
         users = users["items"]
         return [
             RegisterUserResponse(

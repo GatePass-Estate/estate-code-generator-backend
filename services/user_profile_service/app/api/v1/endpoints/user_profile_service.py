@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from typing import Optional
 from app.schemas.user_profile import (
     RegisterUserRequest,
     RegisterUserResponse,
@@ -85,6 +86,12 @@ async def get_user_profile(
 
 @router.get("/estate-users", response_model=list[RegisterUserResponse])
 async def get_all_estate_users(
+    status: Optional[str] = Query(
+        None, description="Filter by user status: true, false, all"
+    ),
+    estate_id: Optional[str] = Query(
+        None, description="Restrict to a specific estate (root only)"
+    ),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -95,11 +102,21 @@ async def get_all_estate_users(
         raise HTTPException(
             status_code=403, detail="You are not authorized for this action"
         )
-    user_id = current_user["id"]
     repository = UserRepository(ahttp_client)
     service = UserProfileService(repository)
-    estate_id = await service.get_estate_id_from_user_id(user_id)
-    return await service.get_all_users_in_estate(estate_id)
+    status = status or "true"
+
+    if status not in {"true", "false", "all"}:
+        raise HTTPException(status_code=400, detail="Invalid status filter")
+
+    if requester_role == "root":
+        return await service.get_all_users_in_estate(
+            estate_id=estate_id or None, status=status
+        )
+    else:
+        user_id = current_user["id"]
+        estate_id = await service.get_estate_id_from_user_id(user_id)
+        return await service.get_all_users_in_estate(estate_id, status=status)
 
 
 @router.get("/verify-email", response_model=EmailTokenResponse)

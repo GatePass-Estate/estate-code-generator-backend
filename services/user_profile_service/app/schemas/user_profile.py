@@ -100,7 +100,9 @@ class RegisterUserResponse(BaseModel):
     home_address: str = Field(..., description="User's home address")
     email: EmailStr = Field(..., description="User's email address")
     role: Role = Field(..., description="Assigned user role")
-    estate_id: UUID4 = Field(..., description="Estate the user belongs to")
+    estate_id: Optional[UUID4] | None = Field(
+        None, description="Estate the user belongs to"
+    )
     household_id: Optional[UUID4] = Field(
         None, description="Optional household ID"
     )
@@ -111,8 +113,8 @@ class RegisterUserResponse(BaseModel):
         return str(id)
 
     @field_serializer("estate_id")
-    def serialize_estate_id(self, estate_id: UUID4) -> str:
-        return str(estate_id)
+    def serialize_estate_id(self, estate_id: UUID4 | None) -> str | None:
+        return str(estate_id) if estate_id else None
 
     @field_serializer("household_id")
     def serialize_household_id(
