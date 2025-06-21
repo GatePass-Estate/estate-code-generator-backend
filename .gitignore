@@ -173,3 +173,9 @@ service.yaml
 
 /ideas
 **/scrap.py
+gatepass-baseimage-deployment.yaml
+gatepass-microservice-deployment.yaml
+gatepass-microservice-service.yaml
+gatepass-baseimage-service.yaml
+gatepass-migrations.yaml
+Note.txt
