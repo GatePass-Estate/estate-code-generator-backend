@@ -48,6 +48,17 @@ def upgrade():
         schema="core",
     )
 
+    # Add home_address to users
+    op.add_column(
+        "users",
+        sa.Column(
+            "home_address",
+            sa.Text,
+            nullable=False,
+        ),
+        schema="core",
+    )
+
     # Insert role permissions
     roles = [
         {
@@ -173,10 +184,11 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_column("users", "household_id", schema="core")
-
     # Optional: delete the inserted permissions
     op.execute(
         "DELETE FROM core.role_permission WHERE role_name IN ('ROOT',"
         " 'PRIMARY_ADMIN', 'ADMIN', 'RESIDENT', 'SECURITY', 'GUEST')"
     )
+
+    op.drop_column("users", "home_address", schema="core")
+    op.drop_column("users", "household_id", schema="core")

@@ -169,6 +169,10 @@ garbage/
 **data**
 
 # Config
+service.yaml
+
+/ideas
+**/scrap.py
 gatepass-baseimage-deployment.yaml
 gatepass-microservice-deployment.yaml
 gatepass-microservice-service.yaml

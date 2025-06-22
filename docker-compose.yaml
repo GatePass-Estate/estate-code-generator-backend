@@ -7,7 +7,7 @@ services:
     container_name: estate_code_postgres
     image: postgres:15-alpine
     ports:
-      - '5445:5432'
+      - "5445:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -20,7 +20,7 @@ services:
     container_name: estate_code_redis
     image: redis:7.4-alpine
     ports:
-      - '7380:6379'
+      - "7380:6379"
     restart: always
 
   #####################################
@@ -34,7 +34,16 @@ services:
     build:
       context: .
       dockerfile: services/cache_service/Dockerfile
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9031", "--reload"]
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9031",
+        "--reload",
+      ]
     volumes:
       - ./services/cache_service/app:/src/service/app
     env_file:
@@ -51,7 +60,16 @@ services:
     build:
       context: .
       dockerfile: services/code_service/Dockerfile
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9033", "--reload"]
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9033",
+        "--reload",
+      ]
     volumes:
       - ./services/code_service/app:/src/service/app
     env_file:
@@ -60,6 +78,31 @@ services:
     ports:
       - "9033:9033"
 
+  user-profile-service:
+    container_name: user-profile-service
+    depends_on:
+      - db-service
+    build:
+      context: .
+      dockerfile: services/user_profile_service/Dockerfile
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9034",
+        "--reload",
+      ]
+    volumes:
+      - ./services/user_profile_service/app:/src/service/app
+    env_file:
+      - ./services/user_profile_service/.env.secrets
+      - ./services/user_profile_service/.env.localdocker
+    ports:
+      - "9034:9034"
+
   db-service:
     container_name: db-service
     depends_on:
@@ -67,7 +110,16 @@ services:
     build:
       context: .
       dockerfile: services/db-service/Dockerfile
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9032", "--reload"]
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9032",
+        "--reload",
+      ]
     volumes:
       - ./services/db-service/app:/src/service/app
       - ./services/db-service/alembic:/src/service/alembic
@@ -75,7 +127,7 @@ services:
       - ./services/db-service/.env.secrets
       - ./services/db-service/.env.localdocker
     ports:
-      - '9032:9032'
+      - "9032:9032"
 
   db-migration:
     container_name: db-migration

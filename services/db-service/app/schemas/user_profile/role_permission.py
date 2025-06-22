@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -198,16 +198,28 @@ class SearchRequest(BaseSearchRequest):
     """
 
     role_name: UserRole = Field(..., description="Role enum key")
-    can_register_admin: bool = Field(..., description="Can register admin")
-    can_register_users: bool = Field(..., description="Can register users")
-    can_set_household_limits: bool = Field(
+    can_register_admin: Optional[bool] = Field(
+        ..., description="Can register admin"
+    )
+    can_register_users: Optional[bool] = Field(
+        ..., description="Can register users"
+    )
+    can_set_household_limits: Optional[bool] = Field(
         ..., description="Can set household limits"
     )
-    can_generate_code: bool = Field(..., description="Can generate code")
-    can_validate_code: bool = Field(..., description="Can validate code")
-    can_remove_admin: bool = Field(..., description="Can remove admin")
-    can_transfer_admin: bool = Field(..., description="Can transfer admin")
-    can_add_household_member: bool = Field(
+    can_generate_code: Optional[bool] = Field(
+        ..., description="Can generate code"
+    )
+    can_validate_code: Optional[bool] = Field(
+        ..., description="Can validate code"
+    )
+    can_remove_admin: Optional[bool] = Field(
+        ..., description="Can remove admin"
+    )
+    can_transfer_admin: Optional[bool] = Field(
+        ..., description="Can transfer admin"
+    )
+    can_add_household_member: Optional[bool] = Field(
         ..., description="Can add household member"
     )
 

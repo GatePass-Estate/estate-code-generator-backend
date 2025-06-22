@@ -23,6 +23,7 @@ class Users(BaseModelDB):
         last_name (str): Last name of the user.
         email (str): Unique email for authentication.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
@@ -37,15 +38,16 @@ class Users(BaseModelDB):
     last_name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
     phone_number = Column(String, nullable=True)
+    home_address = Column(String, nullable=False)
     password = Column(String, nullable=False)
     estate_id = Column(
         UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=True
     )
     household_id = Column(
-        UUID(as_uuid=True), ForeignKey("core.households.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("core.household.id"), nullable=True
     )
     role = Column(
         Enum(UserRole, name="userrole", schema="core", create_type=False),
         nullable=False,
     )
-    status = Column(Boolean, default=True)
+    status = Column(Boolean, default=False)

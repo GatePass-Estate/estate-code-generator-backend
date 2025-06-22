@@ -392,9 +392,17 @@ class EstatesRepository:
                     else query.where(TableModel.created_at <= request.to_date)
                 )
             elif hasattr(TableModel, key):
-                query = query.where(
-                    getattr(TableModel, key) == getattr(request, key)
-                )
+                field_value = getattr(request, key)
+                column = getattr(TableModel, key)
+
+                if isinstance(field_value, str):
+                    # Normalize both column and input
+                    # for case-insensitive matching
+                    query = query.where(
+                        func.lower(column) == field_value.lower()
+                    )
+                else:
+                    query = query.where(column == field_value)
 
         # Order the records by the created_at timestamp in descending order.
         order_by = (TableModel.created_at.desc(),)

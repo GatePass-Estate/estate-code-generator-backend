@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -160,9 +160,9 @@ class SearchRequest(BaseSearchRequest):
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
-    name: str = Field(..., description="Estate name")
-    location: str = Field(..., description="Estate location")
-    primary_admin_id: UUID4 = Field(
+    name: Optional[str] = Field(..., description="Estate name")
+    location: Optional[str] = Field(..., description="Estate location")
+    primary_admin_id: Optional[UUID4] = Field(
         ..., description="Reference to the primary admin"
     )
 

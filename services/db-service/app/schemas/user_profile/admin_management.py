@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -172,9 +172,13 @@ class SearchRequest(BaseSearchRequest):
         is_primary (bool): Indicates primary admin.
     """
 
-    estate_id: UUID4 = Field(..., description="Estate the admin belongs to")
-    user_id: UUID4 = Field(..., description="Admin user")
-    is_primary: bool = Field(..., description="Indicates primary admin")
+    estate_id: Optional[UUID4] = Field(
+        ..., description="Estate the admin belongs to"
+    )
+    user_id: Optional[UUID4] = Field(..., description="Admin user")
+    is_primary: Optional[bool] = Field(
+        ..., description="Indicates primary admin"
+    )
 
 
 class ListResponse(BaseListResponse):

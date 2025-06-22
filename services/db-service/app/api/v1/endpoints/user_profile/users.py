@@ -173,6 +173,8 @@ async def search(
     last_name: str | None = None,
     email: str | None = None,
     phone_number: str | None = None,
+    home_address: str | None = None,
+    household_id: UUID4 | None = None,
     estate_id: UUID4 | None = None,
     role: UserRole | None = None,
     status: bool | None = None,
@@ -196,6 +198,8 @@ async def search(
         last_name (str): Last name of the user.
         email (str): Unique email of the user.
         phone_number (str): Optional phone number of the user.
+        home_address (str): Home address.
+        household_id (UUID): Reference to the household.
         estate_id (UUID): Reference to the estate.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.

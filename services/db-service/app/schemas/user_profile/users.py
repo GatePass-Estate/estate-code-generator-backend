@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -47,6 +47,7 @@ class UserBase(BaseModel):
         last_name (str): Last name of the user.
         email (str): Unique email address of the user.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
@@ -60,7 +61,11 @@ class UserBase(BaseModel):
 
     email: str = Field(..., description="Unique email address of the user")
 
-    phone_number: str = Field(None, description="Phone number of the user")
+    phone_number: str | None = Field(
+        None, description="Phone number of the user"
+    )
+
+    home_address: str = Field(..., description="Home address")
 
     password: str = Field(..., description="Hashed password")
 
@@ -96,6 +101,7 @@ class CreateRequest(UserBase):
         last_name (str): Last name of the user.
         email (str): Unique email address of the user.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
@@ -138,6 +144,7 @@ class UpdateRequest(BaseModel):
         last_name (str): Last name of the user.
         email (str): Unique email for authentication.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
@@ -155,6 +162,7 @@ class UpdateRequest(BaseModel):
     phone_number: str | None = Field(
         default=None, description="Phone number of the user"
     )
+    home_address: str | None = Field(default=None, description="Home address")
     password: str | None = Field(default=None, description="Hashed password")
     estate_id: UUID4 | None = Field(
         default=None, description="Estate the user is registered to"
@@ -223,6 +231,7 @@ class GetResponse(SharedModel, UserBase):
         last_name (str): Last name of the user.
         email (str): Unique email for authentication.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         password (str): Hashed password.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
@@ -246,20 +255,30 @@ class SearchRequest(BaseSearchRequest):
         last_name (str): Last name of the user.
         email (str): Unique email for authentication.
         phone_number (str): Optional phone number.
+        home_address (str): Home address.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
     """
 
-    first_name: str = Field(None, description="First name of the user")
-    last_name: str = Field(None, description="Last name of the user")
-    email: str = Field(None, description="Email of the user")
-    phone_number: str = Field(None, description="Phone number of the user")
-    estate_id: UUID4 = Field(None, description="Reference to the estate")
-    household_id: UUID4 = Field(None, description="Reference to the household")
-    role: UserRole = Field(None, description="User role")
-    status: bool = Field(None, description="Active/inactive status")
+    first_name: Optional[str] = Field(
+        None, description="First name of the user"
+    )
+    last_name: Optional[str] = Field(None, description="Last name of the user")
+    email: Optional[str] = Field(None, description="Email of the user")
+    phone_number: Optional[str] = Field(
+        None, description="Phone number of the user"
+    )
+    home_address: Optional[str] = Field(None, description="Home address")
+    estate_id: Optional[UUID4] = Field(
+        None, description="Reference to the estate"
+    )
+    household_id: Optional[UUID4] = Field(
+        None, description="Reference to the household"
+    )
+    role: Optional[UserRole] = Field(None, description="User role")
+    status: Optional[bool] = Field(None, description="Active/inactive status")
 
 
 class ListResponse(BaseListResponse):
