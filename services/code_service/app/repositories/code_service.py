@@ -13,6 +13,7 @@ from app.schemas.code_service import (
     CreateResponse,
     GetResponseResident,
     GetResponseVisitor,
+    ListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,78 @@ class CodeServiceRepository:
                 )
                 params = {"hashed_code": code}
                 response = await ahttp_client.async_get(url, params=params)
+                if not response.get("items"):
+                    raise Exception("Error retrieving record from Database!")
+
+                response = response.get("items")[0]
+                valid_until = response.get("valid_until")
+                resident_data = {
+                    "user_id": response.get("user_id"),
+                    "estate_id": response.get("estate_id"),
+                    "hashed_code": response.get("hashed_code"),
+                    "valid_until": valid_until,
+                    "visit_time": datetime.now(timezone.utc).isoformat(),
+                }
+                if valid_until:
+                    valid_until = datetime.fromisoformat(
+                        valid_until.replace("Z", "+00:00")
+                    )
+                    now = datetime.now(timezone.utc)
+
+                    if now > valid_until:
+                        raise HTTPException(
+                            status_code=400, detail="Code has expired"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Expiry timestamp missing in cached data",
+                    )
+                resident_data["is_expired"] = False
+                return resident_data
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def _get_items_by_user(
+        self, **kwargs
+    ) -> ListResponse | GetResponseResident:
+        """
+        Get all items linked to a given user ID.
+
+        Arguments:
+            user_id: The user ID to be retrieved for.
+            recevier: The status of the code owner (visitor and resident)
+
+        Returns:
+            A List response model containing reference to the retrieved items
+            if the recever is 'visitor', or a single item if the receiver is
+            'resident'.
+
+        Raises:
+            HTTPException: If there is an internal server error or retrieved
+            item is expired for a resident.
+        """
+
+        user_id = kwargs.get("user_id", None)
+        receiver = kwargs.get("receiver", None)
+
+        try:
+            if receiver == "visitor":
+                url = (
+                    f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                    f"/cachehandler/all/{user_id}"
+                )
+                response = await self.ahttp_client.async_get(url)
+                return response
+            else:
+                url = (
+                    f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                    f"/accesscode/search"
+                )
+                params = {"user_id": user_id}
+                response = await self.ahttp_client.async_get(
+                    url, params=params
+                )
                 if not response.get("items"):
                     raise Exception("Error retrieving record from Database!")
 
@@ -194,6 +267,33 @@ class CodeServiceRepository:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def _delete(self, **kwargs) -> bool:
+        """
+        Delete an item by its associated code in the cache.
+
+        Arguments:
+            code: The generated access code to be deleted.
+
+        Returns:
+            A boolean indicating whether the item was deleted successfully.
+
+        Raises:
+            HTTPException: If there is an internal server error
+        """
+
+        code = kwargs.get("code", None)
+
+        try:
+            cache_url = (
+                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                f"/cachehandler/{code}"
+            )
+
+            response = await self.ahttp_client.async_delete(cache_url)
+            return response
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def create(
         self,
         request: CreateRequestVisitor | CreateRequestResident,
@@ -258,7 +358,7 @@ class CodeServiceRepository:
                         "relationship_with_resident"
                     ),
                     "hashed_code": record.get("hashed_code"),
-                    "security_id": "64b7d74d-bb97-45be-87c3-6c91243b69e8",
+                    "security_id": "61d6c2c4-2ce1-4cec-8c29-d76899ffe247",
                     "visit_time": datetime.now(timezone.utc).isoformat(),
                 }
                 try:

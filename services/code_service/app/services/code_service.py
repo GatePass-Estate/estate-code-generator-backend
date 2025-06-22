@@ -1,5 +1,7 @@
 import logging
 
+from pydantic import UUID4
+
 from app.libs.http_handler import AsyncHttpHandler
 from app.repositories.code_service import (
     CodeServiceRepository as Repository,
@@ -10,6 +12,7 @@ from app.schemas.code_service import (
     CreateResponse,
     GetResponseResident,
     GetResponseVisitor,
+    ListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,3 +60,19 @@ class CodeService:
             A GetResponse object after retrieving the item by id.
         """
         return await self.repository.get(code=code, receiver=receiver)
+
+    async def get_items_by_user(
+        self, user_id: UUID4, receiver: str
+    ) -> ListResponse | GetResponseResident:
+        """
+        Get items from the table by user ID.
+        """
+        return await self.repository._get_items_by_user(
+            user_id=user_id, receiver=receiver
+        )
+
+    async def delete(self, code: str) -> None:
+        """
+        Delete an item from the table by its ID.
+        """
+        return await self.repository._delete(code=code)

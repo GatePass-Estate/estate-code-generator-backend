@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import List
 
 from pydantic import (
     UUID4,
@@ -133,3 +134,17 @@ class GetResponse(VisitorData):
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
     )
+
+
+class ListResponse(BaseModel):
+    """
+    Response model to GET the list of items.
+
+    Attributes:
+        items: list of table objects
+    """
+
+    items: List[GetResponse] = Field(
+        ..., description="Ordered list of table objects"
+    )
+    model_config = model_config
