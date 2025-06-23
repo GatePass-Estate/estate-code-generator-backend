@@ -220,7 +220,7 @@ class SetPasswordRequest(BaseModel):
     """
 
     user_id: UUID4 = Field(..., description="User ID")
-    new_password: str = Field(..., description="New password")
+    new_password: str = Field(..., min_length=8, description="New password")
 
     @field_serializer("user_id")
     def serialize_user_id(self, user_id: UUID4) -> str:

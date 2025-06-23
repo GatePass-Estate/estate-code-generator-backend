@@ -102,7 +102,6 @@ class UserProfileService:
             HTTPException: If token is invalid or expired.
         """
         user_id = decode_email_token(token)
-        print(f"user_id: {user_id}")
         user = await self.repository.get_user_by_id(user_id)
 
         if not user:
@@ -198,6 +197,31 @@ class UserProfileService:
     async def set_user_password(
         self, request: SetPasswordRequest
     ) -> SetPasswordResponse:
+        """
+        Sets the user's password.
+
+        Args:
+            request (SetPasswordRequest): The password update request.
+
+        Returns:
+                SetPasswordResponse: The response indicating the success
+                of the password update.
+
+        Raises:
+            HTTPException: If the user is not found or
+            the password update fails.
+        """
+        user_id = request.user_id
+        user = await self.repository.get_user_by_id(user_id)
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user["status"]:
+            raise HTTPException(
+                status_code=400, detail="Account already verified"
+            )
+
         hashed = hash_password(request.new_password)
         payload = {
             "password": hashed,
