@@ -4,12 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as redis
 from fastapi import HTTPException
+from pydantic import UUID4
 
 from app.core.exceptions import DatabaseError, NotFoundError
 from app.schemas.cache_service.cache_schema import (
     CreateRequest,
     CreateResponse,
     GetResponse,
+    ListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,140 @@ class CacheHandlerRepository:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def _delete_item(
+        self,
+        session: redis.Redis,
+        code: str,
+    ) -> bool:
+        """
+        Delete an item from the cache by its code.
+
+        Args:
+            session (redis.Redis): The redis session.
+            code (str): The generated access code to be deleted.
+
+        Returns:
+            bool: True if the item was deleted, False if it didn't exist.
+
+        Raises:
+            HTTPException: If there's an error during the delete operation.
+        """
+        try:
+            result = await session.delete(code)
+            return result > 0
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def _verify_item_exists(self, code: str) -> None:
+        """
+        Verify that an item exists in the cache (including expired items).
+
+        Arguments:
+            code (str): The generated access code to verify.
+
+        Raises:
+            NotFoundError: If the item is not found.
+            DatabaseError: If there's an error during verification.
+        """
+        try:
+            # Check if key exists in Redis without retrieving full data
+            exists = await self.session.exists(code)
+            if not exists:
+                message = f"Record with code {code} not found"
+                logger.warning(message)
+                raise NotFoundError(message)
+
+        except NotFoundError:
+            raise
+        except Exception as e:
+            message = f"Error verifying item existence for code {code}"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def _verify_item_deleted(self, code: str) -> None:
+        """
+        Verify that an item has been successfully deleted from the cache.
+
+        Arguments:
+            code (str): The generated access code to verify deletion.
+
+        Raises:
+            DatabaseError: If the item still exists after deletion attempt.
+        """
+        try:
+            # Check if key still exists after deletion
+            still_exists = await self.session.exists(code)
+            if still_exists:
+                message = (
+                    f"Record with code {code} "
+                    "still exists after deletion attempt"
+                )
+                logger.error(message)
+                raise DatabaseError(message)
+
+        except DatabaseError:
+            raise
+        except Exception as e:
+            message = f"Error verifying item deletion for code {code}"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def _get_all_items(
+        self,
+        user_id: UUID4,
+    ) -> ListResponse:
+        """
+        Get all items from the cache, filtered by user_id.
+
+        Args:
+            user_id (str): Filter items by user_id provided.
+
+        Returns:
+            ListResponse: List of cached items.
+
+        Raises:
+            HTTPException: If there's an error during the retrieval operation.
+        """
+        try:
+            # Get all keys from Redis
+            keys = await self.session.keys("*")
+            items = []
+
+            for key in keys:
+                try:
+                    data = await self.session.get(key)
+                    if data:
+                        result = json.loads(data)
+
+                        # Check if entry is expired
+                        valid_until = result.get("valid_until")
+                        if valid_until:
+                            valid_until_dt = datetime.strptime(
+                                valid_until, "%Y-%m-%d %H:%M:%S.%f%z"
+                            )
+                            now = datetime.now(timezone.utc)
+
+                            if now > valid_until_dt:
+                                continue
+
+                        # Filter by user_id if provided
+                        if result.get("user_id") != str(user_id):
+                            continue
+
+                        result["is_expired"] = False
+                        items.append(GetResponse.model_validate(result))
+
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning(
+                        f"Skipping invalid JSON entry for key {key}: {e}"
+                    )
+                    continue
+            return ListResponse(
+                items=items,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def create(self, request: CreateRequest) -> CreateResponse:
         """
         Create a new item in the table.
@@ -165,5 +301,44 @@ class CacheHandlerRepository:
             raise NotFoundError(message) from e
         except DatabaseError as e:
             message = "REDIS DB Error while retrieving item from Cache"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def delete(self, code: str) -> bool:
+        """
+        Delete an item from the cache by its code.
+
+        Arguments:
+            code (str): The generated access code to be deleted.
+
+        Returns:
+            bool: True if the item was deleted successfully.
+
+        Raises:
+            DatabaseError: If there's an error during the delete operation.
+            NotFoundError: If the item is not found.
+        """
+        try:
+            # Check if item exists before deletion
+            await self._verify_item_exists(code)
+
+            # Perform deletion
+            deleted = await self._delete_item(session=self.session, code=code)
+            if not deleted:
+                message = f"Failed to delete record with code {code}"
+                logger.error(message)
+                raise DatabaseError(message)
+
+            # Final verification - ensure item was actually deleted
+            await self._verify_item_deleted(code)
+
+            return deleted
+
+        except NotFoundError:
+            raise
+        except DatabaseError:
+            raise
+        except Exception as e:
+            message = f"Unexpected error while deleting item with code {code}"
             logger.exception(message)
             raise DatabaseError(message) from e

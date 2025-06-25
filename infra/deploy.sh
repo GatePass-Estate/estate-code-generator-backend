@@ -11,8 +11,8 @@ MIGRATION_FILE="infra/gatepass-migrations.yaml"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Services configuration arrays
-SERVICES=("cache-service-gcp" "code-service-gcp" "db-service-gcp" "db-migration-gcp")
-DOCKERFILES=("services/cache_service/Dockerfile" "services/code_service/Dockerfile" "services/db-service/Dockerfile" "services/db-service/Dockerfile")
+SERVICES=("cache-service-gcp" "code-service-gcp" "db-service-gcp" "db-migration-gcp" "user-profile-service-gcp")
+DOCKERFILES=("services/cache_service/Dockerfile" "services/code_service/Dockerfile" "services/db-service/Dockerfile" "services/db-service/Dockerfile", "services/user_profile_service/Dockerfile")
 
 # Authenticate with Google Cloud
 # Checking if gcloud credentials are present, and ProjectID is set
@@ -70,6 +70,7 @@ cp $DEPLOYMENT_FILE /tmp/deployment-temp.yaml
 sed -i '' 's|gcr.io/gatepass-461616/cache-service-gcp:latest|'"${REGISTRY_URL}/${PROJECT_ID}/cache-service-gcp:${TIMESTAMP}"'|g' /tmp/deployment-temp.yaml
 sed -i '' 's|gcr.io/gatepass-461616/code-service-gcp:latest|'"${REGISTRY_URL}/${PROJECT_ID}/code-service-gcp:${TIMESTAMP}"'|g' /tmp/deployment-temp.yaml
 sed -i '' 's|gcr.io/gatepass-461616/db-service-gcp:latest|'"${REGISTRY_URL}/${PROJECT_ID}/db-service-gcp:${TIMESTAMP}"'|g' /tmp/deployment-temp.yaml
+sed -i '' 's|gcr.io/gatepass-461616/user-profile-service-gcp:latest|'"${REGISTRY_URL}/${PROJECT_ID}/user-profile-service-gcp:${TIMESTAMP}"'|g' /tmp/deployment-temp.yaml
 
 # Deploy services
 kubectl apply -f /tmp/deployment-temp.yaml
@@ -78,6 +79,7 @@ kubectl apply -f /tmp/deployment-temp.yaml
 kubectl rollout status deployment/cache-service-gcp --timeout=300s
 kubectl rollout status deployment/code-service-gcp --timeout=300s
 kubectl rollout status deployment/db-service-gcp --timeout=300s
+kubectl rollout status deployment/user-profile-service-gcp --timeout=300s
 
 # Deploy Kubernetes services (LoadBalancer, ClusterIP, etc.)
 echo "Deploying Kubernetes services..."
