@@ -78,12 +78,11 @@ class AdminRepository:
         url = f"{self.admin_endpoint}/search?" f"user_id={user_id}"
         response = await self.client.async_get(url)
 
-        if not response:
+        if not response["items"]:
             raise HTTPException(
                 status_code=404,
                 detail=f"No primary admin found for user ID {user_id}.",
             )
-
         return response["items"][0]
 
     async def get_primary_admin_from_estate_id(self, estate_id: str) -> dict:

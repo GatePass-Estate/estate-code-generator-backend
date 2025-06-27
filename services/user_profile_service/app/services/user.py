@@ -89,40 +89,6 @@ class UserService:
         # Create user through repository
         user = await self.repository.create_user(request, hashed_password)
 
-        household_id = request.household_id
-        # If no household and the role is NOT the root user,
-        # create one and assign user as primary_resident
-        if not household_id and request.role != "root":
-            household = await self.household_repository.create_household(
-                {
-                    "estate_id": str(request.estate_id),
-                    "primary_resident_id": str(user.id),
-                    "max_members": 10,
-                }
-            )
-            household_id = household["id"]
-
-        if not request.household_id and request.role != "root":
-            payload = UpdateUserRequest(household_id=household_id)
-            await self.repository.update_user(
-                user_id=str(user.id), data=payload
-            )
-
-        # If admin or primary_admin, add to admin_management
-        if request.role in ("admin", "primary_admin"):
-            await self.admin_repository.create_admin_record(
-                {
-                    "estate_id": str(request.estate_id),
-                    "user_id": str(user.id),
-                    "is_primary": request.role == "primary_admin",
-                }
-            )
-            if request.role == "primary_admin":
-                payload = UpdateEstateRequest(primary_admin_id=str(user.id))
-                await self.estate_repository.update_estate(
-                    estate_id=str(request.estate_id), estate_data=payload
-                )
-
         # Generate email verification token
         token = generate_email_token(str(user.id))
 
@@ -253,7 +219,7 @@ class UserService:
         """
         return await self.repository.authenticate_user(email, password)
 
-    async def set_password(
+    async def set_password_and_activate(
         self, request: SetPasswordRequest
     ) -> SetPasswordResponse:
         """
@@ -280,6 +246,13 @@ class UserService:
 
         # Hash password and activate account
         hashed_password = hash_password(request.new_password)
+
+        response = await self.validate_user(str(request.user_id))
+
+        if not response:
+            raise HTTPException(
+                status_code=500, detail="Account Validation Failed"
+            )
 
         # Update password and activate user
         url = f"{self.repository.users_endpoint}/{request.user_id}"
@@ -354,9 +327,7 @@ class UserService:
             success=True, message="Password updated successfully"
         )
 
-    async def activate_user(
-        self, user_id: str, status: bool
-    ) -> UpdateUserResponse:
+    async def validate_user(self, user_id: str) -> bool:
         """
         Activates or deactivates a user account.
 
@@ -365,17 +336,52 @@ class UserService:
             status: True to activate, False to deactivate.
 
         Returns:
-            UpdateUserResponse: Operation result.
+            Bool: True if user status updated, False otherwise.
 
         Raises:
             HTTPException: If user not found.
         """
-        # Check if user exists
-        user = await self.repository.get_user_by_id(user_id)
-        if not user or user.is_deleted:
-            raise HTTPException(status_code=404, detail="User not found")
+        try:
+            # Check if user exists
+            user = await self.repository.get_user_by_id(user_id)
+            if not user or user.is_deleted:
+                raise HTTPException(status_code=404, detail="User not found")
 
-        return await self.repository.activate_user(user_id, status)
+            # If no household and the role is NOT the root user,
+            # create one and assign user as primary_resident
+            if not user.household_id and user.role != "root":
+                household = await self.household_repository.create_household(
+                    {
+                        "estate_id": str(user.estate_id),
+                        "primary_resident_id": str(user.id),
+                        "max_members": 10,
+                    }
+                )
+                household_id = household["id"]
+                payload = UpdateUserRequest(household_id=household_id)
+                await self.repository.update_user(
+                    user_id=str(user.id), data=payload
+                )
+
+            # If admin or primary_admin, add to admin_management
+            if user.role in ("admin", "primary_admin"):
+                await self.admin_repository.create_admin_record(
+                    {
+                        "estate_id": str(user.estate_id),
+                        "user_id": str(user.id),
+                        "is_primary": user.role == "primary_admin",
+                    }
+                )
+                if user.role == "primary_admin":
+                    payload = UpdateEstateRequest(
+                        primary_admin_id=str(user.id)
+                    )
+                    await self.estate_repository.update_estate(
+                        estate_id=str(user.estate_id), estate_data=payload
+                    )
+            return True
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     async def get_user_profile(
         self, request: UserProfileRequest
@@ -474,7 +480,7 @@ class UserService:
         )
 
     async def get_users_by_estate(
-        self, estate_id: str, status: bool | None = None
+        self, estate_id: str, status: str | None = None
     ) -> ListUserResponse:
         """
         Gets all users in a specific estate.
@@ -486,8 +492,26 @@ class UserService:
         Returns:
             ListUserResponse: List of users in the estate.
         """
-        request = SearchUserRequest(estate_id=estate_id, status=status)
+        if status == "all":
+            request = SearchUserRequest(estate_id=estate_id)
+        else:
+            request = SearchUserRequest(
+                estate_id=estate_id, status=status == "true"
+            )
         return await self.repository.search_users(request)
+
+    async def get_estate_id_by_user_id(self, user_id: str) -> str:
+        """
+        Gets the estate ID associated with a user.
+
+        Args:
+            user_id: The user ID.
+
+        Returns:
+            str: The estate ID.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+        return str(user.estate_id)
 
     async def get_users_by_household(
         self, household_id: str
@@ -542,6 +566,26 @@ class UserService:
             True if email exists, False otherwise.
         """
         return await self.repository.check_email_exists(email)
+
+    async def check_same_estate(
+        self, user_id: str, requester_user_id: str
+    ) -> bool:
+        """
+        Checks if a user is in the same estate as the requester.
+
+        Args:
+            user_id: The user ID to check.
+            requester_user_id: The ID of the user making the request.
+
+        Returns:
+            True if the user is in the same estate, False otherwise.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+            requester = await self.repository.get_user_by_id(requester_user_id)
+            return user.estate_id == requester.estate_id
+        except Exception:
+            return False
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
         """

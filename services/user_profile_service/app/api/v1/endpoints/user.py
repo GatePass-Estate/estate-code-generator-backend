@@ -77,86 +77,6 @@ async def register_user(
     return user
 
 
-@router.get("/{user_id}", response_model=GetUserResponse)
-async def get_user(
-    user_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    """Get user details by ID."""
-    requester_role = current_user["role"]
-    requester_id = current_user["id"]
-
-    # Users can view their own profile, admins can view users in their estate
-    if requester_id != user_id:
-        if not await check_permission(
-            ahttp_client, requester_role, "can_register_users"
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view this user.",
-            )
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    return await service.get_user(user_id)
-
-
-@router.patch("/{user_id}", response_model=UpdateUserResponse)
-async def update_user(
-    user_id: str,
-    request: UpdateUserRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    """Update an existing user."""
-    requester_role = current_user["role"]
-
-    if not await check_permission(
-        ahttp_client, requester_role, "can_register_users"
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to update this user.",
-        )
-
-    user_repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    service = UserService(user_repository, estate_repository)
-    return await service.update_user(user_id, request)
-
-
-@router.delete("/{user_id}", response_model=DeleteUserResponse)
-async def delete_user(
-    user_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    """Soft delete a user."""
-    requester_role = current_user["role"]
-
-    if not await check_permission(
-        ahttp_client, requester_role, "can_register_users"
-    ):
-        raise HTTPException(
-            status_code=403, detail="You are not authorized to delete users."
-        )
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    return await service.delete_user(user_id)
-
-
 @router.get("/profile/me", response_model=UserProfileResponse)
 async def get_my_profile(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
@@ -196,6 +116,11 @@ async def get_user_profile(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
+    same_estate = await service.check_same_estate(user_id, current_user["id"])
+    if not same_estate:
+        raise HTTPException(
+            status_code=403, detail="You are not authorized to view this user."
+        )
     payload = UserProfileRequest(user_id=user_id)
     return await service.get_user_profile(payload)
 
@@ -301,46 +226,7 @@ async def list_users(
     return await service.search_users(request)
 
 
-@router.get("/estate/{estate_id}", response_model=ListUserResponse)
-async def get_users_by_estate(
-    estate_id: str,
-    status: Optional[bool] = Query(
-        None, description="Filter by activation status"
-    ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    """Get all users in a specific estate."""
-    requester_role = current_user["role"]
-
-    if not await check_permission(
-        ahttp_client, requester_role, "can_register_users"
-    ):
-        raise HTTPException(
-            status_code=403, detail="You are not authorized to view users."
-        )
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-
-    # Non-root users can only view users in their own estate
-    if requester_role != "root":
-        requester_user = await service.get_user(current_user["id"])
-        if str(requester_user.estate_id) != estate_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only view users in your own estate.",
-            )
-
-    return await service.get_users_by_estate(estate_id, status)
-
-
-@router.get("/users", response_model=list[RegisterUserResponse])
+@router.get("/all", response_model=ListUserResponse)
 async def get_all_estate_users(
     status: Optional[str] = Query(
         None, description="Filter by user status: true, false, all"
@@ -356,7 +242,7 @@ async def get_all_estate_users(
         ahttp_client, requester_role, "can_register_users"
     ):
         raise HTTPException(
-            status_code=403, detail="You are not authorized for this action"
+            status_code=403, detail="You are not authorized to view users"
         )
     repository = UserRepository(ahttp_client)
     estate_repository = EstateRepository(ahttp_client)
@@ -371,13 +257,13 @@ async def get_all_estate_users(
         raise HTTPException(status_code=400, detail="Invalid status filter")
 
     if requester_role == "root":
-        return await service.get_all_users_in_estate(
+        return await service.get_users_by_estate(
             estate_id=estate_id or None, status=status
         )
     else:
         user_id = current_user["id"]
-        estate_id = await service.get_estate_id_from_user_id(user_id)
-        return await service.get_all_users_in_estate(estate_id, status=status)
+        estate_id = await service.get_estate_id_by_user_id(user_id)
+        return await service.get_users_by_estate(estate_id, status=status)
 
 
 @router.get("/verify/email", response_model=EmailTokenResponse)
@@ -407,7 +293,7 @@ async def set_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.set_password(payload)
+    return await service.set_password_and_activate(payload)
 
 
 @router.post("/password/update", response_model=SetPasswordResponse)
@@ -453,3 +339,101 @@ async def update_household(
         repository, estate_repository, household_repository, admin_repository
     )
     return await service.update_user_household(payload)
+
+
+@router.get("/{user_id}", response_model=GetUserResponse)
+async def get_user(
+    user_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Get user details by ID."""
+    requester_role = current_user["role"]
+
+    # Restricted to Root users
+    if requester_role != "root":
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to view this user.",
+        )
+
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    return await service.get_user(user_id)
+
+
+@router.patch("/{user_id}", response_model=UpdateUserResponse)
+async def update_user(
+    user_id: str,
+    request: UpdateUserRequest,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Update an existing user."""
+    requester_role = current_user["role"]
+
+    if not await check_permission(
+        ahttp_client, requester_role, "can_register_users"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to update this user.",
+        )
+
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    if requester_role != "root":
+        same_estate = await service.check_same_estate(
+            user_id, current_user["id"]
+        )
+        if not same_estate:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to view this user.",
+            )
+    return await service.update_user(user_id, request)
+
+
+@router.delete("/{user_id}", response_model=DeleteUserResponse)
+async def delete_user(
+    user_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Soft delete a user."""
+    requester_role = current_user["role"]
+
+    if not await check_permission(
+        ahttp_client, requester_role, "can_register_users"
+    ):
+        raise HTTPException(
+            status_code=403, detail="You are not authorized to delete users."
+        )
+
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    if requester_role != "root":
+        same_estate = await service.check_same_estate(
+            user_id, current_user["id"]
+        )
+        if not same_estate:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to view this user.",
+            )
+    return await service.delete_user(user_id)

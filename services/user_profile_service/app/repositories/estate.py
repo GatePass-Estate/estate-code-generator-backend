@@ -96,19 +96,18 @@ class EstateRepository:
         Raises:
             HTTPException: If update fails.
         """
-        url = f"{self.estates_endpoint}/{estate_id}"
-        update_data = {}
+        # Convert UpdateEstateRequest to dict for API call
+        payload = {}
         if estate_data.name is not None:
-            update_data["name"] = estate_data.name
+            payload["name"] = estate_data.name
         if estate_data.location is not None:
-            update_data["location"] = estate_data.location
+            payload["location"] = estate_data.location
         if estate_data.primary_admin_id is not None:
-            update_data["primary_admin_id"] = str(estate_data.primary_admin_id)
+            payload["primary_admin_id"] = str(estate_data.primary_admin_id)
 
-        if not update_data:
-            raise HTTPException(status_code=400, detail="No fields to update")
+        url = f"{self.estates_endpoint}/{estate_id}"
 
-        response = await self.client.async_patch(url, json_data=update_data)
+        response = await self.client.async_patch(url, json_data=payload)
 
         if not response:
             raise HTTPException(
@@ -196,8 +195,7 @@ class EstateRepository:
             limit: Number of items per page.
 
         Returns:
-            Dict containing search results with pagination info
-            or None if not found.
+            ListEstateResponse: Search results with pagination info.
         """
         # Build query parameters
         params = {}
@@ -240,16 +238,16 @@ class EstateRepository:
                 location=item["location"],
                 primary_admin_id=item.get("primary_admin_id"),
                 created_at=item["created_at"],
-                updated_at=item["updated_at"],
-                is_deleted=item["is_deleted"],
+                updated_at=item.get("updated_at"),
+                is_deleted=item.get("is_deleted", False),
             )
             for item in response.get("items", [])
         ]
 
         return ListEstateResponse(
             total=response.get("total", 0),
-            page=request.page,
-            limit=request.limit,
+            page=response.get("page", request.page),
+            limit=response.get("limit", request.limit),
             items=estate_items,
         )
 

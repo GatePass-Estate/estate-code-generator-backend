@@ -102,7 +102,7 @@ class EstateService:
         existing_estate = await self.estate_repository.get_estate_by_id(
             estate_id
         )
-        if not existing_estate or existing_estate.get("is_deleted"):
+        if not existing_estate or existing_estate.is_deleted:
             raise HTTPException(status_code=404, detail="Estate not found")
 
         # Validate primary admin if being updated
@@ -110,14 +110,14 @@ class EstateService:
             admin = await self.user_repository.get_user_by_id(
                 str(request.primary_admin_id)
             )
-            if not admin or not admin.get("status"):
+            if not admin or not admin.status:
                 raise HTTPException(
                     status_code=404,
                     detail="Primary admin not found or not active",
                 )
 
             # Verify user has admin role
-            if admin.get("role") not in ("admin", "primary_admin"):
+            if admin.role not in ("admin", "primary_admin"):
                 raise HTTPException(
                     status_code=400,
                     detail="User must have admin role to be primary admin",
@@ -135,6 +135,7 @@ class EstateService:
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
 
+        update_data = UpdateEstateRequest(**update_data)
         estate = await self.estate_repository.update_estate(
             estate_id, update_data
         )
@@ -144,11 +145,7 @@ class EstateService:
                 status_code=400, detail="Failed to update estate"
             )
 
-        return UpdateEstateResponse(
-            id=estate["id"],
-            created_at=estate["created_at"],
-            updated_at=estate["updated_at"],
-        )
+        return estate
 
     async def get_estate(self, estate_id: str) -> GetEstateResponse:
         """
@@ -165,17 +162,17 @@ class EstateService:
         """
         estate = await self.estate_repository.get_estate_by_id(estate_id)
 
-        if not estate or estate.get("is_deleted"):
+        if not estate or estate.is_deleted:
             raise HTTPException(status_code=404, detail="Estate not found")
 
         return GetEstateResponse(
-            id=estate["id"],
-            name=estate["name"],
-            location=estate["location"],
-            primary_admin_id=estate.get("primary_admin_id"),
-            created_at=estate["created_at"],
-            updated_at=estate.get("updated_at"),
-            is_deleted=estate.get("is_deleted", False),
+            id=estate.id,
+            name=estate.name,
+            location=estate.location,
+            primary_admin_id=estate.primary_admin_id,
+            created_at=estate.created_at,
+            updated_at=estate.updated_at,
+            is_deleted=estate.is_deleted,
         )
 
     async def delete_estate(self, estate_id: str) -> DeleteEstateResponse:
@@ -195,15 +192,10 @@ class EstateService:
         existing_estate = await self.estate_repository.get_estate_by_id(
             estate_id
         )
-        if not existing_estate or existing_estate.get("is_deleted"):
+        if not existing_estate or existing_estate.is_deleted:
             raise HTTPException(status_code=404, detail="Estate not found")
 
-        result = await self.estate_repository.delete_estate(estate_id)
-
-        return DeleteEstateResponse(
-            is_deleted=result["is_deleted"],
-            deleted_at=result["deleted_at"],
-        )
+        return await self.estate_repository.delete_estate(estate_id)
 
     async def search_estates(
         self, request: SearchEstateRequest
@@ -305,23 +297,23 @@ class EstateService:
         """
         # Check if admin exists and is active
         admin = await self.user_repository.get_user_by_id(admin_id)
-        if not admin or not admin.get("status"):
+        if not admin or not admin.status:
             raise HTTPException(
                 status_code=404, detail="Admin not found or not active"
             )
 
         # Check if admin has admin role
-        if admin.get("role") not in ("primary_admin"):
+        if admin.role not in ("primary_admin"):
             return False
 
         # Check if estate exists
         estate = await self.estate_repository.get_estate_by_id(estate_id)
-        if not estate or estate.get("is_deleted"):
+        if not estate or estate.is_deleted:
             raise HTTPException(status_code=404, detail="Estate not found")
 
         # For admin role, check if they are assigned to this estate
         # This checks if the admin is the primary admin of the estate
-        if estate.get("primary_admin_id") == admin_id:
+        if str(estate.primary_admin_id) == str(admin_id):
             return True
 
         return False
