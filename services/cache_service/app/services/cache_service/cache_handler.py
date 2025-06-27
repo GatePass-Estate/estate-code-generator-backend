@@ -1,6 +1,7 @@
 import logging
 
 import redis.asyncio as redis
+from pydantic import UUID4
 
 from app.repositories.cache_service.cache_handler import (
     CacheHandlerRepository as Repository,
@@ -9,6 +10,7 @@ from app.schemas.cache_service.cache_schema import (
     CreateRequest,
     CreateResponse,
     GetResponse,
+    ListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,3 +50,27 @@ class CacheHandlerService:
             A GetResponse object after retrieving the item by id.
         """
         return await self.repository.get(code=code)
+
+    async def get_all_items_by_user(self, user_id: UUID4) -> ListResponse:
+        """
+        List all items in the table for a given user.
+
+        Arguments:
+            user_id: The ID of the user to retrieve items for.
+
+        Returns:
+            A ListResponse object after retrieving the items for the user.
+        """
+        return await self.repository._get_all_items(user_id=user_id)
+
+    async def delete(self, code: str) -> bool:
+        """
+        Delete an item by ID.
+
+        Arguments:
+            code: The generated access code to be deleted.
+
+        Returns:
+            A boolean indicating whether the item was deleted successfully.
+        """
+        return await self.repository.delete(code=code)

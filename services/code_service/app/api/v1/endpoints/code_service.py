@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -10,6 +11,7 @@ from app.schemas.code_service import (
     CreateResponse,
     GetResponseResident,
     GetResponseVisitor,
+    ListResponse,
 )
 from app.services.code_service import (
     CodeService as Service,
@@ -103,6 +105,88 @@ async def validate(
     """
     try:
         return await service.validate(code=code, receiver=receiver)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception("An unexpected error happened while getting the item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/all/{user_id}",
+    response_model=ListResponse | GetResponseResident,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Retrieved items"},
+    },
+    description="Get items by user ID",
+)
+async def get_all_codes_by_user(
+    user_id: UUID4,
+    receiver: str,
+    service: Service = Depends(get_service),
+) -> ListResponse | GetResponseResident:
+    """
+    Get all items linked to a given user ID.
+
+    Arguments:
+        user_id: The user ID to be retrieved for.
+        recevier: The status of the code owner (visitor and resident)
+
+    Returns:
+        A List response model containing reference to the retrieved items if
+        the recever is 'visitor', or a single item if the receiver is
+        'resident'.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.get_items_by_user(
+            user_id=user_id, receiver=receiver
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception("An unexpected error happened while getting the item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
+    "/{code}",
+    response_model=bool,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Retrieved the item"},
+    },
+    description="Delete an item by code",
+)
+async def delete(
+    code: str,
+    service: Service = Depends(get_service),
+) -> bool:
+    """
+    Delete an item by its associated code in the cache.
+
+    Arguments:
+        code: The generated access code to be deleted.
+
+    Returns:
+        A boolean indicating whether the item was deleted successfully.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.delete(code=code)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail="Item not found") from e
     except Exception as e:

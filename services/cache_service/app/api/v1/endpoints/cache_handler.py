@@ -2,6 +2,7 @@ import logging
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError
 from app.db.session import get_redis_connection
@@ -9,6 +10,7 @@ from app.schemas.cache_service.cache_schema import (
     CreateRequest,
     CreateResponse,
     GetResponse,
+    ListResponse,
 )
 from app.services.cache_service.cache_handler import (
     CacheHandlerService as Service,
@@ -102,6 +104,81 @@ async def get(
         raise HTTPException(status_code=404, detail="Item not found") from e
     except Exception as e:
         logger.exception("An unexpected error happened while getting the item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/all/{user_id}",
+    response_model=ListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "Retrieved items"},
+    },
+    description="Get items by user ID",
+)
+async def get_all_items_by_user(
+    user_id: UUID4,
+    service: Service = Depends(get_service),
+) -> ListResponse:
+    """
+    Get all item linked to a given user ID.
+
+    Arguments:
+        user_id: The user ID to be retrieved for.
+
+    Returns:
+        A List response model containing reference to the retrieved items.
+
+    Raises:
+        HTTPException: If there is an internal server error
+    """
+    try:
+        return await service.get_all_items_by_user(user_id=user_id)
+    except Exception as e:
+        logger.exception("An unexpected error happened while getting items")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
+    "/{code}",
+    response_model=bool,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Retrieved the item"},
+    },
+    description="Delete an item by code",
+)
+async def delete(
+    code: str,
+    service: Service = Depends(get_service),
+) -> bool:
+    """
+    Delete an item by code from the cache.
+
+    Arguments:
+        code: The generated access code to be deleted.
+
+    Returns:
+        A boolean indicating whether the item was deleted successfully.
+
+    Raises:
+        HTTPException: If there is an internal server error or item not found.
+    """
+    try:
+        return await service.delete(code=code)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while deleting the item"
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
