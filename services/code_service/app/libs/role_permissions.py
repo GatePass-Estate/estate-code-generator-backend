@@ -7,6 +7,10 @@ from app.libs.http_handler import AsyncHttpHandler
 async def check_permission(
     http_client: AsyncHttpHandler, role: str, permission_key: str
 ) -> bool:
+    """
+    Retrieves the permission for a given role and confirm if the given
+    role has authorization to perform a certain action
+    """
     url = (
         f"{settings.DB_SERVICE_URL}api/v1/userprofile/rolepermission/"
         f"search?role_name={role}"

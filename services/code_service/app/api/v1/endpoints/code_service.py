@@ -155,6 +155,7 @@ async def get_all_codes_by_user(
     user_id: UUID4,
     receiver: str,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> ListResponse | GetResponseResident:
     """
     Get all items linked to a given user ID.
@@ -171,6 +172,18 @@ async def get_all_codes_by_user(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to get all codes for this user.",
+        )
+
     try:
         return await service.get_items_by_user(
             user_id=user_id, receiver=receiver
@@ -198,6 +211,7 @@ async def get_all_codes_by_user(
 async def delete(
     code: str,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> bool:
     """
     Delete an item by its associated code in the cache.
@@ -211,6 +225,18 @@ async def delete(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to delete codes.",
+        )
+
     try:
         return await service.delete(code=code)
     except NotFoundError as e:
