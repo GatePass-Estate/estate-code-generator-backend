@@ -53,6 +53,7 @@ class CacheHandlerRepository:
         Raises:
             HTTPException: If item is not found, cached extry is expired, time-
                 stamp is missing, or unexpected error occured during retrieval.
+            NotFoundError: If item is not found or expired.
         """
         code = kwargs.get("code", None)
         try:
@@ -69,18 +70,15 @@ class CacheHandlerRepository:
                     now = datetime.now(timezone.utc)
 
                     if now > valid_until:
-                        raise HTTPException(
-                            status_code=400, detail="Cached entry has expired"
-                        )
+                        raise NotFoundError("Invalid code!")
                 else:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Expiry timestamp missing in cached data",
-                    )
+                    raise Exception("Expiry timestamp missing in cached data")
                 result["is_expired"] = False
                 return result
             else:
-                raise HTTPException(status_code=404, detail="Key not found")
+                raise NotFoundError("Invalid code!")
+        except NotFoundError:
+            raise NotFoundError("Invalid code!")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
