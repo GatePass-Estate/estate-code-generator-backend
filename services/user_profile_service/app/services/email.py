@@ -8,6 +8,6 @@ def send_verification_email(email: str, token: str) -> None:
     """
     base_url = settings.BASE_URL
     query = urlencode({"token": token})
-    verify_link = f"{base_url}api/v1/users/verify-email?{query}"
+    verify_link = f"{base_url}api/v1/users/verify/email?{query}"
 
     print(f"📩 Verification email for {email}:\n👉 {verify_link}")
