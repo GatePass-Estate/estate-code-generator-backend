@@ -106,11 +106,11 @@ async def validate(
     try:
         return await service.validate(code=code, receiver=receiver)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail="Item not found") from e
+        raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
         logger.exception("An unexpected error happened while getting the item")
         raise HTTPException(
-            status_code=500, detail="Internal server error"
+            status_code=500, detail="Internal server error!"
         ) from e
 
 
@@ -150,7 +150,7 @@ async def get_all_codes_by_user(
             user_id=user_id, receiver=receiver
         )
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail="Item not found") from e
+        raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
         logger.exception("An unexpected error happened while getting the item")
         raise HTTPException(

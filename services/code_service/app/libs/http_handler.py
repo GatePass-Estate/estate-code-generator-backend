@@ -2,6 +2,8 @@ from typing import AsyncGenerator
 
 import httpx
 
+from app.core.exceptions import NotFoundError
+
 
 class AsyncHttpHandler:
     def __init__(self):
@@ -27,14 +29,21 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
-                print(
+                if e.response.status_code == 404:
+                    raise NotFoundError(
+                        f"GET request failed with status "
+                        f" {e.response.status_code}: {e.response.text}"
+                    )
+                raise Exception(
                     f"GET request failed with status {e.response.status_code}:"
                     f" {e.response.text}"
                 )
             except httpx.RequestError as e:
-                print(f"GET request encountered a network error: {e}")
+                raise Exception(
+                    f"GET request encountered a network error: {e}"
+                )
             except Exception as e:
-                print(f"GET request unexpected error: {e}")
+                raise Exception(f"GET request unexpected error: {e}")
         return None
 
     async def async_post(
@@ -61,14 +70,16 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
-                print(
+                raise Exception(
                     f"POST request failed with status {e.response.status_code}"
                     f": {e.response.text}"
                 )
             except httpx.RequestError as e:
-                print(f"POST request encountered a network error: {e}")
+                raise Exception(
+                    f"POST request encountered a network error: {e}"
+                )
             except Exception as e:
-                print(f"POST request unexpected error: {e}")
+                raise Exception(f"POST request unexpected error: {e}")
         return None
 
     async def async_delete(

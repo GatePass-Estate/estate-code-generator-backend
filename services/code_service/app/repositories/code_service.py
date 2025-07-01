@@ -56,6 +56,7 @@ class CodeServiceRepository:
         Raises:
             HTTPException: If item is not found, is expired, timestamp is
                 missing, or unexpected error occured during retrieval.
+            NotFoundError: If item is not found or expired.
         """
         code = kwargs.get("code", None)
         receiver = kwargs.get("receiver", None)
@@ -68,6 +69,8 @@ class CodeServiceRepository:
                     f"/cachehandler/{code}"
                 )
                 response = await ahttp_client.async_get(url)
+                if not response:
+                    raise NotFoundError("Invalid code!")
                 return response
             else:
                 url = (
@@ -77,7 +80,7 @@ class CodeServiceRepository:
                 params = {"hashed_code": code}
                 response = await ahttp_client.async_get(url, params=params)
                 if not response.get("items"):
-                    raise Exception("Error retrieving record from Database!")
+                    raise NotFoundError("Invalid code!")
 
                 response = response.get("items")[0]
                 valid_until = response.get("valid_until")
@@ -95,18 +98,16 @@ class CodeServiceRepository:
                     now = datetime.now(timezone.utc)
 
                     if now > valid_until:
-                        raise HTTPException(
-                            status_code=400, detail="Code has expired"
-                        )
+                        raise NotFoundError("Invalid code!")
                 else:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Expiry timestamp missing in cached data",
-                    )
+                    raise Exception("Expiry timestamp missing in cached data!")
                 resident_data["is_expired"] = False
                 return resident_data
+        except NotFoundError:
+            raise NotFoundError("Invalid code!")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(e)
+            raise Exception(e) from e
 
     async def _get_items_by_user(
         self, **kwargs
@@ -125,7 +126,8 @@ class CodeServiceRepository:
 
         Raises:
             HTTPException: If there is an internal server error or retrieved
-            item is expired for a resident.
+                item is expired for a resident.
+            NotFoundError: If item is not found or expired.
         """
 
         user_id = kwargs.get("user_id", None)
@@ -149,7 +151,7 @@ class CodeServiceRepository:
                     url, params=params
                 )
                 if not response.get("items"):
-                    raise Exception("Error retrieving record from Database!")
+                    raise NotFoundError(f"No code found for user {user_id}!")
 
                 response = response.get("items")[0]
                 valid_until = response.get("valid_until")
@@ -167,17 +169,16 @@ class CodeServiceRepository:
                     now = datetime.now(timezone.utc)
 
                     if now > valid_until:
-                        raise HTTPException(
-                            status_code=400, detail="Code has expired"
-                        )
+                        raise NotFoundError("Code has expired!")
                 else:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Expiry timestamp missing in cached data",
-                    )
+                    raise Exception("Expiry timestamp missing in cached data")
                 resident_data["is_expired"] = False
                 return resident_data
+        except NotFoundError as e:
+            logger.error(e)
+            raise NotFoundError(e) from e
         except Exception as e:
+            logger.error(e)
             raise HTTPException(status_code=500, detail=str(e))
 
     async def _setitem(
@@ -342,7 +343,8 @@ class CodeServiceRepository:
 
         Raises:
             DatabaseError: If there's an error during the database operation.
-            NotFoundError: If the item with the provided ID is not found.
+            NotFoundError: If the item with the provided ID is not found or
+                expired.
         """
         try:
             # Get the record from the database
@@ -376,6 +378,9 @@ class CodeServiceRepository:
                         code,
                         persist_exception,
                     )
+                    raise DatabaseError(
+                        "Error persisting visitor's record to DB"
+                    ) from persist_exception
                 # Convert the record to a GET schema model
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
@@ -385,10 +390,14 @@ class CodeServiceRepository:
                     record, from_attributes=True
                 )
         except NotFoundError as e:
-            message = f"Record with code {code} not found"
+            message = f"Invalid code: {code}!"
             logger.exception(message)
             raise NotFoundError(message) from e
         except DatabaseError as e:
             message = f"Database error in getting a record with code {code}"
             logger.exception(message)
             raise DatabaseError(message) from e
+        except Exception as e:
+            message = f"Error in getting a record with code {code}"
+            logger.exception(message)
+            raise Exception(message) from e
