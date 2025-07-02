@@ -106,6 +106,35 @@ class AsyncHttpHandler:
                 print(f"PATCH request unexpected error: {e}")
         return None
 
+    async def async_delete(
+        self,
+        url: str,
+        headers: dict = None,
+    ):
+        """
+        Performs an asynchronous DELETE request using httpx.
+
+        :param url: URL to request.
+        :param headers: (Optional) Dictionary of HTTP headers.
+        :return: Parsed JSON response, or None if an error occurred.
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.delete(url, headers=headers)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                print(
+                    f"DELETE request failed"
+                    f" with status {e.response.status_code}"
+                    f": {e.response.text}"
+                )
+            except httpx.RequestError as e:
+                print(f"DELETE request encountered a network error: {e}")
+            except Exception as e:
+                print(f"DELETE request unexpected error: {e}")
+        return None
+
 
 handler = AsyncHttpHandler()
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.schemas.auth import LoginRequest, LoginResponse
-from app.repositories.user_repository import UserRepository
+from app.repositories.user import UserRepository
 from app.services.auth import generate_access_token
 from app.libs.http_handler import get_http_handler, AsyncHttpHandler
 
