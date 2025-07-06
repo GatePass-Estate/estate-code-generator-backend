@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError
+from app.libs.auth import get_current_user
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.role_permissions import check_permission
 from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
@@ -48,6 +50,7 @@ async def generate(
     receiver: str,
     request: CreateRequestVisitor | CreateRequestResident,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> CreateResponse:
     """
     Creates a new record in the database if it doesn't exist, otherwise
@@ -63,6 +66,17 @@ async def generate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403, detail="You are not authorized to generate codes."
+        )
+
     try:
         return await service.generate(request=request, receiver=receiver)
     except Exception as e:
@@ -89,6 +103,7 @@ async def validate(
     receiver: str,
     code: str,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> GetResponseResident | GetResponseVisitor:
     """
     Get an item by its unique ID from the database.
@@ -103,6 +118,17 @@ async def validate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_validate_code"
+    ):
+        raise HTTPException(
+            status_code=403, detail="You are not authorized to validate codes."
+        )
+
     try:
         return await service.validate(code=code, receiver=receiver)
     except NotFoundError as e:
@@ -129,6 +155,7 @@ async def get_all_codes_by_user(
     user_id: UUID4,
     receiver: str,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> ListResponse | GetResponseResident:
     """
     Get all items linked to a given user ID.
@@ -145,6 +172,18 @@ async def get_all_codes_by_user(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to get all codes for this user.",
+        )
+
     try:
         return await service.get_items_by_user(
             user_id=user_id, receiver=receiver
@@ -172,6 +211,7 @@ async def get_all_codes_by_user(
 async def delete(
     code: str,
     service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
 ) -> bool:
     """
     Delete an item by its associated code in the cache.
@@ -185,6 +225,18 @@ async def delete(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    # Check permission to register users
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to delete codes.",
+        )
+
     try:
         return await service.delete(code=code)
     except NotFoundError as e:

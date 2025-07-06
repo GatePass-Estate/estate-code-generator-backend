@@ -27,6 +27,7 @@ class CodeService:
     """
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
+        self.ahttp_client = ahttp_client
         self.repository = Repository(ahttp_client)
 
     async def generate(
