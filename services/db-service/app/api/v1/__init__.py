@@ -27,6 +27,18 @@ from app.api.v1.endpoints.user_profile.admin_management import (
     router as adminmanagement_router,
 )
 
+from app.api.v1.endpoints.user_profile.guests import (
+    router as guests_router,
+)
+
+from app.api.v1.endpoints.user_profile.broadcasts import (
+    router as broadcasts_router,
+)
+
+from app.api.v1.endpoints.user_profile.requests import (
+    router as requests_router,
+)
+
 api_router = APIRouter()
 
 api_router.include_router(
@@ -75,4 +87,22 @@ api_router.include_router(
     adminmanagement_router,
     prefix="/userprofile/adminmanagement",
     tags=["AdminManagement"],
+)
+
+api_router.include_router(
+    guests_router,
+    prefix="/userprofile/guests",
+    tags=["Guests"],
+)
+
+api_router.include_router(
+    broadcasts_router,
+    prefix="/userprofile/broadcasts",
+    tags=["Broadcasts"],
+)
+
+api_router.include_router(
+    requests_router,
+    prefix="/userprofile/requests",
+    tags=["Requests"],
 )
