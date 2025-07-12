@@ -29,6 +29,7 @@ class ResidentDepartureLogBase(BaseModel):
     Attributes:
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
+        admin_id (UUID): Admin who approved the departure.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
@@ -45,6 +46,14 @@ class ResidentDepartureLogBase(BaseModel):
     def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
+    admin_id: UUID4 | None = Field(
+        None, description="Admin who approved the departure"
+    )
+
+    @field_serializer("admin_id")
+    def serialize_admin_id(self, value: UUID4) -> str:
+        return str(value)
+
     departure_time: datetime = Field(..., description="Timestamp of exit")
     reason: str = Field(..., description="Optional reason for leaving")
 
@@ -58,6 +67,7 @@ class CreateRequest(ResidentDepartureLogBase):
     Attributes:
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
+        admin_id (UUID): Admin who approved the departure.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
@@ -96,6 +106,7 @@ class UpdateRequest(BaseModel):
         updated_at (DateTime): Updated timestamp.
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
+        admin_id (UUID): Admin who approved the departure.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
@@ -112,6 +123,14 @@ class UpdateRequest(BaseModel):
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    admin_id: UUID4 | None = Field(
+        default=None, description="Admin who approved the departure"
+    )
+
+    @field_serializer("admin_id")
+    def serialize_admin_id(self, value: UUID4) -> str:
         return str(value)
 
     departure_time: datetime | None = Field(
@@ -178,17 +197,21 @@ class SearchRequest(BaseSearchRequest):
         limit: Number of items per page
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
+        admin_id (UUID): Admin who approved the departure.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
 
-    user_id: Optional[UUID4] = Field(..., description="Resident who left")
-    estate_id: Optional[UUID4] = Field(..., description="Related estate")
+    user_id: Optional[UUID4] = Field(None, description="Resident who left")
+    estate_id: Optional[UUID4] = Field(None, description="Related estate")
+    admin_id: Optional[UUID4] = Field(
+        None, description="Admin who approved the departure"
+    )
     departure_time: Optional[datetime] = Field(
-        ..., description="Timestamp of exit"
+        None, description="Timestamp of exit"
     )
     reason: Optional[str] = Field(
-        ..., description="Optional reason for leaving"
+        None, description="Optional reason for leaving"
     )
 
 

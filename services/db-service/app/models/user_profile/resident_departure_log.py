@@ -20,6 +20,7 @@ class ResidentDepartureLog(BaseModelDB):
             deleted.
         user_id (UUID): Resident who left.
         estate_id (UUID): Related estate.
+        admin_id (UUID): Admin who approved the departure.
         departure_time (DateTime): Timestamp of exit.
         reason (Text): Optional reason for leaving.
     """
@@ -29,5 +30,10 @@ class ResidentDepartureLog(BaseModelDB):
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("core.users.id"))
     estate_id = Column(UUID(as_uuid=True), ForeignKey("core.estates.id"))
+    admin_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
+        nullable=True,
+    )
     departure_time = Column(DateTime(timezone=True), server_default=func.now())
     reason = Column(Text, nullable=True)
