@@ -12,6 +12,7 @@ from app.schemas.user import (
     UpdatePasswordRequest,
     UserProfileRequest,
     UserProfileResponse,
+    Role,
 )
 from app.schemas.estate import UpdateEstateRequest
 from app.schemas.email import (
@@ -85,6 +86,16 @@ class UserService:
         # Generate random password for new user
         raw_password = generate_random_password()
         hashed_password = hash_password(raw_password)
+
+        # Only 1 Primary Admin per estate is allowed
+        if request.role == Role.PRIMARY_ADMIN:
+            if await self.admin_repository.check_primary_admin_exists(
+                request.estate_id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="A primary admin already exists for this estate.",
+                )
 
         # Create user through repository
         user = await self.repository.create_user(request, hashed_password)

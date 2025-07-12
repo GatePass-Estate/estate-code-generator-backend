@@ -487,7 +487,7 @@ class UserRepository:
             True if user exists and is not deleted, False otherwise.
         """
         user = await self.get_user_by_id(user_id)
-        if user and not user.is_deleted:
+        if user and not user.is_deleted and user.status:
             return True
         return False
 

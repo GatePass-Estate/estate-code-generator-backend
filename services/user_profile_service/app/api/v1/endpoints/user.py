@@ -16,6 +16,16 @@ from app.schemas.user import (
     UserProfileResponse,
     Role,
 )
+from app.schemas.guest import (
+    RegisterGuestRequest,
+    RegisterGuestResponse,
+    UpdateGuestRequest,
+    UpdateGuestResponse,
+    ListGuestResponse,
+    SearchGuestRequest,
+    GetGuestResponse,
+    DeleteGuestResponse,
+)
 from app.schemas.household import (
     UpdateHouseholdRequest,
     UpdateHouseholdResponse,
@@ -26,10 +36,12 @@ from app.schemas.email import (
 from app.libs.http_handler import get_http_handler, AsyncHttpHandler
 from app.libs.role_permissions import check_permission
 from app.repositories.user import UserRepository
+from app.repositories.guest import GuestRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.household import HouseholdRepository
 from app.repositories.admin_management import AdminRepository
 from app.services.user import UserService
+from app.services.guest import GuestService
 from app.services.auth import get_current_user
 from app.services.email import send_verification_email
 
@@ -54,12 +66,6 @@ async def register_user(
             status_code=403, detail="You are not authorized to register users."
         )
 
-    # Only the root user can register a primary admin role
-    if request.role == Role.PRIMARY_ADMIN and requester_role != Role.ROOT:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the root user can register a primary admin role.",
-        )
     # Proceed with user creation
     repository = UserRepository(ahttp_client)
     estate_repository = EstateRepository(ahttp_client)
@@ -68,6 +74,21 @@ async def register_user(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
+    # Only the root user can register a primary admin role
+    if requester_role != Role.ROOT:
+        if request.role == Role.PRIMARY_ADMIN:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the root user can register a primary admin role.",
+            )
+        user_id = current_user["id"]
+        estate_id = await service.get_estate_id_by_user_id(user_id)
+        if estate_id != request.estate_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to register users for this estate.",
+            )
+
     user, token = await service.register_user(request)
 
     # Trigger background email
@@ -339,6 +360,138 @@ async def update_household(
         repository, estate_repository, household_repository, admin_repository
     )
     return await service.update_user_household(payload)
+
+
+@router.post("/guest/register", response_model=RegisterGuestResponse)
+async def register_guest(
+    request: RegisterGuestRequest,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    repository = GuestRepository(ahttp_client)
+    service = GuestService(repository)
+    user_id = current_user["id"]
+
+    request.resident_id = user_id
+    return await service.register_guest(request)
+
+
+@router.get("/guest/{guest_id}", response_model=GetGuestResponse)
+async def get_guest(
+    guest_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Get guest details by ID."""
+
+    repository = GuestRepository(ahttp_client)
+    service = GuestService(repository)
+    user_id = current_user["id"]
+
+    return await service.get_guest(guest_id, user_id)
+
+
+@router.patch("/guest/{guest_id}", response_model=UpdateGuestResponse)
+async def update_guest(
+    guest_id: str,
+    request: UpdateGuestRequest,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Update an existing guest."""
+    requester_id = current_user["id"]
+
+    repository = GuestRepository(ahttp_client)
+    service = GuestService(repository)
+    return await service.update_guest(guest_id, requester_id, request)
+
+
+@router.delete("/guest/{guest_id}", response_model=DeleteGuestResponse)
+async def delete_guest(
+    guest_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Soft delete a guest."""
+
+    requester_id = current_user["id"]
+
+    repository = GuestRepository(ahttp_client)
+    service = GuestService(repository)
+    return await service.delete_guest(guest_id, requester_id)
+
+
+@router.get("/guest", response_model=ListGuestResponse)
+async def list_guests(
+    guest_name: Optional[str] = Query(
+        None, description="Filter by guests name (partial match)"
+    ),
+    guest_phone_number: Optional[str] = Query(
+        None, description="Filter by Phone number (partial match)"
+    ),
+    guest_gender: Optional[str] = Query(
+        None, description="Filter by Gender (partial match)"
+    ),
+    relationship: Optional[str] = Query(
+        None, description="Filter by relationship with resident"
+    ),
+    from_date: Optional[str] = Query(
+        None, description="Filter by creation date (from) - ISO format"
+    ),
+    to_date: Optional[str] = Query(
+        None, description="Filter by creation date (to) - ISO format"
+    ),
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    limit: int = Query(
+        10, ge=1, le=100, description="Number of items per page"
+    ),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Search and list guests with optional filters and pagination."""
+
+    repository = GuestRepository(ahttp_client)
+    service = GuestService(repository)
+    user_id = current_user["id"]
+
+    # Parse datetime strings if provided
+    from_date_obj = None
+    to_date_obj = None
+
+    if from_date:
+        try:
+            from datetime import datetime
+
+            from_date_obj = datetime.fromisoformat(from_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid from_date format. Use ISO format.",
+            )
+
+    if to_date:
+        try:
+            from datetime import datetime
+
+            to_date_obj = datetime.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid to_date format. Use ISO format.",
+            )
+
+    request = SearchGuestRequest(
+        guest_name=guest_name,
+        guest_phone_number=guest_phone_number,
+        guest_gender=guest_gender,
+        relationship=relationship,
+        from_date=from_date_obj,
+        to_date=to_date_obj,
+        page=page,
+        limit=limit,
+    )
+
+    return await service.search_guests(request, user_id)
 
 
 @router.get("/{user_id}", response_model=GetUserResponse)
