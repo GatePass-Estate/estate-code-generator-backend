@@ -24,3 +24,13 @@ async def check_permission(
         )
     permissions = response.get("items")[0]
     return permissions.get(permission_key, False)
+
+
+async def check_status(
+    user_details: dict,
+) -> bool:
+    """
+    Confirm if the given user is verified.
+    """
+    status = user_details.get("status", False)
+    return status

@@ -196,12 +196,14 @@ class CacheHandlerRepository:
     async def _get_all_items(
         self,
         user_id: UUID4,
+        estate_id: UUID4,
     ) -> ListResponse:
         """
         Get all items from the cache, filtered by user_id.
 
         Args:
             user_id (str): Filter items by user_id provided.
+            estate_id (str): Filter items by estate_id provided.
 
         Returns:
             ListResponse: List of cached items.
@@ -232,7 +234,9 @@ class CacheHandlerRepository:
                                 continue
 
                         # Filter by user_id if provided
-                        if result.get("user_id") != str(user_id):
+                        if result.get("user_id") != str(user_id) or result.get(
+                            "estate_id"
+                        ) != str(estate_id):
                             continue
 
                         result["is_expired"] = False

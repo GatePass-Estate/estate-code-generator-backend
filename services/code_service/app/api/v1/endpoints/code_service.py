@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError
-from app.libs.auth import get_current_user
+from app.libs.auth import get_current_user, get_user_details
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
-from app.libs.role_permissions import check_permission
+from app.libs.role_permissions import check_permission, check_status
 from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
@@ -66,8 +66,18 @@ async def generate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract complete user_details
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+
     # Extract role of the requester
     requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
 
     # Check permission to register users
     if not await check_permission(
@@ -78,7 +88,9 @@ async def generate(
         )
 
     try:
-        return await service.generate(request=request, receiver=receiver)
+        return await service.generate(
+            request=request, receiver=receiver, user_details=user_details
+        )
     except Exception as e:
         logger.exception(
             f"An unexpected error happened while creating the item\nError: {e}"
@@ -118,8 +130,18 @@ async def validate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract complete user_details
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+
     # Extract role of the requester
     requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
 
     # Check permission to register users
     if not await check_permission(
@@ -130,7 +152,9 @@ async def validate(
         )
 
     try:
-        return await service.validate(code=code, receiver=receiver)
+        return await service.validate(
+            code=code, receiver=receiver, user_details=user_details
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
@@ -172,8 +196,18 @@ async def get_all_codes_by_user(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract complete user_details
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+
     # Extract role of the requester
     requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
 
     # Check permission to register users
     if not await check_permission(
@@ -186,7 +220,7 @@ async def get_all_codes_by_user(
 
     try:
         return await service.get_items_by_user(
-            user_id=user_id, receiver=receiver
+            user_id=user_id, receiver=receiver, user_details=user_details
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
@@ -225,8 +259,18 @@ async def delete(
     Raises:
         HTTPException: If there is an internal server error
     """
+    # Extract complete user_details
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+
     # Extract role of the requester
     requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
 
     # Check permission to register users
     if not await check_permission(
@@ -238,7 +282,7 @@ async def delete(
         )
 
     try:
-        return await service.delete(code=code)
+        return await service.delete(code=code, user_details=user_details)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail="Item not found") from e
     except Exception as e:

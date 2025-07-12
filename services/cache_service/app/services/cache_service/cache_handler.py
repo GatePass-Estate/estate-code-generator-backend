@@ -51,17 +51,22 @@ class CacheHandlerService:
         """
         return await self.repository.get(code=code)
 
-    async def get_all_items_by_user(self, user_id: UUID4) -> ListResponse:
+    async def get_all_items_by_user(
+        self, user_id: UUID4, estate_id: UUID4
+    ) -> ListResponse:
         """
         List all items in the table for a given user.
 
         Arguments:
             user_id: The ID of the user to retrieve items for.
+            estate_id: The ID of the estate to retrieve items for.
 
         Returns:
             A ListResponse object after retrieving the items for the user.
         """
-        return await self.repository._get_all_items(user_id=user_id)
+        return await self.repository._get_all_items(
+            user_id=user_id, estate_id=estate_id
+        )
 
     async def delete(self, code: str) -> bool:
         """

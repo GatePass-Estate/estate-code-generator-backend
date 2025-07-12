@@ -121,6 +121,7 @@ async def get(
 )
 async def get_all_items_by_user(
     user_id: UUID4,
+    estate_id: UUID4,
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
@@ -128,6 +129,7 @@ async def get_all_items_by_user(
 
     Arguments:
         user_id: The user ID to be retrieved for.
+        estate_id: The estate ID to be retrieved for.
 
     Returns:
         A List response model containing reference to the retrieved items.
@@ -136,7 +138,9 @@ async def get_all_items_by_user(
         HTTPException: If there is an internal server error
     """
     try:
-        return await service.get_all_items_by_user(user_id=user_id)
+        return await service.get_all_items_by_user(
+            user_id=user_id, estate_id=estate_id
+        )
     except Exception as e:
         logger.exception("An unexpected error happened while getting items")
         raise HTTPException(
