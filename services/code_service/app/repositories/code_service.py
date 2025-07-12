@@ -118,6 +118,7 @@ class CodeServiceRepository:
         Arguments:
             user_id: The user ID to be retrieved for.
             recevier: The status of the code owner (visitor and resident)
+            user_details: The details of the user making the request.
 
         Returns:
             A List response model containing reference to the retrieved items
@@ -132,6 +133,7 @@ class CodeServiceRepository:
 
         user_id = kwargs.get("user_id", None)
         receiver = kwargs.get("receiver", None)
+        user_details = kwargs.get("user_details", None)
 
         try:
             if receiver == "visitor":
@@ -139,14 +141,18 @@ class CodeServiceRepository:
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler/all/{user_id}"
                 )
-                response = await self.ahttp_client.async_get(url)
+                params = {"estate_id": user_details.get("estate_id")}
+                response = await self.ahttp_client.async_get(url, params)
                 return response
             else:
                 url = (
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice"
                     f"/accesscode/search"
                 )
-                params = {"user_id": user_id}
+                params = {
+                    "user_id": user_id,
+                    "estate_id": user_details.get("estate_id"),
+                }
                 response = await self.ahttp_client.async_get(
                     url, params=params
                 )
@@ -274,6 +280,8 @@ class CodeServiceRepository:
 
         Arguments:
             code: The generated access code to be deleted.
+            user_details: The user details of the user trying to delete the
+                record.
 
         Returns:
             A boolean indicating whether the item was deleted successfully.
@@ -283,8 +291,23 @@ class CodeServiceRepository:
         """
 
         code = kwargs.get("code", None)
+        user_details = kwargs.get("user_details", None)
 
         try:
+            # Get the record from the database
+            record = await self._getitem(
+                ahttp_client=self.ahttp_client, code=code, receiver="visitor"
+            )
+            if record and (
+                str(record.get("user_id")) != user_details.get("id")
+            ):
+                message = (
+                    "User is not authorized to delete this resource "
+                    "due to user_id mismatch!"
+                )
+                logger.exception(message)
+                raise NotFoundError(f"Invalid code: {code}!")
+
             cache_url = (
                 f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                 f"/cachehandler/{code}"
@@ -299,6 +322,7 @@ class CodeServiceRepository:
         self,
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: str,
+        user_details: dict | None = None,
     ) -> CreateResponse:
         """
         Create a new item in the table.
@@ -306,6 +330,8 @@ class CodeServiceRepository:
         Arguments:
             request: The request body for generating a new access code.
             receiver: The status of the code owner (visitor of resident).
+            user_details: The user details of the user trying to generate the
+                code.
 
         Returns:
             The CreateResponse object after creating the item in the table.
@@ -313,6 +339,15 @@ class CodeServiceRepository:
         Raises:
             DatabaseError: If there's an error during the database operation.
         """
+        if str(request.estate_id) != user_details.get("estate_id") or str(
+            request.user_id
+        ) != user_details.get("id"):
+            message = (
+                "User is not authorized to generate code for this estate/user!"
+            )
+            logger.exception(message)
+            raise Exception("Invalid estate or user!")
+
         try:
             # Create the record in the database
             response = await self._setitem(
@@ -328,7 +363,7 @@ class CodeServiceRepository:
             raise DatabaseError(message) from e
 
     async def get(
-        self, code: str, receiver: str
+        self, code: str, receiver: str, user_details: dict | None = None
     ) -> GetResponseVisitor | GetResponseResident:
         """
         Get an item by code. If the recevier is a visitor, the retrieved record
@@ -337,6 +372,8 @@ class CodeServiceRepository:
         Arguments:
             code: The generated access code to be validated.
             receiver: The status of the code owner (visitor or resident).
+            user_details: The user details of the user trying to validate the
+                code.
 
         Returns:
             A GetResponse object after retrieving the item by id.
@@ -351,6 +388,15 @@ class CodeServiceRepository:
             record = await self._getitem(
                 ahttp_client=self.ahttp_client, code=code, receiver=receiver
             )
+
+            if record.get("estate_id") != user_details.get("estate_id"):
+                message = (
+                    "User is not authorized to access this resource "
+                    "due to estate_id mismatch!"
+                )
+                logger.exception(message)
+                raise NotFoundError(f"Invalid code: {code}!")
+
             if record and (receiver == "visitor"):
                 # Record was retrieved from the cache. Now, persist to DB.
                 visitlog_data = {
@@ -360,7 +406,7 @@ class CodeServiceRepository:
                         "relationship_with_resident"
                     ),
                     "hashed_code": record.get("hashed_code"),
-                    "security_id": "61d6c2c4-2ce1-4cec-8c29-d76899ffe247",
+                    "security_id": user_details.get("id"),
                     "visit_time": datetime.now(timezone.utc).isoformat(),
                 }
                 try:

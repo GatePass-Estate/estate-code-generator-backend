@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler
 
 security = HTTPBearer()
 SECRET_KEY = settings.SECRET_KEY
@@ -54,3 +55,14 @@ def generate_access_token(user: dict) -> str:
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_user_details(
+    http_client: AsyncHttpHandler,
+    user_id: str,
+) -> bool:
+    """
+    Retrieves user details using a given user_id.
+    """
+    url = f"{settings.DB_SERVICE_URL}api/v1/userprofile/users/{user_id}"
+    return await http_client.async_get(url)
