@@ -97,3 +97,20 @@ class CodeService:
         return await self.repository._delete(
             code=code, user_details=user_details
         )
+
+    async def update_resident_code(
+        self, user_id: UUID4, user_details: dict | None = None
+    ) -> CreateResponse:
+        """
+        Update a resident's access code by generating a new one.
+
+        Arguments:
+            user_id: The ID of the resident whose code needs to be updated.
+            user_details: The details of the user making the request.
+
+        Returns:
+            The CreateResponse object after updating the resident's code.
+        """
+        return await self.repository.update_resident_code(
+            user_id=user_id, user_details=user_details
+        )
