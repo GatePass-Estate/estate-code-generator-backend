@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from pydantic import UUID4
 
 from app.core.config import settings
 from app.core.exceptions import DatabaseError, NotFoundError
@@ -318,6 +319,97 @@ class CodeServiceRepository:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def _update_resident_code(
+        self,
+        ahttp_client: AsyncHttpHandler,
+        **kwargs,
+    ) -> dict:
+        """
+        Update a resident's access code in the database.
+
+        Arguments:
+            ahttp_client: The HttpClient session.
+            user_id: The user ID of the resident whose code needs to be updated
+            user_details: The details of the user making the request.
+
+        Returns:
+            dict: Returns the response dict containing the new code details.
+
+        Raises:
+            HTTPException: If there is an unexpected error during the update.
+            NotFoundError: If the resident code is not found.
+        """
+        user_id = kwargs.get("user_id", None)
+        user_details = kwargs.get("user_details", None)
+
+        try:
+            # First, check if the resident code exists
+            db_url = (
+                f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                f"/accesscode/search"
+            )
+            params = {
+                "user_id": user_id,
+                "estate_id": user_details.get("estate_id"),
+            }
+            existing_response = await ahttp_client.async_get(
+                db_url, params=params
+            )
+
+            if not existing_response.get("items"):
+                raise NotFoundError(f"No code found for resident {user_id}!")
+
+            # Generate new code
+            now = datetime.now(timezone.utc)
+            new_code = generate_unique_code(
+                user_id=user_id,
+                estate_id=user_details.get("estate_id"),
+                date=now.strftime("%Y-%m-%d"),
+                hour=now.strftime("%H"),
+                receiver="resident",
+            )
+
+            # Calculate new expiry date
+            valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+            valid_until = self._format_datetime(valid_until)
+
+            # Update the existing record
+            id = existing_response.get("items")[0]["id"]
+            update_url = (
+                f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/{id}"
+            )
+            update_data = {
+                "user_id": str(user_id),
+                "estate_id": user_details.get("estate_id"),
+                "hashed_code": new_code,
+                "valid_until": valid_until,
+            }
+
+            try:
+                update_response = await ahttp_client.async_patch(
+                    update_url, json_data=update_data
+                )
+                logger.info("Resident code updated in DB: %s", update_response)
+            except Exception as update_exception:
+                logger.error(
+                    "Error updating resident code %s in DB: %s",
+                    new_code,
+                    update_exception,
+                )
+                raise Exception("Failed to update code for resident!")
+
+            response = {
+                "hashed_code": new_code,
+                "valid_until": valid_until,
+            }
+            return response
+
+        except NotFoundError:
+            raise NotFoundError(f"No code found for resident {user_id}!")
+        except Exception as e:
+            logger.error(e)
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def create(
         self,
         request: CreateRequestVisitor | CreateRequestResident,
@@ -447,3 +539,46 @@ class CodeServiceRepository:
             message = f"Error in getting a record with code {code}"
             logger.exception(message)
             raise Exception(message) from e
+
+    async def update_resident_code(
+        self, user_id: UUID4, user_details: dict | None = None
+    ) -> CreateResponse:
+        """
+        Update a resident's access code.
+
+        Arguments:
+            user_id: The ID of the resident whose code needs to be updated.
+            user_details: The user details of the user making the request.
+
+        Returns:
+            The CreateResponse object after updating the resident's code.
+
+        Raises:
+            DatabaseError: If there's an error during the database operation.
+            NotFoundError: If the resident code is not found.
+        """
+        # Validate that the user is authorized to update this resident's code
+        if str(user_id) != user_details.get("id"):
+            message = (
+                "User is not authorized to update code for this resident!"
+            )
+            logger.exception(message)
+            raise Exception("Invalid user!")
+
+        try:
+            # Update the resident's code
+            response = await self._update_resident_code(
+                ahttp_client=self.ahttp_client,
+                user_id=user_id,
+                user_details=user_details,
+            )
+            updated_record = CreateResponse.model_validate(response)
+            return updated_record
+        except NotFoundError as e:
+            message = f"Resident code not found for user {user_id}"
+            logger.exception(message)
+            raise NotFoundError(message) from e
+        except DatabaseError as e:
+            message = "Database error in updating the resident's access code"
+            logger.exception(message)
+            raise DatabaseError(message) from e
