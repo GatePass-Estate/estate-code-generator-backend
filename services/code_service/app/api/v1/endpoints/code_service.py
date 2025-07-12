@@ -290,3 +290,69 @@ async def delete(
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
+
+
+@router.patch(
+    "/resident/{user_id}",
+    response_model=CreateResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Resident code not found"},
+        200: {"description": "Resident code updated successfully"},
+    },
+    description="Update a resident's access code",
+)
+async def update_resident_code(
+    user_id: UUID4,
+    service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> CreateResponse:
+    """
+    Update a resident's access code by generating a new one.
+
+    Arguments:
+        user_id: The user ID of the resident whose code needs to be updated.
+
+    Returns:
+        The response model containing the new access code details.
+
+    Raises:
+        HTTPException: If there is an internal server error or resident code
+        not found
+    """
+    # Extract complete user_details
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+
+    # Extract role of the requester
+    requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
+
+    # Check permission to update codes
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403, detail="You are not authorized to update codes."
+        )
+
+    try:
+        return await service.update_resident_code(
+            user_id=user_id, user_details=user_details
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"{e}") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while updating resident code"
+            f"\nError: {e}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

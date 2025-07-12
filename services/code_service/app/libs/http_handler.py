@@ -111,6 +111,42 @@ class AsyncHttpHandler:
             except Exception as e:
                 raise Exception(f"DELETE request unexpected error: {e}")
 
+    async def async_patch(
+        self,
+        url: str,
+        data: dict = None,
+        json_data: dict = None,
+        headers: dict = None,
+    ):
+        """
+        Performs an asynchronous PATCH request using httpx.
+
+        :param url: URL to request.
+        :param data: (Optional) Dictionary of form data.
+        :param json_data: (Optional) Dictionary of JSON payload.
+        :param headers: (Optional) Dictionary of HTTP headers.
+        :return: Parsed JSON response, or None if an error occurred.
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.patch(
+                    url, data=data, json=json_data, headers=headers
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                raise Exception(
+                    "PATCH request failed with status "
+                    f"{e.response.status_code}: {e.response.text}"
+                )
+            except httpx.RequestError as e:
+                raise Exception(
+                    f"PATCH request encountered a network error: {e}"
+                )
+            except Exception as e:
+                raise Exception(f"PATCH request unexpected error: {e}")
+        return None
+
 
 handler = AsyncHttpHandler()
 
