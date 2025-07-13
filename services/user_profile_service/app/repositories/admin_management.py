@@ -125,3 +125,24 @@ class AdminRepository:
             )
 
         return response
+
+    async def check_primary_admin_exists(self, estate_id: str) -> bool:
+        """
+        Checks if a primary admin exists for the given estate ID.
+
+        Arguments:
+            estate_id: The ID of the estate.
+
+        Returns:
+            bool: True if a primary admin exists, False otherwise.
+        """
+        url = (
+            f"{self.admin_endpoint}/search?"
+            f"estate_id={estate_id}&is_primary=true"
+        )
+        response = await self.client.async_get(url)
+        response = response["items"]
+
+        if response and not response[0]["is_deleted"]:
+            return True
+        return False

@@ -3,6 +3,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from app.core.config import settings
 from datetime import datetime, timedelta, timezone
+from app.libs.http_handler import get_http_handler, AsyncHttpHandler
+from app.repositories.user import UserRepository
 
 security = HTTPBearer()
 SECRET_KEY = settings.SECRET_KEY
@@ -12,6 +14,7 @@ TOKEN_EXPIRE_MINUTES = settings.LOGIN_EXPIRE_MINUTES
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ) -> dict:
     """
     Extracts user info from JWT access token in Authorization header.
@@ -25,6 +28,14 @@ async def get_current_user(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload["sub"]
+        user_repo = UserRepository(ahttp_client)
+        valid_user = await user_repo.check_user_exists(user_id)
+        if not valid_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
         return {
             "id": payload["sub"],
             "role": payload["role"],
