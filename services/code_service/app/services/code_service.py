@@ -13,6 +13,7 @@ from app.schemas.code_service import (
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
+    Receiver,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class CodeService:
     async def generate(
         self,
         request: CreateRequestVisitor | CreateRequestResident,
-        receiver: str,
+        receiver: Receiver,
         user_details: dict | None = None,
     ) -> CreateResponse:
         """
@@ -52,7 +53,7 @@ class CodeService:
         )
 
     async def validate(
-        self, code: str, receiver: str, user_details: dict | None = None
+        self, code: str, receiver: Receiver, user_details: dict | None = None
     ) -> GetResponseResident | GetResponseVisitor:
         """
         Get an item by ID.
@@ -70,7 +71,10 @@ class CodeService:
         )
 
     async def get_items_by_user(
-        self, user_id: UUID4, receiver: str, user_details: dict | None = None
+        self,
+        user_id: UUID4,
+        receiver: Receiver,
+        user_details: dict | None = None,
     ) -> ListResponse | GetResponseResident:
         """
         Get items from the table by user ID.

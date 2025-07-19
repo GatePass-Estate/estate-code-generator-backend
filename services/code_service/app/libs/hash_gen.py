@@ -1,5 +1,7 @@
 import hashlib
 
+from app.schemas.code_service import Receiver
+
 
 def generate_unique_code(
     user_id: str,
@@ -8,7 +10,7 @@ def generate_unique_code(
     relationship_with_resident: str = None,
     date: str = None,
     hour: str = None,
-    receiver: str = None,
+    receiver: Receiver = None,
 ) -> str:
     """
     Generate a unique 6-character alphanumeric code based on input details.
@@ -21,7 +23,7 @@ def generate_unique_code(
         date (str): The date of the visit, typically in YYYY-MM-DD
             format.
         hour (str): The hour of the visit.
-        recevier (str): The status of the code owner (visitor or resident),
+        recevier (Receiver): The status of the code owner (visitor or resident)
             which determines the logic pathway to execute.
 
     Returns:
@@ -30,7 +32,7 @@ def generate_unique_code(
     """
 
     # Combine the input fields into a single string
-    if receiver == "visitor":
+    if receiver == Receiver.VISITOR:
         combined = (
             f"{user_id}|{estate_id}|{visitor_fullname}|"
             f"{relationship_with_resident}|{date}|{hour}"
