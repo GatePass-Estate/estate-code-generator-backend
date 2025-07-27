@@ -4,7 +4,7 @@ from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
-from app.schemas.code_service.visitor_log import Relation
+from app.schemas.code_service.visitor_log import Gender, Relation
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class VisitorLog(BaseModelDB):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -50,6 +51,16 @@ class VisitorLog(BaseModelDB):
         ),
         nullable=False,
         doc="Category of the step",
+    )
+    gender = Column(
+        type_=Enum(
+            Gender,
+            name="gender",
+            schema="core",
+            create_type=False,
+        ),
+        nullable=False,
+        doc="Gender of the visitor",
     )
     hashed_code = Column(
         type_=String,

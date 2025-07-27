@@ -171,6 +171,7 @@ async def search(
     user_id: UUID4 | None = None,
     visitor_fullname: str | None = None,
     relationship_with_resident: str | None = None,
+    gender: str | None = None,
     hashed_code: str | None = None,
     security_id: UUID4 | None = None,
     visit_time: datetime.date | None = None,
@@ -194,6 +195,7 @@ async def search(
         visitor_fullname: Full name of the visitor.
         relationship_with_resident: Relation: family, partner,
             friend, delivery, taxi, technician.
+        gender (Gender): Gender: male, female
         hashed_code: Visitor's generated access code.
         security_id: Security personnel who validated the visit.
         visit_time: Timestamp of visitor validation
