@@ -14,6 +14,7 @@ from app.schemas.code_service import (
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
+    Receiver,
 )
 from app.services.code_service import (
     CodeService as Service,
@@ -66,6 +67,18 @@ async def generate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    try:
+        # Option 1: Direct enum validation
+        receiver = Receiver(receiver)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid receiver type. Must be one of: "
+                f"{[r.value for r in Receiver]}"
+            ),
+        )
+
     # Extract complete user_details
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
@@ -130,6 +143,18 @@ async def validate(
     Raises:
         HTTPException: If there is an internal server error
     """
+    try:
+        # Option 1: Direct enum validation
+        receiver = Receiver(receiver)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid receiver type. Must be one of: "
+                f"{[r.value for r in Receiver]}"
+            ),
+        )
+
     # Extract complete user_details
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
@@ -196,6 +221,18 @@ async def get_all_codes_by_user(
     Raises:
         HTTPException: If there is an internal server error
     """
+    try:
+        # Option 1: Direct enum validation
+        receiver = Receiver(receiver)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid receiver type. Must be one of: "
+                f"{[r.value for r in Receiver]}"
+            ),
+        )
+
     # Extract complete user_details
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]

@@ -15,6 +15,7 @@ from app.schemas.code_service import (
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
+    Receiver,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ class CodeServiceRepository:
 
         # TODO: Account for receiver=resident and call from db-service instead
         try:
-            if receiver == "visitor":
+            if receiver == Receiver.VISITOR:
                 url = (
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler/{code}"
@@ -73,7 +74,7 @@ class CodeServiceRepository:
                 if not response:
                     raise NotFoundError("Invalid code!")
                 return response
-            else:
+            elif receiver == Receiver.RESIDENT:
                 url = (
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice"
                     f"/accesscode/search"
@@ -137,7 +138,7 @@ class CodeServiceRepository:
         user_details = kwargs.get("user_details", None)
 
         try:
-            if receiver == "visitor":
+            if receiver == Receiver.VISITOR:
                 url = (
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler/all/{user_id}"
@@ -145,7 +146,7 @@ class CodeServiceRepository:
                 params = {"estate_id": user_details.get("estate_id")}
                 response = await self.ahttp_client.async_get(url, params)
                 return response
-            else:
+            elif receiver == Receiver.RESIDENT:
                 url = (
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice"
                     f"/accesscode/search"
@@ -192,7 +193,7 @@ class CodeServiceRepository:
         self,
         ahttp_client: AsyncHttpHandler,
         request: CreateRequestVisitor | CreateRequestResident,
-        receiver: str,
+        receiver: Receiver,
     ) -> dict:
         """
         Create a new record in the database.
@@ -201,7 +202,8 @@ class CodeServiceRepository:
             session (AsyncHttpHandler): The HttpClient session.
             request (CreateRequestVisito | CreateRequestResident): The record
                 to be created/inserted in the database/redis cache.
-            recevier (str): The status of the code owner (visitor or resident).
+            recevier (Receiver): The status of the code owner (visitor or
+                resident).
 
         Returns:
             dict: Returns the response dict containing the details of the
@@ -212,7 +214,7 @@ class CodeServiceRepository:
                 retrieval.
         """
         try:
-            if receiver == "visitor":
+            if receiver == Receiver.VISITOR:
                 cache_url = (
                     f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
                     f"/cachehandler"
@@ -229,7 +231,7 @@ class CodeServiceRepository:
                     ),
                     date=now.strftime("%Y-%m-%d"),
                     hour=now.strftime("%H"),
-                    receiver="visitor",
+                    receiver=receiver,
                 )
                 visit_data["hashed_code"] = code
                 data = {"hashed_code": code, "visit_data": visit_data}
@@ -237,7 +239,7 @@ class CodeServiceRepository:
                     cache_url, json_data=data
                 )
                 return response
-            else:
+            elif receiver == Receiver.RESIDENT:
                 db_url = (
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode"
                 )
@@ -249,7 +251,7 @@ class CodeServiceRepository:
                     estate_id=resident_data.get("estate_id"),
                     date=now.strftime("%Y-%m-%d"),
                     hour=now.strftime("%H"),
-                    receiver="resident",
+                    receiver=receiver,
                 )
                 resident_data["hashed_code"] = code
                 valid_until = datetime.now(timezone.utc) + timedelta(days=120)
@@ -297,7 +299,9 @@ class CodeServiceRepository:
         try:
             # Get the record from the database
             record = await self._getitem(
-                ahttp_client=self.ahttp_client, code=code, receiver="visitor"
+                ahttp_client=self.ahttp_client,
+                code=code,
+                receiver=Receiver.VISITOR,
             )
             if record and (
                 str(record.get("user_id")) != user_details.get("id")
@@ -366,7 +370,7 @@ class CodeServiceRepository:
                 estate_id=user_details.get("estate_id"),
                 date=now.strftime("%Y-%m-%d"),
                 hour=now.strftime("%H"),
-                receiver="resident",
+                receiver=Receiver.RESIDENT,
             )
 
             # Calculate new expiry date
@@ -413,7 +417,7 @@ class CodeServiceRepository:
     async def create(
         self,
         request: CreateRequestVisitor | CreateRequestResident,
-        receiver: str,
+        receiver: Receiver,
         user_details: dict | None = None,
     ) -> CreateResponse:
         """
@@ -455,7 +459,7 @@ class CodeServiceRepository:
             raise DatabaseError(message) from e
 
     async def get(
-        self, code: str, receiver: str, user_details: dict | None = None
+        self, code: str, receiver: Receiver, user_details: dict | None = None
     ) -> GetResponseVisitor | GetResponseResident:
         """
         Get an item by code. If the recevier is a visitor, the retrieved record
@@ -489,7 +493,7 @@ class CodeServiceRepository:
                 logger.exception(message)
                 raise NotFoundError(f"Invalid code: {code}!")
 
-            if record and (receiver == "visitor"):
+            if record and (receiver == Receiver.VISITOR):
                 # Record was retrieved from the cache. Now, persist to DB.
                 visitlog_data = {
                     "user_id": record.get("user_id"),
@@ -523,7 +527,7 @@ class CodeServiceRepository:
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
                 )
-            else:
+            elif record and (receiver == Receiver.RESIDENT):
                 return GetResponseResident.model_validate(
                     record, from_attributes=True
                 )

@@ -26,6 +26,15 @@ model_config = ConfigDict(
 )
 
 
+class Receiver(str, Enum):
+    """
+    Enumeration of supported receiver: visitor and resident
+    """
+
+    VISITOR = "visitor"
+    RESIDENT = "resident"
+
+
 class Relation(str, Enum):
     """
     Enumeration of supported resident-guest relation: family, partner,
@@ -40,8 +49,6 @@ class Relation(str, Enum):
     DELIVERY = "delivery"
 
 
-# TODO: split pydantic models, using the current ones as visitor's model and
-# add more for resident's model
 class VisitorData(BaseModel):
     """
     Model for Composer Workflows table.
