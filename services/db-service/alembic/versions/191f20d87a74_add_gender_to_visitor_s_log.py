@@ -22,6 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 gender = postgresql.ENUM(
     "MALE",
     "FEMALE",
+    "PREFER_NOT_TO_SAY",
     name="gender",
     schema="core",
     create_type=False,

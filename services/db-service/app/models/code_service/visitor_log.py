@@ -24,7 +24,7 @@ class VisitorLog(BaseModelDB):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
-        gender (Gender): Gender: male, female
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation

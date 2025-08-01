@@ -44,6 +44,7 @@ class Gender(str, Enum):
 
     MALE = "male"
     FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
 
 
 class VisitorData(BaseModel):
@@ -56,7 +57,7 @@ class VisitorData(BaseModel):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
-        gender (Gender): Gender: male, female
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
     """
 
@@ -83,7 +84,7 @@ class VisitorData(BaseModel):
     )
     gender: Gender = Field(
         ...,
-        description="Gender: male, female",
+        description="Gender: male, female, prefer_not_to_say",
     )
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"

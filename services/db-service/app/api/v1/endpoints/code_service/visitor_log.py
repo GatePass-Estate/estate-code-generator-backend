@@ -195,7 +195,7 @@ async def search(
         visitor_fullname: Full name of the visitor.
         relationship_with_resident: Relation: family, partner,
             friend, delivery, taxi, technician.
-        gender (Gender): Gender: male, female
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code: Visitor's generated access code.
         security_id: Security personnel who validated the visit.
         visit_time: Timestamp of visitor validation
