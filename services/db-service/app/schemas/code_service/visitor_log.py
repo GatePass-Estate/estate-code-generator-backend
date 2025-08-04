@@ -37,6 +37,16 @@ class Relation(str, Enum):
     DELIVERY = "delivery"
 
 
+class Gender(str, Enum):
+    """
+    Enumeration of supported gender: male, female, prefer_not_to_say
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+
 class VisitorLogBase(BaseModel):
     """
     Model for Composer Workflows table.
@@ -46,6 +56,7 @@ class VisitorLogBase(BaseModel):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -63,6 +74,10 @@ class VisitorLogBase(BaseModel):
     relationship_with_resident: Relation = Field(
         ...,
         description="Relation: family, partner, friend, delivery, taxi, etc",
+    )
+    gender: Gender = Field(
+        ...,
+        description="Gender: male, female, prefer_not_to_say",
     )
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
@@ -92,6 +107,7 @@ class CreateRequest(VisitorLogBase):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -125,13 +141,11 @@ class UpdateRequest(BaseModel):
     only the fields that need to be updated should be provided.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -151,6 +165,10 @@ class UpdateRequest(BaseModel):
     relationship_with_resident: Relation | None = Field(
         default=None,
         description="Relation: family, partner, friend, delivery, taxi, etc",
+    )
+    gender: Gender | None = Field(
+        default=None,
+        description="Gender: male, female, prefer_not_to_say",
     )
     hashed_code: str | None = Field(
         default=None, description="Visitor's generated access code"
@@ -213,6 +231,7 @@ class GetResponse(SharedModel, VisitorLogBase):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -233,6 +252,7 @@ class SearchRequest(BaseSearchRequest):
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
+        gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
@@ -243,6 +263,10 @@ class SearchRequest(BaseSearchRequest):
     )
     relationship_with_resident: str | None = Field(
         default=None, description="Description of the workflow"
+    )
+    gender: Gender | None = Field(
+        default=None,
+        description="Gender: male, female, prefer_not_to_say",
     )
     hashed_code: str | None = Field(
         default=None,

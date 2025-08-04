@@ -501,6 +501,7 @@ class CodeServiceRepository:
                     "relationship_with_resident": record.get(
                         "relationship_with_resident"
                     ),
+                    "gender": record.get("gender"),
                     "hashed_code": record.get("hashed_code"),
                     "security_id": user_details.get("id"),
                     "visit_time": datetime.now(timezone.utc).isoformat(),
