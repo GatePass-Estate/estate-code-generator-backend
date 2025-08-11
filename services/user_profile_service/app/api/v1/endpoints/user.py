@@ -83,7 +83,7 @@ async def register_user(
             )
         user_id = current_user["id"]
         estate_id = await service.get_estate_id_by_user_id(user_id)
-        if estate_id != request.estate_id:
+        if estate_id != str(request.estate_id):
             raise HTTPException(
                 status_code=403,
                 detail="Not authorized to register users for this estate.",
