@@ -33,11 +33,19 @@ class RegisterEstateRequest(BaseModel):
     Attributes:
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID4): Optional Primary admin ID.
     """
 
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    lga: Optional[str] = Field(None, description="Local Government Area")
+    state: Optional[str] = Field(None, description="State")
+    country: Optional[str] = Field(None, description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
     )
@@ -59,6 +67,10 @@ class RegisterEstateResponse(BaseModel):
         id (UUID4): Estate ID.
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID4): Primary admin ID.
         created_at (datetime): Creation timestamp.
     """
@@ -66,6 +78,10 @@ class RegisterEstateResponse(BaseModel):
     id: UUID4 = Field(..., description="Estate ID")
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    lga: Optional[str] = Field(None, description="Local Government Area")
+    state: Optional[str] = Field(None, description="State")
+    country: Optional[str] = Field(None, description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
     )
@@ -92,11 +108,19 @@ class UpdateEstateRequest(BaseModel):
     Attributes:
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID4): Reference to the primary admin.
     """
 
     name: Optional[str] = Field(None, description="Estate name")
     location: Optional[str] = Field(None, description="Estate location")
+    lga: Optional[str] = Field(None, description="Local Government Area")
+    state: Optional[str] = Field(None, description="State")
+    country: Optional[str] = Field(None, description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Reference to the primary admin"
     )
@@ -139,6 +163,10 @@ class GetEstateResponse(BaseModel):
         id (UUID4): Estate ID.
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID4): Primary admin ID.
         created_at (datetime): Creation timestamp.
         updated_at (datetime): Last update timestamp.
@@ -148,6 +176,10 @@ class GetEstateResponse(BaseModel):
     id: UUID4 = Field(..., description="Estate ID")
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    lga: Optional[str] = Field(None, description="Local Government Area")
+    state: Optional[str] = Field(None, description="State")
+    country: Optional[str] = Field(None, description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
     )
@@ -194,6 +226,10 @@ class SearchEstateRequest(BaseModel):
     Attributes:
         name (str): Filter by estate name (partial match).
         location (str): Filter by estate location (partial match).
+        lga (str): Filter by LGA (partial match).
+        state (str): Filter by state (partial match).
+        country (str): Filter by country (partial match).
+        postal_code (str): Filter by postal code (partial match).
         primary_admin_id (UUID4): Filter by primary admin ID.
         from_date (datetime): Filter by creation date (from).
         to_date (datetime): Filter by creation date (to).
@@ -204,6 +240,12 @@ class SearchEstateRequest(BaseModel):
     name: Optional[str] = Field(None, description="Filter by estate name")
     location: Optional[str] = Field(
         None, description="Filter by estate location"
+    )
+    lga: Optional[str] = Field(None, description="Filter by LGA")
+    state: Optional[str] = Field(None, description="Filter by state")
+    country: Optional[str] = Field(None, description="Filter by country")
+    postal_code: Optional[str] = Field(
+        None, description="Filter by postal code"
     )
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Filter by primary admin ID"

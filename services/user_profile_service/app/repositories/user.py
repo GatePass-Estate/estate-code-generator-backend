@@ -72,6 +72,7 @@ class UserRepository:
             "email": request.email,
             "password": password,
             "phone_number": request.phone_number,
+            "gender": request.gender.value,
             "role": request.role.value,
             "estate_id": str(request.estate_id),
             "household_id": (
@@ -95,6 +96,7 @@ class UserRepository:
             last_name=payload["last_name"],
             home_address=payload["home_address"],
             email=payload["email"],
+            gender=payload["gender"],
             role=payload["role"],
             estate_id=payload["estate_id"],
             household_id=payload.get("household_id"),
@@ -131,6 +133,8 @@ class UserRepository:
             payload["home_address"] = data.home_address
         if data.phone_number is not None:
             payload["phone_number"] = data.phone_number
+        if data.gender is not None:
+            payload["gender"] = data.gender.value
         if data.role is not None:
             payload["role"] = data.role.value
         if data.household_id is not None:
@@ -176,6 +180,7 @@ class UserRepository:
             email=response["email"],
             home_address=response["home_address"],
             phone_number=response.get("phone_number"),
+            gender=response["gender"],
             role=response["role"],
             estate_id=response["estate_id"],
             household_id=response.get("household_id"),
@@ -207,6 +212,7 @@ class UserRepository:
                 email=user_data["email"],
                 home_address=user_data["home_address"],
                 phone_number=user_data.get("phone_number"),
+                gender=user_data["gender"],
                 role=user_data["role"],
                 estate_id=user_data["estate_id"],
                 household_id=user_data.get("household_id"),
@@ -266,6 +272,8 @@ class UserRepository:
             params["last_name"] = request.last_name
         if request.email:
             params["email"] = request.email
+        if request.gender:
+            params["gender"] = request.gender.value
         if request.role:
             params["role"] = request.role.value
         if request.estate_id:
@@ -310,6 +318,7 @@ class UserRepository:
                 email=item["email"],
                 home_address=item["home_address"],
                 phone_number=item.get("phone_number"),
+                gender=item["gender"],
                 role=item["role"],
                 estate_id=item.get("estate_id"),
                 household_id=item.get("household_id"),
@@ -383,6 +392,7 @@ class UserRepository:
             email=user_data["email"],
             home_address=user_data["home_address"],
             phone_number=user_data.get("phone_number"),
+            gender=user_data["gender"],
             role=user_data["role"],
             estate_id=user_data.get("estate_id"),
             household_id=user_data.get("household_id"),

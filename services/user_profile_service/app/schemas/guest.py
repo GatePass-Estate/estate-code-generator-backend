@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from pydantic import (
     BaseModel,
     Field,
@@ -25,6 +26,16 @@ model_config = ConfigDict(
 )
 
 
+class Gender(str, Enum):
+    """
+    Enumeration of supported gender options.
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+
 class RegisterGuestRequest(BaseModel):
     """
     Request model to register a new guest.
@@ -33,7 +44,7 @@ class RegisterGuestRequest(BaseModel):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
-        guest_gender (str): Gender of the guest.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -47,9 +58,7 @@ class RegisterGuestRequest(BaseModel):
         None, description="Phone number of the guest"
     )
 
-    guest_gender: Optional[str] = Field(
-        None, description="Gender of the guest"
-    )
+    gender: Gender = Field(..., description="Gender of the guest")
 
     relationship: str = Field(..., description="Relationship with guest")
 
@@ -87,7 +96,7 @@ class UpdateGuestRequest(BaseModel):
     Attributes:
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
-        guest_gender (str): Gender of the guest.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -97,9 +106,7 @@ class UpdateGuestRequest(BaseModel):
     guest_phone_number: Optional[str] = Field(
         None, description="Guest's phone number"
     )
-    guest_gender: Optional[str] = Field(
-        None, description="Gender of the guest"
-    )
+    gender: Optional[Gender] = Field(None, description="Gender of the guest")
     relationship: Optional[str] = Field(
         None, description="Relationship with guest", min_length=1
     )
@@ -139,7 +146,7 @@ class GetGuestResponse(BaseModel):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
-        guest_gender (str): Optional Guest Gender.
+        gender (Gender): Optional Guest Gender.
         relationship (str): Relationship with guest.
         created_at (datetime): Creation timestamp.
         updated_at (datetime): Last update timestamp.
@@ -149,7 +156,7 @@ class GetGuestResponse(BaseModel):
     id: UUID4 = Field(..., description="Guest ID")
     resident_id: UUID4 = Field(..., description="Resident ID")
     guest_name: str = Field(..., description="Guest name")
-    guest_gender: Optional[str] = Field(..., description="Guest's gender")
+    gender: Gender = Field(..., description="Guest's gender")
     guest_phone_number: Optional[str] = Field(
         None, description="Guest's phone number"
     )
@@ -192,7 +199,7 @@ class SearchGuestRequest(BaseModel):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
-        guest_gender (str): Gender of Guest.
+        gender (Gender): Gender of Guest.
         relationship (str): Relationship with guest.
         from_date (datetime): Filter by creation date (from).
         to_date (datetime): Filter by creation date (to).
@@ -212,7 +219,7 @@ class SearchGuestRequest(BaseModel):
     resident_id: Optional[UUID4] = Field(
         None, description="Resident who saved the guest"
     )
-    guest_gender: Optional[str] = Field(None, description="Gender of guest")
+    gender: Optional[Gender] = Field(None, description="Gender of guest")
     from_date: Optional[datetime] = Field(
         None, description="Filter by creation date (from)"
     )

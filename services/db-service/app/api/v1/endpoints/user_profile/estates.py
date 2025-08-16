@@ -170,6 +170,10 @@ async def delete(
 async def search(
     name: str | None = None,
     location: str | None = None,
+    lga: str | None = None,
+    state: str | None = None,
+    country: str | None = None,
+    postal_code: str | None = None,
     primary_admin_id: UUID4 | None = None,
     from_date: datetime.date | None = None,
     to_date: datetime.date | None = None,
@@ -189,6 +193,10 @@ async def search(
         limit: The number of items per page.
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
 
     Returns:

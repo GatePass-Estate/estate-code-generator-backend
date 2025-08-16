@@ -13,6 +13,7 @@ from app.schemas.base import (
 
 __all__ = [
     "UserRole",
+    "Gender",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -38,6 +39,16 @@ class UserRole(str, Enum):
     GUEST = "guest"
 
 
+class Gender(str, Enum):
+    """
+    Enumeration of supported gender options.
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+
 class UserBase(BaseModel):
     """
     Base user model containing common fields.
@@ -49,6 +60,7 @@ class UserBase(BaseModel):
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         password (str): Hashed password.
+        gender (Gender): User's gender.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
@@ -68,6 +80,8 @@ class UserBase(BaseModel):
     home_address: str = Field(..., description="Home address")
 
     password: str = Field(..., description="Hashed password")
+
+    gender: Gender = Field(..., description="User's gender")
 
     estate_id: UUID4 | None = Field(
         default=None, description="Estate the user is registered to"
@@ -103,6 +117,7 @@ class CreateRequest(UserBase):
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         password (str): Hashed password.
+        gender (Gender): User's gender.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
@@ -146,6 +161,7 @@ class UpdateRequest(BaseModel):
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         password (str): Hashed password.
+        gender (Gender): User's gender.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
@@ -164,6 +180,7 @@ class UpdateRequest(BaseModel):
     )
     home_address: str | None = Field(default=None, description="Home address")
     password: str | None = Field(default=None, description="Hashed password")
+    gender: Gender | None = Field(default=None, description="User's gender")
     estate_id: UUID4 | None = Field(
         default=None, description="Estate the user is registered to"
     )
@@ -233,6 +250,7 @@ class GetResponse(SharedModel, UserBase):
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         password (str): Hashed password.
+        gender (Gender): User's gender.
         estate_id (UUID): Reference to the estate.
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
@@ -254,6 +272,7 @@ class SearchRequest(BaseSearchRequest):
         first_name (str): First name of the user.
         last_name (str): Last name of the user.
         email (str): Unique email for authentication.
+        gender (Gender): User's gender.
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         estate_id (UUID): Reference to the estate.
@@ -271,6 +290,7 @@ class SearchRequest(BaseSearchRequest):
         None, description="Phone number of the user"
     )
     home_address: Optional[str] = Field(None, description="Home address")
+    gender: Optional[Gender] = Field(None, description="User's gender")
     estate_id: Optional[UUID4] = Field(
         None, description="Reference to the estate"
     )

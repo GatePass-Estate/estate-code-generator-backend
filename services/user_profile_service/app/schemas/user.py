@@ -40,6 +40,16 @@ class Role(str, Enum):
     GUEST = "guest"
 
 
+class Gender(str, Enum):
+    """
+    Enumeration of supported gender options.
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+
 class RegisterUserRequest(BaseModel):
     """
     Request model to register a new user.
@@ -50,6 +60,7 @@ class RegisterUserRequest(BaseModel):
         home_address (str): User's home address.
         email (EmailStr): User's email address.
         phone_number (str): User's phone number.
+        gender (Gender): User's gender.
         role (Role): User role.
         estate_id (UUID4): Estate the user belongs to.
         household_id (UUID4): Optional household ID.
@@ -64,6 +75,7 @@ class RegisterUserRequest(BaseModel):
     phone_number: Optional[str] = Field(
         None, description="User's phone number"
     )
+    gender: Gender = Field(..., description="User's gender")
     role: Role = Field(..., description="User role")
     estate_id: UUID4 = Field(..., description="Estate the user belongs to")
     household_id: Optional[UUID4] = Field(
@@ -93,6 +105,7 @@ class RegisterUserResponse(BaseModel):
         last_name (str): User's last name.
         home_address (str): User's home address.
         email (EmailStr): User's email address.
+        gender (Gender): User's gender.
         role (Role): Assigned user role.
         estate_id (UUID4): Estate the user belongs to.
         household_id (UUID4 | None): Optional household ID.
@@ -105,6 +118,7 @@ class RegisterUserResponse(BaseModel):
     last_name: str = Field(..., description="User's last name")
     home_address: str = Field(..., description="User's home address")
     email: EmailStr = Field(..., description="User's email address")
+    gender: Gender = Field(..., description="User's gender")
     role: Role = Field(..., description="Assigned user role")
     estate_id: Optional[UUID4] | None = Field(
         None, description="Estate the user belongs to"
@@ -142,6 +156,7 @@ class UpdateUserRequest(BaseModel):
         last_name (str): User's last name.
         home_address (str): User's home address.
         phone_number (str): User's phone number.
+        gender (Gender): User's gender.
         role (Role): User's role.
         household_id (UUID4): Household ID.
     """
@@ -158,6 +173,7 @@ class UpdateUserRequest(BaseModel):
     phone_number: Optional[str] = Field(
         None, description="User's phone number"
     )
+    gender: Optional[Gender] = Field(None, description="User's gender")
     role: Optional[Role] = Field(None, description="User's role")
     household_id: Optional[UUID4] = Field(None, description="Household ID")
 
@@ -202,6 +218,7 @@ class GetUserResponse(BaseModel):
         email (EmailStr): User's email address.
         home_address (str): User's home address.
         phone_number (str): User's phone number.
+        gender (Gender): User's gender.
         role (UserRole): User's role.
         estate_id (UUID4): Estate ID.
         household_id (UUID4): Household ID.
@@ -219,6 +236,7 @@ class GetUserResponse(BaseModel):
     phone_number: Optional[str] = Field(
         None, description="User's phone number"
     )
+    gender: Gender = Field(..., description="User's gender")
     role: Role = Field(..., description="User's role")
     estate_id: Optional[UUID4] = Field(None, description="Estate ID")
     household_id: Optional[UUID4] = Field(None, description="Household ID")
@@ -269,6 +287,7 @@ class SearchUserRequest(BaseModel):
         first_name (str): Filter by first name (partial match).
         last_name (str): Filter by last name (partial match).
         email (str): Filter by email (partial match).
+        gender (Gender): Filter by user gender.
         role (Role): Filter by user role.
         estate_id (UUID4): Filter by estate ID.
         household_id (UUID4): Filter by household ID.
@@ -282,6 +301,7 @@ class SearchUserRequest(BaseModel):
     first_name: Optional[str] = Field(None, description="Filter by first name")
     last_name: Optional[str] = Field(None, description="Filter by last name")
     email: Optional[str] = Field(None, description="Filter by email")
+    gender: Optional[Gender] = Field(None, description="Filter by user gender")
     role: Optional[Role] = Field(None, description="Filter by role")
     estate_id: Optional[UUID4] = Field(None, description="Filter by estate ID")
     household_id: Optional[UUID4] = Field(
@@ -362,6 +382,7 @@ class UserProfileResponse(BaseModel):
         home_address (str): User's home address.
         email (EmailStr): User's email address.
         phone_number (str): User's phone number.
+        gender (Gender): User's gender.
         role (Role): User's role.
         estate_name (str): Estate name.
         household_primary_resident (str): Primary resident's name.
@@ -373,6 +394,7 @@ class UserProfileResponse(BaseModel):
     home_address: str = Field(..., description="User's home address")
     email: EmailStr = Field(..., description="User's email address")
     phone_number: str = Field(..., description="User's phone number")
+    gender: Gender = Field(..., description="User's gender")
     role: Role = Field(..., description="User's role")
     estate_name: str = Field(..., description="Estate name")
     household_primary_resident: str | None = Field(

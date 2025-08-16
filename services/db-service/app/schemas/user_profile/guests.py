@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
@@ -11,6 +12,7 @@ from app.schemas.base import (
 )
 
 __all__ = [
+    "Gender",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -22,6 +24,16 @@ __all__ = [
 ]
 
 
+class Gender(str, Enum):
+    """
+    Enumeration of supported gender options.
+    """
+
+    MALE = "male"
+    FEMALE = "female"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say"
+
+
 class GuestBase(BaseModel):
     """
     Base guest model containing common fields.
@@ -30,6 +42,7 @@ class GuestBase(BaseModel):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -40,6 +53,8 @@ class GuestBase(BaseModel):
     guest_phone_number: str | None = Field(
         None, description="Phone number of the guest"
     )
+
+    gender: Gender = Field(..., description="Gender of the guest")
 
     relationship: str = Field(..., description="Relationship with guest")
 
@@ -58,6 +73,7 @@ class CreateRequest(GuestBase):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -95,6 +111,7 @@ class UpdateRequest(BaseModel):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -108,6 +125,10 @@ class UpdateRequest(BaseModel):
 
     guest_phone_number: str | None = Field(
         default=None, description="Phone number of the guest"
+    )
+
+    gender: Gender | None = Field(
+        default=None, description="Gender of the guest"
     )
 
     relationship: str | None = Field(
@@ -161,6 +182,7 @@ class GetResponse(SharedModel, GuestBase):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -179,6 +201,7 @@ class SearchRequest(BaseSearchRequest):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -188,6 +211,7 @@ class SearchRequest(BaseSearchRequest):
     guest_phone_number: Optional[str] = Field(
         None, description="Phone number of the guest"
     )
+    gender: Optional[Gender] = Field(None, description="Gender of the guest")
     relationship: Optional[str] = Field(
         None, description="Relationship with guest"
     )

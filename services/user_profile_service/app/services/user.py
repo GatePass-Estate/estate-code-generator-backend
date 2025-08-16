@@ -134,6 +134,7 @@ class UserService:
                 request.last_name,
                 request.home_address,
                 request.phone_number,
+                request.gender,
                 request.role,
                 request.household_id,
             ]
@@ -450,6 +451,7 @@ class UserService:
             home_address=user.home_address,
             email=user.email,
             phone_number=user.phone_number or "",
+            gender=user.gender,
             role=user.role,
             estate_name=estate_name,
             household_primary_resident=primary_resident_name,

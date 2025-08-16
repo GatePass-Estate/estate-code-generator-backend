@@ -9,6 +9,7 @@ from app.core.exceptions import NotFoundError
 from app.db.session import get_db_session
 from app.schemas.user_profile.users import (
     UserRole,
+    Gender,
     CreateRequest,
     CreateResponse,
     DeleteResponse,
@@ -176,6 +177,7 @@ async def search(
     home_address: str | None = None,
     household_id: UUID4 | None = None,
     estate_id: UUID4 | None = None,
+    gender: Gender | None = None,
     role: UserRole | None = None,
     status: bool | None = None,
     from_date: datetime.date | None = None,
@@ -198,6 +200,7 @@ async def search(
         last_name (str): Last name of the user.
         email (str): Unique email of the user.
         phone_number (str): Optional phone number of the user.
+        gender (Gender): User's gender.
         home_address (str): Home address.
         household_id (UUID): Reference to the household.
         estate_id (UUID): Reference to the estate.

@@ -73,6 +73,10 @@ class EstateService:
         estate_data = {
             "name": request.name,
             "location": request.location,
+            "lga": request.lga,
+            "state": request.state,
+            "country": request.country,
+            "postal_code": request.postal_code,
             "primary_admin_id": (
                 str(request.primary_admin_id)
                 if request.primary_admin_id
@@ -129,6 +133,14 @@ class EstateService:
             update_data["name"] = request.name
         if request.location is not None:
             update_data["location"] = request.location
+        if request.lga is not None:
+            update_data["lga"] = request.lga
+        if request.state is not None:
+            update_data["state"] = request.state
+        if request.country is not None:
+            update_data["country"] = request.country
+        if request.postal_code is not None:
+            update_data["postal_code"] = request.postal_code
         if request.primary_admin_id is not None:
             update_data["primary_admin_id"] = str(request.primary_admin_id)
 
@@ -169,6 +181,10 @@ class EstateService:
             id=estate.id,
             name=estate.name,
             location=estate.location,
+            lga=estate.lga,
+            state=estate.state,
+            country=estate.country,
+            postal_code=estate.postal_code,
             primary_admin_id=estate.primary_admin_id,
             created_at=estate.created_at,
             updated_at=estate.updated_at,
