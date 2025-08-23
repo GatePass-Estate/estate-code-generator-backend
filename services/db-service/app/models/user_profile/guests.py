@@ -1,8 +1,9 @@
 import logging
 
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, String, Enum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
+from app.schemas.user_profile.guests import Gender
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class Guests(BaseModelDB):
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
     """
 
@@ -32,4 +34,8 @@ class Guests(BaseModelDB):
     )
     guest_name = Column(String, nullable=False)
     guest_phone_number = Column(String, nullable=True)
+    gender = Column(
+        Enum(Gender, name="gender", schema="core", create_type=False),
+        nullable=False,
+    )
     relationship = Column(String, nullable=False)

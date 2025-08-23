@@ -52,7 +52,7 @@ class EstateRepository:
 
         Args:
             estate_data: Dictionary containing estate information
-                       (name, location, primary_admin_id)
+                       (name, location, primary_admin_id, etc)
 
         Returns:
             Dict containing the created estate data.
@@ -67,11 +67,14 @@ class EstateRepository:
             raise HTTPException(
                 status_code=500, detail="Estate creation failed."
             )
-        print(response)
         estate_response = RegisterEstateResponse(
             id=response["id"],
             name=estate_data["name"],
             location=estate_data["location"],
+            lga=estate_data["lga"],
+            state=estate_data["state"],
+            country=estate_data["country"],
+            postal_code=estate_data["postal_code"],
             primary_admin_id=estate_data.get("primary_admin_id"),
             created_at=response["created_at"],
         )
@@ -88,7 +91,7 @@ class EstateRepository:
         Args:
             estate_id: The estate ID to update.
             estate_data: Dictionary containing fields to update
-                        (name, location, primary_admin_id)
+                        (name, location, primary_admin_id, etc)
 
         Returns:
             Dict containing the updated estate data.
@@ -102,6 +105,14 @@ class EstateRepository:
             payload["name"] = estate_data.name
         if estate_data.location is not None:
             payload["location"] = estate_data.location
+        if estate_data.lga is not None:
+            payload["lga"] = estate_data.lga
+        if estate_data.state is not None:
+            payload["state"] = estate_data.state
+        if estate_data.country is not None:
+            payload["country"] = estate_data.country
+        if estate_data.postal_code is not None:
+            payload["postal_code"] = estate_data.postal_code
         if estate_data.primary_admin_id is not None:
             payload["primary_admin_id"] = str(estate_data.primary_admin_id)
 
@@ -145,6 +156,10 @@ class EstateRepository:
             id=response["id"],
             name=response["name"],
             location=response["location"],
+            lga=response.get("lga"),
+            state=response.get("state"),
+            country=response.get("country"),
+            postal_code=response.get("postal_code"),
             primary_admin_id=response.get("primary_admin_id"),
             created_at=response["created_at"],
             updated_at=response["updated_at"],
@@ -188,6 +203,10 @@ class EstateRepository:
         Args:
             name: Filter by estate name (partial match).
             location: Filter by estate location (partial match).
+            lga: Filter by local government area.
+            state: Filter by state.
+            country: Filter by country.
+            postal_code: Filter by postal code.
             primary_admin_id: Filter by primary admin ID.
             from_date: Filter by creation date (from) in ISO format.
             to_date: Filter by creation date (to) in ISO format.
@@ -203,6 +222,14 @@ class EstateRepository:
             params["name"] = request.name
         if request.location:
             params["location"] = request.location
+        if request.lga:
+            params["lga"] = request.lga
+        if request.state:
+            params["state"] = request.state
+        if request.country:
+            params["country"] = request.country
+        if request.postal_code:
+            params["postal_code"] = request.postal_code
         if request.primary_admin_id:
             params["primary_admin_id"] = request.primary_admin_id
         if request.from_date:
@@ -236,6 +263,10 @@ class EstateRepository:
                 id=item["id"],
                 name=item["name"],
                 location=item["location"],
+                lga=item.get("lga"),
+                state=item.get("state"),
+                country=item.get("country"),
+                postal_code=item.get("postal_code"),
                 primary_admin_id=item.get("primary_admin_id"),
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),

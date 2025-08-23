@@ -20,6 +20,10 @@ class Estates(BaseModelDB):
             deleted.
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
@@ -28,6 +32,10 @@ class Estates(BaseModelDB):
 
     name = Column(String, nullable=False)
     location = Column(Text, nullable=False)
+    lga = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
     primary_admin_id = Column(
         UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
     )

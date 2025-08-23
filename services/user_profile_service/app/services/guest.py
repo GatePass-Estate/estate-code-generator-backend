@@ -82,7 +82,7 @@ class GuestService:
             field is None
             for field in [
                 request.guest_name,
-                request.guest_gender,
+                request.gender,
                 request.relationship,
                 request.guest_phone_number,
             ]

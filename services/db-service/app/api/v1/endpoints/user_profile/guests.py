@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db_session
 from app.schemas.user_profile.guests import (
+    Gender,
     CreateRequest,
     CreateResponse,
     DeleteResponse,
@@ -172,6 +173,7 @@ async def search(
     guest_name: str | None = None,
     guest_phone_number: str | None = None,
     relationship: str | None = None,
+    gender: Gender | None = None,
     from_date: datetime.date | None = None,
     to_date: datetime.date | None = None,
     page: int = 1,
@@ -191,6 +193,7 @@ async def search(
         resident_id (UUID): Resident who saved the guest.
         guest_name (str): Full name of the guest.
         guest_phone_number (str): Optional phone number.
+        gender (Gender): Gender of the guest.
         relationship (str): Relationship with guest.
 
     Returns:

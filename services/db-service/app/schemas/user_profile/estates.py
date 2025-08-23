@@ -29,11 +29,19 @@ class EstateBase(BaseModel):
     Attributes:
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    lga: str | None = Field(default=None, description="Local Government Area")
+    state: str | None = Field(default=None, description="State")
+    country: str | None = Field(default=None, description="Country")
+    postal_code: str | None = Field(default=None, description="Postal code")
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin (optional)"
     )
@@ -52,6 +60,10 @@ class CreateRequest(EstateBase):
     Attributes:
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID | None): Reference to the primary admin.
     """
 
@@ -88,11 +100,19 @@ class UpdateRequest(BaseModel):
         updated_at (DateTime): Updated timestamp.
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
     name: str | None = Field(default=None, description="Estate name")
     location: str | None = Field(default=None, description="Estate location")
+    lga: str | None = Field(default=None, description="Local Government Area")
+    state: str | None = Field(default=None, description="State")
+    country: str | None = Field(default=None, description="Country")
+    postal_code: str | None = Field(default=None, description="Postal code")
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin"
     )
@@ -140,6 +160,10 @@ class GetResponse(SharedModel, EstateBase):
     Attributes:
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
@@ -157,13 +181,21 @@ class SearchRequest(BaseSearchRequest):
         limit: Number of items per page
         name (str): Estate name.
         location (str): Estate location.
+        lga (str): Local Government Area.
+        state (str): State.
+        country (str): Country.
+        postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
-    name: Optional[str] = Field(..., description="Estate name")
-    location: Optional[str] = Field(..., description="Estate location")
+    name: Optional[str] = Field(None, description="Estate name")
+    location: Optional[str] = Field(None, description="Estate location")
+    lga: Optional[str] = Field(None, description="Local Government Area")
+    state: Optional[str] = Field(None, description="State")
+    country: Optional[str] = Field(None, description="Country")
+    postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
-        ..., description="Reference to the primary admin"
+        None, description="Reference to the primary admin"
     )
 
 

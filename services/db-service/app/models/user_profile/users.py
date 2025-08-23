@@ -3,7 +3,7 @@ import logging
 from sqlalchemy import Column, String, Enum, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
-from app.schemas.user_profile.users import UserRole
+from app.schemas.user_profile.users import UserRole, Gender
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ class Users(BaseModelDB):
     phone_number = Column(String, nullable=True)
     home_address = Column(String, nullable=False)
     password = Column(String, nullable=False)
+    gender = Column(
+        Enum(Gender, name="gender", schema="core", create_type=False),
+        nullable=False,
+    )
     estate_id = Column(
         UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=True
     )

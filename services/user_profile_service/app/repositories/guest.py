@@ -61,7 +61,7 @@ class GuestRepository:
             "resident_id": request.resident_id,
             "guest_name": request.guest_name,
             "guest_phone_number": request.guest_phone_number,
-            "guest_gender": request.guest_gender,
+            "gender": request.gender,
             "relationship": request.relationship,
             "is_deleted": False,
         }
@@ -104,8 +104,8 @@ class GuestRepository:
             payload["guest_name"] = data.guest_name
         if data.guest_phone_number is not None:
             payload["guest_phone_number"] = data.guest_phone_number
-        if data.guest_gender is not None:
-            payload["guest_gender"] = data.guest_gender
+        if data.gender is not None:
+            payload["gender"] = data.gender.value
         if data.relationship is not None:
             payload["relationship"] = data.relationship
 
@@ -148,7 +148,7 @@ class GuestRepository:
             resident_id=response["resident_id"],
             guest_name=response["guest_name"],
             guest_phone_number=response.get("guest_phone_number"),
-            guest_gender=response.get("guest_gender"),
+            gender=response["gender"],
             relationship=response["relationship"],
             created_at=response["created_at"],
             updated_at=response.get("updated_at"),
@@ -204,8 +204,8 @@ class GuestRepository:
             params["guest_name"] = request.guest_name
         if request.guest_phone_number:
             params["guest_phone_number"] = request.guest_phone_number
-        if request.guest_gender:
-            params["guest_gender"] = request.guest_gender
+        if request.gender:
+            params["gender"] = request.gender.value
         if request.relationship:
             params["relationship"] = request.relationship
         if request.from_date:
@@ -242,7 +242,7 @@ class GuestRepository:
                 resident_id=item.get("resident_id"),
                 guest_name=item["guest_name"],
                 guest_phone_number=item.get("guest_phone_number"),
-                guest_gender=item.get("guest_gender"),
+                gender=item["gender"],
                 relationship=item["relationship"],
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
