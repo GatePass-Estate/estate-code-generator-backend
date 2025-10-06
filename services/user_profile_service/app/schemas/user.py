@@ -377,6 +377,7 @@ class UserProfileResponse(BaseModel):
 
     Attributes:
 
+        user_id (UUID): User ID.
         first_name (str): User's first name.
         last_name (str): User's last name.
         home_address (str): User's home address.
@@ -389,6 +390,7 @@ class UserProfileResponse(BaseModel):
         status (bool): User's status.
     """
 
+    user_id: UUID4 = Field(..., description="User ID")
     first_name: str = Field(..., description="User's first name")
     last_name: str = Field(..., description="User's last name")
     home_address: str = Field(..., description="User's home address")
@@ -401,6 +403,11 @@ class UserProfileResponse(BaseModel):
         ..., description="Primary resident's name"
     )
     status: bool = Field(..., description="User's status")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, user_id: UUID4) -> str:
+        return str(user_id)
+
     model_config = model_config
 
 

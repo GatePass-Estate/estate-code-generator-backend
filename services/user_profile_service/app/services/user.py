@@ -446,6 +446,7 @@ class UserService:
             primary_resident_name = None
 
         return UserProfileResponse(
+            user_id=user.id,
             first_name=user.first_name,
             last_name=user.last_name,
             home_address=user.home_address,
