@@ -454,6 +454,7 @@ class UserService:
             phone_number=user.phone_number or "",
             gender=user.gender,
             role=user.role,
+            estate_id=estate_id,
             estate_name=estate_name,
             household_primary_resident=primary_resident_name,
             status=user.status,

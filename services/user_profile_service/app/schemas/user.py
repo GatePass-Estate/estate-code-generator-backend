@@ -385,6 +385,7 @@ class UserProfileResponse(BaseModel):
         phone_number (str): User's phone number.
         gender (Gender): User's gender.
         role (Role): User's role.
+        estate_id (UUID4): Estate ID.
         estate_name (str): Estate name.
         household_primary_resident (str): Primary resident's name.
         status (bool): User's status.
@@ -398,6 +399,7 @@ class UserProfileResponse(BaseModel):
     phone_number: str = Field(..., description="User's phone number")
     gender: Gender = Field(..., description="User's gender")
     role: Role = Field(..., description="User's role")
+    estate_id: UUID4 = Field(..., description="Estate ID")
     estate_name: str = Field(..., description="Estate name")
     household_primary_resident: str | None = Field(
         ..., description="Primary resident's name"
@@ -407,6 +409,10 @@ class UserProfileResponse(BaseModel):
     @field_serializer("user_id")
     def serialize_user_id(self, user_id: UUID4) -> str:
         return str(user_id)
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, estate_id: UUID4) -> str:
+        return str(estate_id)
 
     model_config = model_config
 
