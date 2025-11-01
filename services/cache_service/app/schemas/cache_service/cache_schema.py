@@ -165,7 +165,7 @@ class ListResponse(BaseModel):
     model_config = model_config
 
     @field_validator("items")
-    def order_items_by_created_at_desc(cls, value):
+    def order_items_by_valid_until_desc(cls, value):
         def parse_valid_until(item):
             valid_until_str = getattr(item, "valid_until", None)
             if valid_until_str is None:
