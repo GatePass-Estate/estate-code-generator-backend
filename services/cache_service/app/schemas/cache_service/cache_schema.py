@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import List
 
@@ -7,6 +8,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_serializer,
+    field_validator,
 )
 
 __all__ = [
@@ -99,7 +101,7 @@ class CreateRequest(BaseModel):
 
     Attributes:
         hashed_code (str): Visitor's generated access code.
-        visit_data (UUID): Security personnel who validated the visit
+        visit_data (VisitorData): Pydantic model containing visitor's data
     """
 
     hashed_code: str = Field(
@@ -116,8 +118,8 @@ class CreateResponse(BaseModel):
     Base response model to CREATE a record.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
+        hashed_code (str): Visitor's generated access code.
+        valid_until (str): Timestamp of entry code expiry.
     """
 
     hashed_code: str = Field(
@@ -129,21 +131,18 @@ class CreateResponse(BaseModel):
 
 class GetResponse(VisitorData):
     """
-    Base response model to GET a record by id.
+    Base response model to GET a record by hashed code.
 
     Attributes:
-        id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
-        updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         estate_id (UUID): Reference to the visited estate.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
-        gender (Gender): Gender: male, female
+        gender (Gender): Gender: male, female, prefer_not_to_say.
         hashed_code (str): Visitor's generated access code.
-        security_id (UUID): Security personnel who validated the visit
-        visit_time (DateTime): Timestamp of visitor validation
+        valid_until (str): Timestamp of entry code expiry.
+        is_expired (bool): Flag indicating whether code is expired or not.
     """
 
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
@@ -164,3 +163,23 @@ class ListResponse(BaseModel):
         ..., description="Ordered list of table objects"
     )
     model_config = model_config
+
+    @field_validator("items")
+    def order_items_by_created_at_desc(cls, value):
+        def parse_valid_until(item):
+            valid_until_str = getattr(item, "valid_until", None)
+            if valid_until_str is None:
+                return datetime.min
+            try:
+                # Use conversion code from context
+                return datetime.strptime(
+                    valid_until_str, "%Y-%m-%d %H:%M:%S.%f%z"
+                )
+            except Exception:
+                return datetime.min
+
+        return sorted(
+            value,
+            key=parse_valid_until,
+            reverse=True,
+        )
