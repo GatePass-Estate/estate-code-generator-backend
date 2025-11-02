@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, cast, String
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -217,7 +217,7 @@ class RequestsRepository:
             record = await self._setitem(
                 session=self.session,
                 request=TableModel(
-                    **request.model_dump(exclude_unset=True)
+                    **request.model_dump(exclude_unset=True, mode="json")
                 ),  # convert the request to a database model instance.
             )
             # convert the record to a CREATE schema model.
@@ -309,7 +309,9 @@ class RequestsRepository:
             # Get the record from the database and convert to CREATE schema
             record = await self._getitem(session=self.session, id=id)
             # Update the data fields for the record with the new values.
-            record.update(**request.model_dump(exclude_unset=True))
+            record.update(
+                **request.model_dump(exclude_unset=True, mode="json")
+            )
             # update the table with the new record and mark the updated_at
             # timestamp as the current time (done within the database).
             record = await self._setitem(session=self.session, request=record)
@@ -395,11 +397,16 @@ class RequestsRepository:
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)
 
+                # Extract enum value if it's an enum
+                if hasattr(field_value, "value"):
+                    field_value = field_value.value
+
                 if isinstance(field_value, str):
                     # Normalize both column and input
                     # for case-insensitive matching
+                    # Cast column to text for enum types before applying lower
                     query = query.where(
-                        func.lower(column) == field_value.lower()
+                        func.lower(cast(column, String)) == field_value.lower()
                     )
                 else:
                     query = query.where(column == field_value)

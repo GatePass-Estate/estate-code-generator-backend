@@ -1,0 +1,323 @@
+from fastapi import HTTPException
+
+from app.schemas.request import (
+    CreateEditRequestRequest,
+    CreateEditRequestResponse,
+    GetEditRequestResponse,
+    ListEditRequestResponse,
+    SearchEditRequestRequest,
+    UpdateRequestStatusRequest,
+    UpdateRequestStatusResponse,
+    RequestType,
+    RequestStatus,
+)
+from app.repositories.request import RequestRepository
+from app.repositories.user import UserRepository
+
+
+class RequestService:
+    """
+    Service layer for handling edit request management and related logic.
+
+    Methods:
+        create_edit_request: Creates a new edit request or
+        auto-approves for admins.
+        get_request: Retrieves a request by ID.
+        search_requests: Searches requests with filters and pagination.
+        update_request_status: Approves or rejects a request.
+        list_my_requests: Lists requests for the current user.
+    """
+
+    def __init__(
+        self,
+        repository: RequestRepository,
+        user_repository: UserRepository,
+    ):
+        self.repository = repository
+        self.user_repository = user_repository
+
+    async def create_edit_request(
+        self, request: CreateEditRequestRequest, user_id: str
+    ) -> CreateEditRequestResponse:
+        """
+        Handles edit request creation flow.
+        For admins/primary_admins: auto-approves and
+        applies change immediately.
+        For residents: creates pending request for admin approval.
+
+        Args:
+            request: The incoming edit request data.
+            user_id: ID of the user making the request.
+
+        Returns:
+            CreateEditRequestResponse: Created request information.
+
+        Raises:
+            HTTPException: If creation fails or user not found.
+        """
+        user = await self.user_repository.get_user_by_id(user_id)
+        if not user or user.is_deleted or not user.status:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        request_type_value = request.request_type.value
+        old_value = self._get_current_value(user, request.request_type)
+        new_value = request.new_value
+        estate_id = str(user.estate_id)
+
+        # Check if admin or primary_admin
+        is_admin = user.role in ("admin", "primary_admin")
+
+        if is_admin:
+            # Auto-approve and apply change immediately
+            status = RequestStatus.APPROVED
+            reviewed_by = user_id
+
+            # Apply the change to the user profile
+            await self._apply_profile_change(
+                user_id, request.request_type, new_value
+            )
+        else:
+            # Create pending request for resident
+            status = RequestStatus.PENDING
+            reviewed_by = None
+
+        # Create the request record in the database
+        edit_request = await self.repository.create_request(
+            resident_id=user_id,
+            estate_id=estate_id,
+            request_type=request_type_value,
+            old_value=old_value,
+            new_value=new_value,
+            status=status.value,
+            reviewed_by=reviewed_by,
+        )
+
+        return edit_request
+
+    async def get_request(
+        self, request_id: str, user_id: str, user_role: str
+    ) -> GetEditRequestResponse:
+        """
+        Retrieves a request by ID with authorization check.
+
+        Args:
+            request_id: The request ID to retrieve.
+            user_id: ID of the user requesting access.
+            user_role: Role of the user requesting access.
+
+        Returns:
+            GetEditRequestResponse: Request information.
+
+        Raises:
+            HTTPException: If request not found or unauthorized.
+        """
+        edit_request = await self.repository.get_request_by_id(request_id)
+
+        if not edit_request or edit_request.is_deleted:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        # Authorization: user can only view their own requests unless admin
+        if user_role not in ("admin", "primary_admin", "root"):
+            if str(edit_request.resident_id) != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to view this request",
+                )
+
+        return edit_request
+
+    async def search_requests(
+        self,
+        search_request: SearchEditRequestRequest,
+        user_id: str,
+        user_role: str,
+    ) -> ListEditRequestResponse:
+        """
+        Searches requests with filters and pagination.
+        Residents can only see their own requests.
+        Admins can see all requests in their estate.
+
+        Args:
+            search_request: Search parameters.
+            user_id: ID of the user performing search.
+            user_role: Role of the user performing search.
+
+        Returns:
+            ListEditRequestResponse: Search results with pagination.
+
+        Raises:
+            HTTPException: If user not found.
+        """
+        # Get user's estate for filtering
+        user = await self.user_repository.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # For residents, filter to only their requests
+        if user_role not in ("admin", "primary_admin", "root"):
+            search_request.resident_id = user.id
+            search_request.estate_id = user.estate_id
+        else:
+            # For admins, filter to their estate if not root
+            if user_role != "root":
+                search_request.estate_id = user.estate_id
+
+        return await self.repository.search_requests(search_request)
+
+    async def update_request_status(
+        self,
+        request_id: str,
+        status_request: UpdateRequestStatusRequest,
+        reviewer_id: str,
+        reviewer_role: str,
+    ) -> UpdateRequestStatusResponse:
+        """
+        Approves or rejects a pending edit request.
+        Only admins can approve/reject requests.
+        If approved, applies the change to user profile.
+
+        Args:
+            request_id: The request ID to update.
+            status_request: New status (approved/rejected).
+            reviewer_id: ID of the admin reviewing.
+            reviewer_role: Role of the reviewer.
+
+        Returns:
+            UpdateRequestStatusResponse: Updated request information.
+
+        Raises:
+            HTTPException: If not authorized, request not found,
+            or update fails.
+        """
+        # Check authorization
+        if reviewer_role not in ("admin", "primary_admin"):
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can approve/reject requests",
+            )
+
+        # Get the request
+        edit_request = await self.repository.get_request_by_id(request_id)
+        if not edit_request or edit_request.is_deleted:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        # Check if request is already processed
+        if edit_request.status != RequestStatus.PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Request already {edit_request.status.value}",
+            )
+
+        # Verify reviewer is in same estate as requester
+        reviewer = await self.user_repository.get_user_by_id(reviewer_id)
+        if not reviewer:
+            raise HTTPException(status_code=404, detail="Reviewer not found")
+
+        if str(reviewer.estate_id) != str(edit_request.estate_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot review requests from other estates",
+            )
+
+        # Update the request status
+        updated_request = await self.repository.update_request_status(
+            request_id=request_id,
+            status=status_request.status,
+            reviewed_by=reviewer_id,
+        )
+
+        # If approved, apply the change to user profile
+        if status_request.status == RequestStatus.APPROVED:
+            request_type = RequestType(edit_request.request_type)
+            await self._apply_profile_change(
+                str(edit_request.resident_id),
+                request_type,
+                edit_request.new_value,
+            )
+
+        return updated_request
+
+    async def list_my_requests(
+        self, user_id: str, page: int = 1, limit: int = 10
+    ) -> ListEditRequestResponse:
+        """
+        Lists all requests for the current user with pagination.
+
+        Args:
+            user_id: ID of the user.
+            page: Page number for pagination.
+            limit: Number of items per page.
+
+        Returns:
+            ListEditRequestResponse: User's request list with pagination.
+        """
+        search_request = SearchEditRequestRequest(
+            resident_id=user_id, page=page, limit=limit
+        )
+        return await self.repository.search_requests(search_request)
+
+    def _get_current_value(self, user, request_type: RequestType) -> str:
+        """
+        Gets the current value of the field being requested to change.
+
+        Args:
+            user: User object.
+            request_type: Type of field.
+
+        Returns:
+            Current value as string.
+        """
+        field_map = {
+            RequestType.FIRST_NAME_CHANGE: user.first_name,
+            RequestType.LAST_NAME_CHANGE: user.last_name,
+            RequestType.HOME_ADDRESS_CHANGE: user.home_address,
+            RequestType.EMAIL_CHANGE: user.email,
+            RequestType.PHONE_NUMBER_CHANGE: user.phone_number or "",
+            RequestType.GENDER_CHANGE: user.gender,
+        }
+        return str(field_map.get(request_type, ""))
+
+    async def _apply_profile_change(
+        self, user_id: str, request_type: RequestType, new_value: str
+    ):
+        """
+        Applies the approved change to the user profile via repository.
+
+        Args:
+            user_id: ID of the user.
+            request_type: Type of field to change.
+            new_value: New value to set.
+
+        Raises:
+            HTTPException: If update fails.
+        """
+        # For email changes, check if email already exists
+        if request_type == RequestType.EMAIL_CHANGE:
+            existing_user = await self.user_repository.get_user_by_email(
+                new_value
+            )
+            if existing_user and str(existing_user.id) != user_id:
+                raise HTTPException(
+                    status_code=400, detail="Email already in use"
+                )
+
+        # Map request type to field name
+        field_map = {
+            RequestType.FIRST_NAME_CHANGE: "first_name",
+            RequestType.LAST_NAME_CHANGE: "last_name",
+            RequestType.HOME_ADDRESS_CHANGE: "home_address",
+            RequestType.EMAIL_CHANGE: "email",
+            RequestType.PHONE_NUMBER_CHANGE: "phone_number",
+            RequestType.GENDER_CHANGE: "gender",
+        }
+
+        field_name = field_map.get(request_type)
+        if not field_name:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid request type: {request_type}"
+            )
+
+        # Apply the update via repository
+        await self.user_repository.update_user_field(
+            user_id, field_name, new_value
+        )

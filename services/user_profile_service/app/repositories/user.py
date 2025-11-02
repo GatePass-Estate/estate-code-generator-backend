@@ -514,6 +514,44 @@ class UserRepository:
         user = await self.get_user_by_email(email)
         return user is not None
 
+    async def update_user_field(
+        self, user_id: str, field_name: str, field_value: str
+    ) -> UpdateUserResponse:
+        """
+        Updates a single field for a user in the db-service.
+
+        Args:
+            user_id: The user ID to update.
+            field_name: Name of the field to update.
+            field_value: New value for the field.
+
+        Returns:
+            UpdateUserResponse: Updated user data.
+
+        Raises:
+            HTTPException: If update fails.
+        """
+        payload = {field_name: field_value}
+
+        url = f"{self.users_endpoint}/{user_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+
+        if not response:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update {field_name} for user ID: {user_id}",
+            )
+
+        logger.info(
+            f"User field {field_name} updated successfully: {response}"
+        )
+
+        return UpdateUserResponse(
+            id=response["id"],
+            created_at=response["created_at"],
+            updated_at=response["updated_at"],
+        )
+
     async def get_role_permissions(self, role: str) -> Dict[str, Any]:
         """
         Fetches permission flags for a given role from db-service.

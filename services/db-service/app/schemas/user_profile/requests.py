@@ -30,10 +30,13 @@ class RequestType(str, Enum):
     Type of Request
     """
 
-    NAME = "name_change"
-    EMAIL = "email_change"
-    ADDRESS = "address_change"
-    VACATE = "vacate_residence"
+    FIRST_NAME_CHANGE = "first_name_change"
+    LAST_NAME_CHANGE = "last_name_change"
+    HOME_ADDRESS_CHANGE = "home_address_change"
+    EMAIL_CHANGE = "email_change"
+    PHONE_NUMBER_CHANGE = "phone_number_change"
+    GENDER_CHANGE = "gender_change"
+    VACATE_RESIDENCE = "vacate_residence"
 
 
 class Status(str, Enum):
@@ -192,9 +195,19 @@ class UpdateResponse(CreateResponse):
         id (UUID): Unique identifier for the updated request.
         created_at (DateTime): Creation timestamp.
         updated_at (DateTime): Last update timestamp.
+        status (Status): Status of the request.
+        reviewed_by (UUID): User who reviewed the request.
     """
 
     updated_at: datetime = Field(..., description="Last updated timestamp")
+    status: Status = Field(..., description="Status of the request")
+    reviewed_by: UUID4 | None = Field(
+        None, description="User who reviewed the request"
+    )
+
+    @field_serializer("reviewed_by")
+    def serialize_reviewed_by(self, value: UUID4) -> str:
+        return str(value) if value else None
 
 
 class DeleteResponse(BaseModel):

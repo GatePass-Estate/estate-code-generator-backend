@@ -4,7 +4,9 @@ clean:
 	chmod +x ./scripts/clean.sh
 	./scripts/clean.sh
 
-build: clean
+clean-build: clean build
+
+build:
 	docker compose -f 'docker-compose.yaml' up -d --build
 	$(MAKE) run_migrations
 
