@@ -48,10 +48,10 @@ def generate_unique_code(
     mod_value = hash_int % (36**6)
 
     # Convert the number to a 6-character base-36 string
-    alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     code = ""
     for _ in range(6):
-        mod_value, i = divmod(mod_value, 62)
+        mod_value, i = divmod(mod_value, len(alphabet))
         code = alphabet[i] + code
 
     return code
