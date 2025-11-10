@@ -602,6 +602,25 @@ class UserService:
         except Exception:
             return False
 
+    async def update_user_phone(
+        self, user_id: str, phone_number: str
+    ) -> UpdateUserResponse:
+        """
+        Updates a user's phone number by delegating to update_user.
+
+        Minimal checks are performed; the existing update_user method
+        will validate user existence.
+
+        Args:
+            user_id: ID of the user to update.
+            phone_number: New phone number to set.
+
+        Returns:
+            UpdateUserResponse: Updated user metadata.
+        """
+        request = UpdateUserRequest(phone_number=phone_number)
+        return await self.update_user(user_id=user_id, request=request)
+
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
         """
         Updates an admin record.

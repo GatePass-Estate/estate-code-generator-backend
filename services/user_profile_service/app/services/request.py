@@ -272,7 +272,6 @@ class RequestService:
             RequestType.LAST_NAME_CHANGE: user.last_name,
             RequestType.HOME_ADDRESS_CHANGE: user.home_address,
             RequestType.EMAIL_CHANGE: user.email,
-            RequestType.PHONE_NUMBER_CHANGE: user.phone_number or "",
             RequestType.GENDER_CHANGE: user.gender,
         }
         return str(field_map.get(request_type, ""))
@@ -307,7 +306,6 @@ class RequestService:
             RequestType.LAST_NAME_CHANGE: "last_name",
             RequestType.HOME_ADDRESS_CHANGE: "home_address",
             RequestType.EMAIL_CHANGE: "email",
-            RequestType.PHONE_NUMBER_CHANGE: "phone_number",
             RequestType.GENDER_CHANGE: "gender",
         }
 

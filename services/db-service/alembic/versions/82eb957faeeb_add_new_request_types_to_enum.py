@@ -24,7 +24,6 @@ new_requesttype = postgresql.ENUM(
     "LAST_NAME_CHANGE",
     "HOME_ADDRESS_CHANGE",
     "EMAIL_CHANGE",
-    "PHONE_NUMBER_CHANGE",
     "GENDER_CHANGE",
     "VACATE_RESIDENCE",
     name="requesttype_new",
