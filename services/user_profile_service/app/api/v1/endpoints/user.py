@@ -124,7 +124,7 @@ async def get_user_profile(
     current_user: dict = Depends(get_current_user),
 ):
     requester_role = current_user["role"]
-    if not await check_permission(
+    if requester_role != "security" and not await check_permission(
         ahttp_client, requester_role, "can_register_users"
     ):
         raise HTTPException(
