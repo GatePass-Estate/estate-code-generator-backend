@@ -124,7 +124,7 @@ async def get_user_profile(
     current_user: dict = Depends(get_current_user),
 ):
     requester_role = current_user["role"]
-    if not await check_permission(
+    if requester_role != "security" and not await check_permission(
         ahttp_client, requester_role, "can_register_users"
     ):
         raise HTTPException(
@@ -590,3 +590,32 @@ async def delete_user(
                 detail="You are not authorized to view this user.",
             )
     return await service.delete_user(user_id)
+
+
+@router.patch("/{user_id}/phone", response_model=UpdateUserResponse)
+async def update_user_phone(
+    user_id: str,
+    phone_number: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Allow a user to update their own phone number."""
+    # Only allow the user themself to update their phone number
+    if str(current_user["id"]) != str(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to update this user's phone number",
+        )
+
+    if not phone_number:
+        raise HTTPException(status_code=400, detail="phone_number is required")
+
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+
+    return await service.update_user_phone(user_id, phone_number)

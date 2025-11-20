@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, cast, String
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -395,11 +395,16 @@ class BroadcastsRepository:
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)
 
+                # Extract enum value if it's an enum
+                if hasattr(field_value, "value"):
+                    field_value = field_value.value
+
                 if isinstance(field_value, str):
                     # Normalize both column and input
                     # for case-insensitive matching
+                    # Cast column to text for enum types before applying lower
                     query = query.where(
-                        func.lower(column) == field_value.lower()
+                        func.lower(cast(column, String)) == field_value.lower()
                     )
                 else:
                     query = query.where(column == field_value)
