@@ -9,6 +9,10 @@ from app.schemas.request import (
     SearchEditRequestRequest,
     UpdateRequestStatusRequest,
     UpdateRequestStatusResponse,
+    UpdatePendingRequestRequest,
+    UpdatePendingRequestResponse,
+    DeletePendingRequestResponse,
+    CheckPendingRequestResponse,
     RequestType,
     RequestStatus,
 )
@@ -158,6 +162,79 @@ async def search_requests(
     service = RequestService(repository, user_repository)
 
     return await service.search_requests(search_request, user_id, user_role)
+
+
+@router.get("/edit/pending/check", response_model=CheckPendingRequestResponse)
+async def check_pending_request(
+    request_type: RequestType = Query(
+        ..., description="Type of field to check for pending request"
+    ),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Check if the current user has a pending request for a specific field type.
+    This helps the frontend prevent duplicate requests and show appropriate UI.
+    """
+    user_id = current_user["id"]
+
+    repository = RequestRepository(ahttp_client)
+    user_repository = UserRepository(ahttp_client)
+    service = RequestService(repository, user_repository)
+
+    pending_request = await service.check_pending_request(
+        user_id, request_type
+    )
+
+    return CheckPendingRequestResponse(
+        has_pending_request=pending_request is not None,
+        pending_request=pending_request,
+    )
+
+
+@router.patch(
+    "/edit/{request_id}", response_model=UpdatePendingRequestResponse
+)
+async def update_pending_request(
+    request_id: str,
+    request: UpdatePendingRequestRequest,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Update the new_value of a pending request.
+    Users can only update their own pending requests.
+    Request must still be in PENDING status.
+    """
+    user_id = current_user["id"]
+
+    repository = RequestRepository(ahttp_client)
+    user_repository = UserRepository(ahttp_client)
+    service = RequestService(repository, user_repository)
+
+    return await service.update_pending_request(request_id, request, user_id)
+
+
+@router.delete(
+    "/edit/{request_id}", response_model=DeletePendingRequestResponse
+)
+async def delete_pending_request(
+    request_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Cancel (delete) a pending request.
+    Users can only delete their own pending requests.
+    Request must still be in PENDING status.
+    """
+    user_id = current_user["id"]
+
+    repository = RequestRepository(ahttp_client)
+    user_repository = UserRepository(ahttp_client)
+    service = RequestService(repository, user_repository)
+
+    return await service.delete_pending_request(request_id, user_id)
 
 
 @router.patch(

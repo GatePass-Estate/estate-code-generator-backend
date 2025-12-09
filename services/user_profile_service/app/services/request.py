@@ -8,6 +8,9 @@ from app.schemas.request import (
     SearchEditRequestRequest,
     UpdateRequestStatusRequest,
     UpdateRequestStatusResponse,
+    UpdatePendingRequestRequest,
+    UpdatePendingRequestResponse,
+    DeletePendingRequestResponse,
     RequestType,
     RequestStatus,
 )
@@ -66,6 +69,28 @@ class RequestService:
 
         # Check if admin or primary_admin
         is_admin = user.role in ("admin", "primary_admin")
+
+        # For non-admin users, check if there's already a pending request
+        # for this field type
+        if not is_admin:
+            existing_pending = (
+                await self.repository.get_pending_request_by_type(
+                    resident_id=user_id, request_type=request_type_value
+                )
+            )
+
+            if existing_pending:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": f"You already have a pending request to"
+                        f" change your {request.request_type.value.
+                                        replace('_', ' ')}",
+                        "existing_request_id": str(existing_pending.id),
+                        "existing_request_created_at": existing_pending.created_at.isoformat(),
+                        "existing_new_value": existing_pending.new_value,
+                    },
+                )
 
         if is_admin:
             # Auto-approve and apply change immediately
@@ -256,6 +281,121 @@ class RequestService:
         )
         return await self.repository.search_requests(search_request)
 
+    async def check_pending_request(
+        self, user_id: str, request_type: RequestType
+    ) -> GetEditRequestResponse | None:
+        """
+        Checks if user has a pending request for specific field.
+
+        Args:
+            user_id: ID of the user.
+            request_type: Type of field to check.
+
+        Returns:
+            GetEditRequestResponse if pending request exists, None.
+        """
+        return await self.repository.get_pending_request_by_type(
+            resident_id=user_id, request_type=request_type.value
+        )
+
+    async def update_pending_request(
+        self,
+        request_id: str,
+        update_data: UpdatePendingRequestRequest,
+        user_id: str,
+    ) -> UpdatePendingRequestResponse:
+        """
+        Updates a pending request's new value.
+        Users can only update their own pending requests.
+
+        Args:
+            request_id: ID of the request to update.
+            update_data: New value data.
+            user_id: ID of the user making the update.
+
+        Returns:
+            UpdatePendingRequestResponse: Updated request info.
+
+        Raises:
+            HTTPException: If request not found, not authorized,
+                or not pending.
+        """
+        # Get the request
+        edit_request = await self.repository.get_request_by_id(request_id)
+        if not edit_request or edit_request.is_deleted:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        # Check authorization: user can only update own requests
+        if str(edit_request.resident_id) != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only update your own requests",
+            )
+
+        # Check if request is still pending
+        if edit_request.status != RequestStatus.PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot update request that is already "
+                    f"{edit_request.status.value}"
+                ),
+            )
+
+        # Validate the new value for the request type
+        request_type = RequestType(edit_request.request_type)
+        await self._validate_new_value(
+            request_type, update_data.new_value, user_id
+        )
+
+        # Update the request
+        return await self.repository.update_pending_request_value(
+            request_id=request_id, new_value=update_data.new_value
+        )
+
+    async def delete_pending_request(
+        self, request_id: str, user_id: str
+    ) -> DeletePendingRequestResponse:
+        """
+        Deletes (cancels) a pending request.
+        Users can only delete their own pending requests.
+
+        Args:
+            request_id: ID of the request to delete.
+            user_id: ID of the user making the deletion.
+
+        Returns:
+            DeletePendingRequestResponse: Deletion confirmation.
+
+        Raises:
+            HTTPException: If request not found, not authorized,
+                or not pending.
+        """
+        # Get the request
+        edit_request = await self.repository.get_request_by_id(request_id)
+        if not edit_request or edit_request.is_deleted:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        # Check authorization: user can only delete own requests
+        if str(edit_request.resident_id) != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete your own requests",
+            )
+
+        # Check if request is still pending
+        if edit_request.status != RequestStatus.PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot delete request that is already "
+                    f"{edit_request.status.value}"
+                ),
+            )
+
+        # Delete the request
+        return await self.repository.delete_pending_request(request_id)
+
     def _get_current_value(self, user, request_type: RequestType) -> str:
         """
         Gets the current value of the field being requested to change.
@@ -276,19 +416,22 @@ class RequestService:
         }
         return str(field_map.get(request_type, ""))
 
-    async def _apply_profile_change(
-        self, user_id: str, request_type: RequestType, new_value: str
+    async def _validate_new_value(
+        self,
+        request_type: RequestType,
+        new_value: str,
+        user_id: str,
     ):
         """
-        Applies the approved change to the user profile via repository.
+        Validates the new value for a request type.
 
         Args:
-            user_id: ID of the user.
             request_type: Type of field to change.
-            new_value: New value to set.
+            new_value: New value to validate.
+            user_id: ID of the user.
 
         Raises:
-            HTTPException: If update fails.
+            HTTPException: If validation fails.
         """
         # For email changes, check if email already exists
         if request_type == RequestType.EMAIL_CHANGE:
@@ -299,6 +442,23 @@ class RequestService:
                 raise HTTPException(
                     status_code=400, detail="Email already in use"
                 )
+
+    async def _apply_profile_change(
+        self, user_id: str, request_type: RequestType, new_value: str
+    ):
+        """
+        Applies the approved change to user profile via repository.
+
+        Args:
+            user_id: ID of the user.
+            request_type: Type of field to change.
+            new_value: New value to set.
+
+        Raises:
+            HTTPException: If update fails.
+        """
+        # Validate the new value
+        await self._validate_new_value(request_type, new_value, user_id)
 
         # Map request type to field name
         field_map = {
@@ -312,7 +472,8 @@ class RequestService:
         field_name = field_map.get(request_type)
         if not field_name:
             raise HTTPException(
-                status_code=400, detail=f"Invalid request type: {request_type}"
+                status_code=400,
+                detail=f"Invalid request type: {request_type}",
             )
 
         # Apply the update via repository
