@@ -84,8 +84,8 @@ class RequestService:
                     status_code=409,
                     detail={
                         "message": f"You already have a pending request to"
-                        f" change your {request.request_type.value.
-                                        replace('_', ' ')}",
+                        f" change your "
+                        f"{request.request_type.value.replace('_', ' ')}",
                         "existing_request_id": str(existing_pending.id),
                         "existing_request_created_at": existing_pending.created_at.isoformat(),
                         "existing_new_value": existing_pending.new_value,

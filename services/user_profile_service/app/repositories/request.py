@@ -280,7 +280,7 @@ class RequestRepository:
 
         return UpdatePendingRequestResponse(
             id=response["id"],
-            new_value=response["new_value"],
+            new_value=new_value,
             updated_at=response["updated_at"],
         )
 
