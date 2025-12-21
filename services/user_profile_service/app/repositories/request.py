@@ -10,7 +10,10 @@ from app.schemas.request import (
     ListEditRequestResponse,
     SearchEditRequestRequest,
     UpdateRequestStatusResponse,
+    UpdatePendingRequestResponse,
+    DeletePendingRequestResponse,
     RequestStatus,
+    RequestType,
 )
 from app.core.config import settings
 
@@ -215,6 +218,103 @@ class RequestRepository:
         request = SearchEditRequestRequest(page=page, limit=limit)
         return await self.search_requests(request)
 
+    async def get_pending_request_by_type(
+        self, resident_id: str, request_type: str
+    ) -> GetEditRequestResponse | None:
+        """
+        Retrieves a pending request for a specific user and request type.
+
+        Args:
+            resident_id: ID of the user.
+            request_type: Type of field change.
+
+        Returns:
+            GetEditRequestResponse if a pending request exists, None otherwise.
+        """
+        search_request = SearchEditRequestRequest(
+            resident_id=resident_id,
+            request_type=RequestType(request_type),
+            status=RequestStatus.PENDING,
+            page=1,
+            limit=1,
+        )
+
+        response = await self.search_requests(search_request)
+
+        if response.total > 0 and response.items:
+            return response.items[0]
+        return None
+
+    async def update_pending_request_value(
+        self, request_id: str, new_value: str
+    ) -> UpdatePendingRequestResponse:
+        """
+        Updates the new_value of a pending request.
+
+        Args:
+            request_id: The request ID to update.
+            new_value: The updated value for the field.
+
+        Returns:
+            UpdatePendingRequestResponse: Updated request data.
+
+        Raises:
+            HTTPException: If update fails.
+        """
+        payload = {
+            "new_value": new_value,
+        }
+
+        url = f"{self.requests_endpoint}/{request_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+
+        if not response:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Request value update failed for ID: " f"{request_id}"
+                ),
+            )
+
+        logger.info(f"Request value updated: {response}")
+
+        return UpdatePendingRequestResponse(
+            id=response["id"],
+            new_value=new_value,
+            updated_at=response["updated_at"],
+        )
+
+    async def delete_pending_request(
+        self, request_id: str
+    ) -> DeletePendingRequestResponse:
+        """
+        Deletes (cancels) a pending request.
+
+        Args:
+            request_id: The request ID to delete.
+
+        Returns:
+            DeletePendingRequestResponse: Deletion confirmation.
+
+        Raises:
+            HTTPException: If deletion fails.
+        """
+        url = f"{self.requests_endpoint}/{request_id}"
+        response = await self.client.async_delete(url)
+
+        if not response:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Request deletion failed for ID: {request_id}",
+            )
+
+        logger.info(f"Request deleted successfully: {request_id}")
+
+        return DeletePendingRequestResponse(
+            id=request_id,
+            message="Request successfully canceled",
+        )
+
     async def update_request_status(
         self,
         request_id: str,
@@ -246,10 +346,12 @@ class RequestRepository:
         if not response:
             raise HTTPException(
                 status_code=500,
-                detail=f"Request status update failed for ID: {request_id}",
+                detail=(
+                    f"Request status update failed for ID: " f"{request_id}"
+                ),
             )
 
-        logger.info(f"Request status updated successfully: {response}")
+        logger.info(f"Request status updated: {response}")
 
         return UpdateRequestStatusResponse(
             id=response["id"],

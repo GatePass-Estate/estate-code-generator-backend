@@ -19,6 +19,10 @@ __all__ = [
     "SearchEditRequestRequest",
     "UpdateRequestStatusRequest",
     "UpdateRequestStatusResponse",
+    "CheckPendingRequestResponse",
+    "UpdatePendingRequestRequest",
+    "UpdatePendingRequestResponse",
+    "DeletePendingRequestResponse",
 ]
 
 model_config = ConfigDict(
@@ -255,5 +259,79 @@ class UpdateRequestStatusResponse(BaseModel):
     @field_serializer("reviewed_by")
     def serialize_reviewed_by(self, reviewed_by: UUID4) -> str:
         return str(reviewed_by)
+
+    model_config = model_config
+
+
+class CheckPendingRequestResponse(BaseModel):
+    """
+    Response model for checking if a pending request exists.
+
+    Attributes:
+        has_pending_request (bool): Whether a pending request exists.
+        pending_request (GetEditRequestResponse): The pending request if exists
+    """
+
+    has_pending_request: bool = Field(
+        ..., description="Whether a pending request exists"
+    )
+    pending_request: Optional[GetEditRequestResponse] = Field(
+        None, description="The pending request details if it exists"
+    )
+
+    model_config = model_config
+
+
+class UpdatePendingRequestRequest(BaseModel):
+    """
+    Request model to update a pending request's new value.
+
+    Attributes:
+        new_value (str): Updated value for the field.
+    """
+
+    new_value: str = Field(
+        ..., min_length=1, description="Updated value for the field"
+    )
+
+    model_config = model_config
+
+
+class UpdatePendingRequestResponse(BaseModel):
+    """
+    Response model after updating a pending request.
+
+    Attributes:
+        id (UUID4): Request ID.
+        new_value (str): Updated value.
+        updated_at (datetime): Update timestamp.
+    """
+
+    id: UUID4 = Field(..., description="Request ID")
+    new_value: str = Field(..., description="Updated value")
+    updated_at: datetime = Field(..., description="Update timestamp")
+
+    @field_serializer("id")
+    def serialize_id(self, id: UUID4) -> str:
+        return str(id)
+
+    model_config = model_config
+
+
+class DeletePendingRequestResponse(BaseModel):
+    """
+    Response model after deleting (canceling) a pending request.
+
+    Attributes:
+        id (UUID4): Request ID that was deleted.
+        message (str): Confirmation message.
+    """
+
+    id: UUID4 = Field(..., description="Request ID that was deleted")
+    message: str = Field(..., description="Confirmation message")
+
+    @field_serializer("id")
+    def serialize_id(self, id: UUID4) -> str:
+        return str(id)
 
     model_config = model_config
