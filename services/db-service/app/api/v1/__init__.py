@@ -3,41 +3,35 @@ from fastapi import APIRouter
 from app.api.v1.endpoints.code_service.access_code import (
     router as accesscode_router,
 )
+from app.api.v1.endpoints.code_service.resident_log import (
+    router as residentlog_router,
+)
 from app.api.v1.endpoints.code_service.visitor_log import (
     router as visitorlog_router,
 )
-
-from app.api.v1.endpoints.user_profile.users import router as users_router
-
-from app.api.v1.endpoints.user_profile.estates import router as estates_router
-
-from app.api.v1.endpoints.user_profile.role_permission import (
-    router as rolepermission_router,
-)
-
-from app.api.v1.endpoints.user_profile.resident_departure_log import (
-    router as residentdeparturelog_router,
-)
-
-from app.api.v1.endpoints.user_profile.household import (
-    router as household_router,
-)
-
 from app.api.v1.endpoints.user_profile.admin_management import (
     router as adminmanagement_router,
 )
-
-from app.api.v1.endpoints.user_profile.guests import (
-    router as guests_router,
-)
-
 from app.api.v1.endpoints.user_profile.broadcasts import (
     router as broadcasts_router,
 )
-
+from app.api.v1.endpoints.user_profile.estates import router as estates_router
+from app.api.v1.endpoints.user_profile.guests import (
+    router as guests_router,
+)
+from app.api.v1.endpoints.user_profile.household import (
+    router as household_router,
+)
 from app.api.v1.endpoints.user_profile.requests import (
     router as requests_router,
 )
+from app.api.v1.endpoints.user_profile.resident_departure_log import (
+    router as residentdeparturelog_router,
+)
+from app.api.v1.endpoints.user_profile.role_permission import (
+    router as rolepermission_router,
+)
+from app.api.v1.endpoints.user_profile.users import router as users_router
 
 api_router = APIRouter()
 
@@ -51,6 +45,12 @@ api_router.include_router(
     visitorlog_router,
     prefix="/codeservice/visitorlog",
     tags=["VisitorLog"],
+)
+
+api_router.include_router(
+    residentlog_router,
+    prefix="/codeservice/residentlog",
+    tags=["ResidentLog"],
 )
 
 api_router.include_router(
