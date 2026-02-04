@@ -1,22 +1,23 @@
 # Code Service Models
 from app.models.code_service.access_code import AccessCode
+from app.models.code_service.resident_log import ResidentLog
 from app.models.code_service.visitor_log import VisitorLog
+from app.models.user_profile.admin_management import AdminManagement
+from app.models.user_profile.broadcasts import Broadcasts
+from app.models.user_profile.estates import Estates
+from app.models.user_profile.guests import Guests
+from app.models.user_profile.household import Household
+from app.models.user_profile.requests import Requests
+from app.models.user_profile.resident_departure_log import ResidentDepartureLog
+from app.models.user_profile.role_permission import RolePermission
 
 # User Profile Service Models
 from app.models.user_profile.users import Users
-from app.models.user_profile.estates import Estates
-from app.models.user_profile.role_permission import RolePermission
-from app.models.user_profile.admin_management import AdminManagement
-from app.models.user_profile.household import Household
-from app.models.user_profile.resident_departure_log import ResidentDepartureLog
-from app.models.user_profile.guests import Guests
-from app.models.user_profile.broadcasts import Broadcasts
-from app.models.user_profile.requests import Requests
-
 
 __all__ = [
     "AccessCode",
     "VisitorLog",
+    "ResidentLog",
     "Users",
     "Estates",
     "RolePermission",

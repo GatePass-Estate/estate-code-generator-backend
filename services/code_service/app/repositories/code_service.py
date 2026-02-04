@@ -529,6 +529,32 @@ class CodeServiceRepository:
                     record, from_attributes=True
                 )
             elif record and (receiver == Receiver.RESIDENT):
+                # Record was retrieved from access code. Now, persist to DB.
+                residentlog_data = {
+                    "user_id": record.get("user_id"),
+                    "estate_id": record.get("estate_id"),
+                    "hashed_code": record.get("hashed_code"),
+                    "security_id": user_details.get("id"),
+                    "access_time": record.get("visit_time"),
+                }
+                try:
+                    db_url = (
+                        f"{settings.DB_SERVICE_URL}api/v1/"
+                        "codeservice/residentlog"
+                    )
+                    persist_response = await self.ahttp_client.async_post(
+                        db_url, json_data=residentlog_data
+                    )
+                    logger.info("Record persisted to DB: %s", persist_response)
+                except Exception as persist_exception:
+                    logger.error(
+                        "Error persisting record with code %s to DB: %s",
+                        code,
+                        persist_exception,
+                    )
+                    raise DatabaseError(
+                        "Error persisting resident's record to DB"
+                    ) from persist_exception
                 return GetResponseResident.model_validate(
                     record, from_attributes=True
                 )
