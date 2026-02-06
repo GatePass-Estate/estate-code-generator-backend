@@ -255,6 +255,16 @@ async def get_all_estate_users(
     estate_id: Optional[str] = Query(
         None, description="Restrict to a specific estate (root only)"
     ),
+    from_date: Optional[str] = Query(
+        None, description="Filter by creation date (from) - ISO format"
+    ),
+    to_date: Optional[str] = Query(
+        None, description="Filter by creation date (to) - ISO format"
+    ),
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    limit: int = Query(
+        10, ge=1, le=100, description="Number of items per page"
+    ),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -277,14 +287,52 @@ async def get_all_estate_users(
     if status not in {"true", "false", "all"}:
         raise HTTPException(status_code=400, detail="Invalid status filter")
 
+    # Parse datetime strings if provided
+    from_date_obj = None
+    to_date_obj = None
+
+    if from_date:
+        try:
+            from datetime import datetime
+
+            from_date_obj = datetime.fromisoformat(from_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid from_date format. Use ISO format.",
+            )
+
+    if to_date:
+        try:
+            from datetime import datetime
+
+            to_date_obj = datetime.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid to_date format. Use ISO format.",
+            )
+
     if requester_role == "root":
         return await service.get_users_by_estate(
-            estate_id=estate_id or None, status=status
+            estate_id=estate_id or None,
+            status=status,
+            page=page,
+            limit=limit,
+            from_date=from_date_obj,
+            to_date=to_date_obj,
         )
     else:
         user_id = current_user["id"]
         estate_id = await service.get_estate_id_by_user_id(user_id)
-        return await service.get_users_by_estate(estate_id, status=status)
+        return await service.get_users_by_estate(
+            estate_id,
+            status=status,
+            page=page,
+            limit=limit,
+            from_date=from_date_obj,
+            to_date=to_date_obj,
+        )
 
 
 @router.get("/verify/email", response_model=EmailTokenResponse)

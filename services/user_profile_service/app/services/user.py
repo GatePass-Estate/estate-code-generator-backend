@@ -495,7 +495,13 @@ class UserService:
         )
 
     async def get_users_by_estate(
-        self, estate_id: str, status: str | None = None
+        self,
+        estate_id: str,
+        status: str | None = None,
+        page: int = 1,
+        limit: int = 10,
+        from_date=None,
+        to_date=None,
     ) -> ListUserResponse:
         """
         Gets all users in a specific estate.
@@ -503,15 +509,30 @@ class UserService:
         Args:
             estate_id: The estate ID.
             status: Optional status filter.
+            page: Page number for pagination.
+            limit: Number of items per page.
+            from_date: Optional creation date filter (from).
+            to_date: Optional creation date filter (to).
 
         Returns:
             ListUserResponse: List of users in the estate.
         """
         if status == "all":
-            request = SearchUserRequest(estate_id=estate_id)
+            request = SearchUserRequest(
+                estate_id=estate_id,
+                page=page,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
+            )
         else:
             request = SearchUserRequest(
-                estate_id=estate_id, status=status == "true"
+                estate_id=estate_id,
+                status=status == "true",
+                page=page,
+                limit=limit,
+                from_date=from_date,
+                to_date=to_date,
             )
         return await self.repository.search_users(request)
 
