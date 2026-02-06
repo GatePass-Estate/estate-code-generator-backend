@@ -74,20 +74,31 @@ class BaseSearchRequest(BaseModel):
     @classmethod
     def validate_inputs(cls, data):
         # data transformations
-        data["from_date"] = (
-            datetime.combine(
-                data["from_date"], datetime.min.time(), tzinfo=timezone.utc
-            )
-            if data["from_date"] is not None
-            else None
-        )  # Convert date to datetime from start of the day
-        data["to_date"] = (
-            datetime.combine(
-                data["to_date"], datetime.max.time(), tzinfo=timezone.utc
-            )
-            if data["to_date"] is not None
-            else None
-        )  # Convert date to datetime from start of the day
+        # Handle from_date: if it's a date object,
+        # convert to datetime at start of day
+        # If it's already a datetime, keep it as is
+        if data.get("from_date") is not None:
+            from_date = data["from_date"]
+            if isinstance(from_date, datetime):
+                data["from_date"] = from_date
+            else:
+                # It's a date object, convert to datetime at start of day
+                data["from_date"] = datetime.combine(
+                    from_date, datetime.min.time(), tzinfo=timezone.utc
+                )
+
+        # Handle to_date: if it's a date object,
+        # convert to datetime at end of day
+        # If it's already a datetime, keep it as is
+        if data.get("to_date") is not None:
+            to_date = data["to_date"]
+            if isinstance(to_date, datetime):
+                data["to_date"] = to_date
+            else:
+                # It's a date object, convert to datetime at end of day
+                data["to_date"] = datetime.combine(
+                    to_date, datetime.max.time(), tzinfo=timezone.utc
+                )
 
         return data
 
