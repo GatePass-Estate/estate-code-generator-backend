@@ -66,9 +66,7 @@ class BaseSearchRequest(BaseModel):
         " Defaults to None",
     )
     page: int = Field(1, ge=1, description="Page number for pagination")
-    limit: int = Field(
-        10, ge=1, le=100, description="Number of items per page"
-    )
+    limit: int = Field(10, ge=1, description="Number of items per page")
 
     @model_validator(mode="before")
     @classmethod
