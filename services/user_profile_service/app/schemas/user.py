@@ -317,9 +317,7 @@ class SearchUserRequest(BaseModel):
         None, description="Filter by creation date (to)"
     )
     page: int = Field(1, ge=1, description="Page number for pagination")
-    limit: int = Field(
-        10, ge=1, le=100, description="Number of items per page"
-    )
+    limit: int = Field(10, ge=1, description="Number of items per page")
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, estate_id: Optional[UUID4]) -> Optional[str]:
@@ -334,6 +332,29 @@ class SearchUserRequest(BaseModel):
     model_config = model_config
 
 
+class RoleSummary(BaseModel):
+    """
+    Summary of user counts by role.
+
+    Attributes:
+        root (int): Number of root users.
+        primary_admin (int): Number of primary admin users.
+        admin (int): Number of admin users.
+        resident (int): Number of resident users.
+        security (int): Number of security users.
+        guest (int): Number of guest users.
+    """
+
+    root: int = Field(0, description="Number of root users")
+    primary_admin: int = Field(0, description="Number of primary admin users")
+    admin: int = Field(0, description="Number of admin users")
+    resident: int = Field(0, description="Number of resident users")
+    security: int = Field(0, description="Number of security users")
+    guest: int = Field(0, description="Number of guest users")
+
+    model_config = model_config
+
+
 class ListUserResponse(BaseModel):
     """
     Response model for user list/search operations.
@@ -343,12 +364,16 @@ class ListUserResponse(BaseModel):
         page (int): Current page number.
         limit (int): Number of items per page.
         items (List[GetUserResponse]): List of user records.
+        role_summary (RoleSummary): Summary of user counts by role (optional).
     """
 
     total: int = Field(..., description="Total number of users")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Number of items per page")
     items: List[GetUserResponse] = Field(..., description="List of users")
+    role_summary: Optional[RoleSummary] = Field(
+        None, description="Summary of user counts by role"
+    )
 
     model_config = model_config
 

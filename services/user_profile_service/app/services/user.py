@@ -534,7 +534,96 @@ class UserService:
                 from_date=from_date,
                 to_date=to_date,
             )
-        return await self.repository.search_users(request)
+        response = await self.repository.search_users(request)
+
+        # Calculate role summary by fetching all users with same filters
+        try:
+            role_counts = await self._get_role_counts(
+                estate_id=estate_id,
+                status=status,
+                from_date=from_date,
+                to_date=to_date,
+            )
+
+            # Import RoleSummary
+            from app.schemas.user import RoleSummary
+
+            # Add role summary to response
+            response.role_summary = RoleSummary(
+                root=role_counts.get("root", 0),
+                primary_admin=role_counts.get("primary_admin", 0),
+                admin=role_counts.get("admin", 0),
+                resident=role_counts.get("resident", 0),
+                security=role_counts.get("security", 0),
+                guest=role_counts.get("guest", 0),
+            )
+        except Exception as e:
+            # If role summary calculation fails, log but continue
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to calculate role summary: {e}")
+            # Leave role_summary as None
+
+        return response
+
+    async def _get_role_counts(
+        self,
+        estate_id: str,
+        status: str | None = None,
+        from_date=None,
+        to_date=None,
+    ) -> dict:
+        """
+        Gets role counts for users in a specific estate.
+
+        Args:
+            estate_id: The estate ID.
+            status: Optional status filter.
+            from_date: Optional creation date filter (from).
+            to_date: Optional creation date filter (to).
+
+        Returns:
+            dict: Dictionary with role as key and count as value.
+        """
+        # Fetch all users with same filters
+        if status == "all":
+            request = SearchUserRequest(
+                estate_id=estate_id,
+                page=1,
+                limit=10000000,  # Very large limit to ensure all users
+                from_date=from_date,
+                to_date=to_date,
+            )
+        else:
+            request = SearchUserRequest(
+                estate_id=estate_id,
+                status=status == "true",
+                page=1,
+                limit=10000000,  # Very large limit to ensure all users
+                from_date=from_date,
+                to_date=to_date,
+            )
+
+        all_users_response = await self.repository.search_users(request)
+
+        # Count users by role
+        from collections import Counter
+
+        # Extract role as string (in case it's an enum or object)
+        roles = []
+        for user in all_users_response.items:
+            role = user.role
+            # Convert to string if it's an enum or has a value attribute
+            if hasattr(role, "value"):
+                role = role.value
+            elif not isinstance(role, str):
+                role = str(role)
+            roles.append(role)
+
+        role_counts = Counter(roles)
+
+        return dict(role_counts)
 
     async def get_estate_id_by_user_id(self, user_id: str) -> str:
         """
