@@ -81,6 +81,16 @@ async def promote_user_to_admin(
             detail=f"User is already a {user_to_promote.role}.",
         )
 
+    # Check if user is a resident (only residents can be promoted to admin)
+    if user_to_promote.role != Role.RESIDENT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only users with resident role can be promoted to admin."
+                f"Current role: {user_to_promote.role}."
+            ),
+        )
+
     # Non-root users can only promote users from their own estate
     if requester_role != Role.ROOT:
         requester_user_id = current_user["id"]
