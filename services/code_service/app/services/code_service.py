@@ -53,22 +53,19 @@ class CodeService:
         )
 
     async def validate(
-        self, code: str, receiver: Receiver, user_details: dict | None = None
+        self, code: str, user_details: dict | None = None
     ) -> GetResponseResident | GetResponseVisitor:
         """
         Get an item by ID.
 
         Arguments:
             code: The generated access code to be validated.
-            receiver: The status of the code owner (visitor or resident).
             user_details: The details of the user making the request.
 
         Returns:
             A GetResponse object after retrieving the item by id.
         """
-        return await self.repository.get(
-            code=code, receiver=receiver, user_details=user_details
-        )
+        return await self.repository.get(code=code, user_details=user_details)
 
     async def get_items_by_user(
         self,

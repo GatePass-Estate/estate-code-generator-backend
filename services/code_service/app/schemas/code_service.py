@@ -181,6 +181,7 @@ class GetResponseVisitor(VisitorData):
         hashed_code (str): Visitor's generated access code.
         valid_until (DateTime): Timestamp of entry code expiry
         is_expired (bool): Flag indicating whether code is expired or not
+        receiver (Receiver): Receiver: visitor or resident.
     """
 
     hashed_code: str = Field(
@@ -189,6 +190,9 @@ class GetResponseVisitor(VisitorData):
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
+    )
+    receiver: Receiver = Field(
+        ..., description="Receiver: visitor or resident"
     )
 
 
@@ -203,6 +207,7 @@ class GetResponseResident(ResidentData):
         hashed_code (str): Resident's generated access code.
         valid_until (DateTime): Timestamp of entry code expiry
         is_expired (bool): Flag indicating whether code is expired or not
+        receiver (Receiver): Receiver: visitor or resident.
     """
 
     hashed_code: str = Field(
@@ -211,6 +216,9 @@ class GetResponseResident(ResidentData):
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
+    )
+    receiver: Receiver = Field(
+        ..., description="Receiver: visitor or resident"
     )
 
 

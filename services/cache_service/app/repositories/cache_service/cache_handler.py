@@ -12,6 +12,7 @@ from app.schemas.cache_service.cache_schema import (
     CreateResponse,
     GetResponse,
     ListResponse,
+    Receiver,
 )
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,7 @@ class CacheHandlerRepository:
                             continue
 
                         result["is_expired"] = False
+                        result["receiver"] = Receiver.VISITOR
                         items.append(GetResponse.model_validate(result))
 
                 except (json.JSONDecodeError, ValueError) as e:
@@ -296,6 +298,7 @@ class CacheHandlerRepository:
             # Get the record from the database
             record = await self._getitem(session=self.session, code=code)
             # Convert the record to a GET schema model
+            record["receiver"] = Receiver.VISITOR
             return GetResponse.model_validate(record, from_attributes=True)
         except NotFoundError as e:
             message = f"Record with code {code} not found"

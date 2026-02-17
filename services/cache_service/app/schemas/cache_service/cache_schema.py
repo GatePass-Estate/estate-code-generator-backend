@@ -49,6 +49,15 @@ class Gender(str, Enum):
     PREFER_NOT_TO_SAY = "prefer_not_to_say"
 
 
+class Receiver(str, Enum):
+    """
+    Enumeration of supported receiver: visitor and resident
+    """
+
+    VISITOR = "visitor"
+    RESIDENT = "resident"
+
+
 class VisitorData(BaseModel):
     """
     Model for Composer Workflows table.
@@ -143,11 +152,15 @@ class GetResponse(VisitorData):
         hashed_code (str): Visitor's generated access code.
         valid_until (str): Timestamp of entry code expiry.
         is_expired (bool): Flag indicating whether code is expired or not.
+        receiver (Receiver): Receiver: visitor or resident.
     """
 
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
+    )
+    receiver: Receiver = Field(
+        ..., description="Receiver: visitor or resident"
     )
 
 

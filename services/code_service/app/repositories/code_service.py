@@ -61,52 +61,52 @@ class CodeServiceRepository:
             NotFoundError: If item is not found or expired.
         """
         code = kwargs.get("code", None)
-        receiver = kwargs.get("receiver", None)
 
-        # TODO: Account for receiver=resident and call from db-service instead
         try:
-            if receiver == Receiver.VISITOR:
-                url = (
-                    f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
-                    f"/cachehandler/{code}"
-                )
-                response = await ahttp_client.async_get(url)
-                if not response:
-                    raise NotFoundError("Invalid code!")
-                return response
-            elif receiver == Receiver.RESIDENT:
-                url = (
-                    f"{settings.DB_SERVICE_URL}api/v1/codeservice"
-                    f"/accesscode/search"
-                )
-                params = {"hashed_code": code}
-                response = await ahttp_client.async_get(url, params=params)
-                if not response.get("items"):
-                    raise NotFoundError("Invalid code!")
-
-                response = response.get("items")[0]
-                valid_until = response.get("valid_until")
-                resident_data = {
-                    "user_id": response.get("user_id"),
-                    "estate_id": response.get("estate_id"),
-                    "hashed_code": response.get("hashed_code"),
-                    "valid_until": valid_until,
-                    "visit_time": datetime.now(timezone.utc).isoformat(),
-                }
-                if valid_until:
-                    valid_until = datetime.fromisoformat(
-                        valid_until.replace("Z", "+00:00")
-                    )
-                    now = datetime.now(timezone.utc)
-
-                    if now > valid_until:
-                        raise NotFoundError("Invalid code!")
-                else:
-                    raise Exception("Expiry timestamp missing in cached data!")
-                resident_data["is_expired"] = False
-                return resident_data
+            # 1. First try to check it as a visitor's code
+            url = (
+                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                f"/cachehandler/{code}"
+            )
+            response = await ahttp_client.async_get(url)
+            if not response:
+                logger.error("Visitor's code not found in cache!")
+                raise NotFoundError("Invalid code!")
+            response["receiver"] = Receiver.VISITOR
+            return response
         except NotFoundError:
-            raise NotFoundError("Invalid code!")
+            # 2. If not found, try to check it as a resident's code
+            url = (
+                f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                f"/accesscode/search"
+            )
+            params = {"hashed_code": code}
+            response = await ahttp_client.async_get(url, params=params)
+            if not response.get("items"):
+                raise NotFoundError("Invalid code!")
+
+            response = response.get("items")[0]
+            valid_until = response.get("valid_until")
+            resident_data = {
+                "user_id": response.get("user_id"),
+                "estate_id": response.get("estate_id"),
+                "hashed_code": response.get("hashed_code"),
+                "valid_until": valid_until,
+                "visit_time": datetime.now(timezone.utc).isoformat(),
+            }
+            if valid_until:
+                valid_until = datetime.fromisoformat(
+                    valid_until.replace("Z", "+00:00")
+                )
+                now = datetime.now(timezone.utc)
+
+                if now > valid_until:
+                    raise NotFoundError("Invalid code!")
+            else:
+                raise Exception("Expiry timestamp missing in cached data!")
+            resident_data["is_expired"] = False
+            resident_data["receiver"] = Receiver.RESIDENT
+            return resident_data
         except Exception as e:
             logger.error(e)
             raise Exception(e) from e
@@ -181,6 +181,7 @@ class CodeServiceRepository:
                 else:
                     raise Exception("Expiry timestamp missing in cached data")
                 resident_data["is_expired"] = False
+                resident_data["receiver"] = Receiver.RESIDENT
                 return resident_data
         except NotFoundError as e:
             logger.error(e)
@@ -301,7 +302,6 @@ class CodeServiceRepository:
             record = await self._getitem(
                 ahttp_client=self.ahttp_client,
                 code=code,
-                receiver=Receiver.VISITOR,
             )
             if record and (
                 str(record.get("user_id")) != user_details.get("id")
@@ -312,6 +312,12 @@ class CodeServiceRepository:
                 )
                 logger.exception(message)
                 raise NotFoundError(f"Invalid code: {code}!")
+
+            if record.get("receiver") == Receiver.RESIDENT:
+                logger.info(
+                    "Resident's code can't be deleted from this endpoint!"
+                )
+                return False
 
             cache_url = (
                 f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
@@ -459,7 +465,7 @@ class CodeServiceRepository:
             raise DatabaseError(message) from e
 
     async def get(
-        self, code: str, receiver: Receiver, user_details: dict | None = None
+        self, code: str, user_details: dict | None = None
     ) -> GetResponseVisitor | GetResponseResident:
         """
         Get an item by code. If the recevier is a visitor, the retrieved record
@@ -467,7 +473,6 @@ class CodeServiceRepository:
 
         Arguments:
             code: The generated access code to be validated.
-            receiver: The status of the code owner (visitor or resident).
             user_details: The user details of the user trying to validate the
                 code.
 
@@ -482,7 +487,7 @@ class CodeServiceRepository:
         try:
             # Get the record from the database
             record = await self._getitem(
-                ahttp_client=self.ahttp_client, code=code, receiver=receiver
+                ahttp_client=self.ahttp_client, code=code
             )
 
             if record.get("estate_id") != user_details.get("estate_id"):
@@ -493,7 +498,7 @@ class CodeServiceRepository:
                 logger.exception(message)
                 raise NotFoundError(f"Invalid code: {code}!")
 
-            if record and (receiver == Receiver.VISITOR):
+            if record and (record.get("receiver") == Receiver.VISITOR):
                 # Record was retrieved from the cache. Now, persist to DB.
                 visitlog_data = {
                     "user_id": record.get("user_id"),
@@ -528,7 +533,7 @@ class CodeServiceRepository:
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
                 )
-            elif record and (receiver == Receiver.RESIDENT):
+            elif record and (record.get("receiver") == Receiver.RESIDENT):
                 # Record was retrieved from access code. Now, persist to DB.
                 residentlog_data = {
                     "user_id": record.get("user_id"),

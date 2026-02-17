@@ -125,7 +125,6 @@ async def generate(
     description="Get an item by ID",
 )
 async def validate(
-    receiver: str,
     code: str,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
@@ -135,7 +134,6 @@ async def validate(
 
     Arguments:
         code: The generated access code to be validated.
-        recevier: The status of the code owner (visitor and resident)
 
     Returns:
         A GET response model containing reference to the retrieved item.
@@ -143,18 +141,6 @@ async def validate(
     Raises:
         HTTPException: If there is an internal server error
     """
-    try:
-        # Option 1: Direct enum validation
-        receiver = Receiver(receiver)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid receiver type. Must be one of: "
-                f"{[r.value for r in Receiver]}"
-            ),
-        )
-
     # Extract complete user_details
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
@@ -177,9 +163,7 @@ async def validate(
         )
 
     try:
-        return await service.validate(
-            code=code, receiver=receiver, user_details=user_details
-        )
+        return await service.validate(code=code, user_details=user_details)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
