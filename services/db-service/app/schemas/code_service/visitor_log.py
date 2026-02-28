@@ -26,7 +26,7 @@ __all__ = [
 class Relation(str, Enum):
     """
     Enumeration of supported resident-guest relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
     """
 
     FAMILY = "family"
@@ -35,6 +35,7 @@ class Relation(str, Enum):
     TECHNICIAN = "technician"
     TAXI = "taxi"
     DELIVERY = "delivery"
+    OTHER = "other"
 
 
 class Gender(str, Enum):
@@ -55,7 +56,7 @@ class VisitorLogBase(BaseModel):
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -106,7 +107,7 @@ class CreateRequest(VisitorLogBase):
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -144,7 +145,7 @@ class UpdateRequest(BaseModel):
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -230,7 +231,7 @@ class GetResponse(SharedModel, VisitorLogBase):
         user_id (UUID): Reference to the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
@@ -251,7 +252,7 @@ class SearchRequest(BaseSearchRequest):
         limit: Number of items per page
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+            friend, delivery, taxi, technician, other
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit

@@ -47,6 +47,7 @@ class Relation(str, Enum):
     TECHNICIAN = "technician"
     TAXI = "taxi"
     DELIVERY = "delivery"
+    OTHER = "other"
 
 
 class Gender(str, Enum):
