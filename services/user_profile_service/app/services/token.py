@@ -5,7 +5,7 @@ from app.core.config import settings
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
-TOKEN_EXPIRY_MINUTES = 60 * 24 * 7  # 1 Week (customize as needed)
+TOKEN_EXPIRY_MINUTES = 60 * 24  # 1 Day (customize as needed)
 
 
 def generate_email_token(user_id: UUID) -> str:

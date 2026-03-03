@@ -77,16 +77,6 @@ class UserService:
         Raises:
             HTTPException: If registration fails or email exists.
         """
-        # Check if email already exists
-        if await self.repository.check_email_exists(request.email):
-            raise HTTPException(
-                status_code=400, detail="Email already registered"
-            )
-
-        # Generate random password for new user
-        raw_password = generate_random_password()
-        hashed_password = hash_password(raw_password)
-
         # Only 1 Primary Admin per estate is allowed
         if request.role == Role.PRIMARY_ADMIN:
             if await self.admin_repository.check_primary_admin_exists(
@@ -97,11 +87,27 @@ class UserService:
                     detail="A primary admin already exists for this estate.",
                 )
 
-        # Create user through repository
-        user = await self.repository.create_user(request, hashed_password)
+        # Generate random password for new user
+        raw_password = generate_random_password()
+        hashed_password = hash_password(raw_password)
 
-        # Generate email verification token
-        token = generate_email_token(str(user.id))
+        # Check if email already exists
+        existing_user = await self.repository.get_user_by_email(request.email)
+
+        if existing_user:
+            if existing_user.status:
+                raise HTTPException(
+                    status_code=400, detail="Email already registered"
+                )
+            # Email exists but user is not yet active — overwrite with new data
+            user = await self.repository.overwrite_user_registration(
+                str(existing_user.id), request, hashed_password
+            )
+            token = generate_email_token(str(existing_user.id))
+        else:
+            # Create a brand new user
+            user = await self.repository.create_user(request, hashed_password)
+            token = generate_email_token(str(user.id))
 
         return user, token
 
@@ -180,6 +186,12 @@ class UserService:
         existing_user = await self.repository.get_user_by_id(user_id)
         if not existing_user or existing_user.is_deleted:
             raise HTTPException(status_code=404, detail="User not found")
+
+        if existing_user.status:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete an active user.",
+            )
 
         return await self.repository.delete_user(user_id)
 
@@ -730,6 +742,34 @@ class UserService:
         """
         request = UpdateUserRequest(phone_number=phone_number)
         return await self.update_user(user_id=user_id, request=request)
+
+    async def regenerate_verification_token(
+        self, user_id: str
+    ) -> tuple[str, str]:
+        """
+        Regenerates an email verification token for an unverified user.
+
+        Args:
+            user_id: The user ID to regenerate the token for.
+
+        Returns:
+            Tuple of (email, token) for sending the verification email.
+
+        Raises:
+            HTTPException: If user not found or already verified.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user.status:
+            raise HTTPException(
+                status_code=400, detail="User is already verified."
+            )
+
+        token = generate_email_token(str(user.id))
+        return user.email, token
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
         """

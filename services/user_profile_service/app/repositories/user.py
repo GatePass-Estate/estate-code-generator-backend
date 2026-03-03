@@ -107,6 +107,63 @@ class UserRepository:
         logger.info(f"User created successfully: {response}")
         return user_response
 
+    async def overwrite_user_registration(
+        self, user_id: str, request: RegisterUserRequest, password: str
+    ) -> RegisterUserResponse:
+        """
+        Overwrites all registration fields for an existing inactive user.
+
+        Args:
+            user_id: The existing user's ID.
+            request: New registration data.
+            password: Hashed password for the user.
+
+        Returns:
+            RegisterUserResponse: Updated user data.
+
+        Raises:
+            HTTPException: If the update fails.
+        """
+        payload = {
+            "first_name": request.first_name,
+            "last_name": request.last_name,
+            "home_address": request.home_address,
+            "password": password,
+            "phone_number": request.phone_number,
+            "gender": request.gender.value,
+            "role": request.role.value,
+            "estate_id": str(request.estate_id),
+            "household_id": (
+                str(request.household_id) if request.household_id else None
+            ),
+            "status": False,
+            "is_deleted": False,
+        }
+
+        url = f"{self.users_endpoint}/{user_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+
+        if not response:
+            raise HTTPException(
+                status_code=500, detail="User re-registration failed."
+            )
+
+        logger.info(f"User re-registered successfully: {response}")
+
+        return RegisterUserResponse(
+            id=response["id"],
+            first_name=payload["first_name"],
+            last_name=payload["last_name"],
+            home_address=payload["home_address"],
+            email=request.email,
+            gender=payload["gender"],
+            role=payload["role"],
+            estate_id=payload["estate_id"],
+            household_id=payload.get("household_id"),
+            status=payload["status"],
+            created_at=response["created_at"],
+        )
+
     async def update_user(
         self, user_id: str, data: UpdateUserRequest
     ) -> UpdateUserResponse:

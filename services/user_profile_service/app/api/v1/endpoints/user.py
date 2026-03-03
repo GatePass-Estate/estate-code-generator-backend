@@ -542,6 +542,54 @@ async def list_guests(
     return await service.search_guests(request, user_id)
 
 
+@router.post(
+    "/{user_id}/resend-verification", response_model=SetPasswordResponse
+)
+async def resend_verification_email(
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Regenerate and resend the email verification link
+    for an unverified user."""
+    requester_role = current_user["role"]
+
+    if not await check_permission(
+        ahttp_client, requester_role, "can_register_users"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to perform this action.",
+        )
+
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+
+    if requester_role != "root":
+        same_estate = await service.check_same_estate(
+            user_id, current_user["id"]
+        )
+        if not same_estate:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not authorized to perform this action.",
+            )
+
+    email, token = await service.regenerate_verification_token(user_id)
+    background_tasks.add_task(send_verification_email, email, token)
+
+    return SetPasswordResponse(
+        success=True,
+        message="Verification email has been resent.",
+    )
+
+
 @router.get("/{user_id}", response_model=GetUserResponse)
 async def get_user(
     user_id: str,
