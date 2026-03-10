@@ -46,3 +46,43 @@ def decode_email_token(token: str) -> UUID:
     if payload.get("scope") != "email_verification":
         raise jwt.InvalidTokenError("Invalid token scope.")
     return UUID(payload["sub"])
+
+
+def generate_password_reset_token(user_id: UUID) -> str:
+    """
+    Generates a JWT token for password reset.
+
+    Args:
+        user_id (UUID): ID of the user to encode.
+
+    Returns:
+        str: JWT token as a string.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=TOKEN_EXPIRY_MINUTES
+    )
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "scope": "password_reset",
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_password_reset_token(token: str) -> UUID:
+    """
+    Decodes and validates a JWT token for password reset.
+
+    Args:
+        token (str): Encoded JWT token.
+
+    Returns:
+        UUID: Extracted user ID from the token.
+
+    Raises:
+        jwt.PyJWTError: If decoding fails or token is expired.
+    """
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if payload.get("scope") != "password_reset":
+        raise jwt.InvalidTokenError("Invalid token scope.")
+    return UUID(payload["sub"])

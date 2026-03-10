@@ -350,6 +350,39 @@ async def verify_email(
     return await service.verify_email(token)
 
 
+@router.get("/verify/password-reset", response_model=EmailTokenResponse)
+async def verify_password_reset_token(
+    token: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+):
+    """Validates a password reset token and returns the user_id to proceed."""
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    return await service.verify_password_reset_token(token)
+
+
+@router.post("/password/reset", response_model=SetPasswordResponse)
+async def reset_password(
+    payload: SetPasswordRequest,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+):
+    """Resets the password for an active account
+    (no current password required)."""
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    return await service.reset_password(payload)
+
+
 @router.post("/validate/account", response_model=SetPasswordResponse)
 async def set_password(
     payload: SetPasswordRequest,
