@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from enum import Enum
 
-__all__ = ["LoginRequest", "LoginResponse"]
+__all__ = ["LoginRequest", "LoginResponse", "ForgotPasswordRequest"]
 
 model_config = ConfigDict(
     from_attributes=True,
@@ -34,6 +34,19 @@ class LoginRequest(BaseModel):
 
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., description="User's password")
+
+    model_config = model_config
+
+
+class ForgotPasswordRequest(BaseModel):
+    """
+    Request model for initiating a password reset.
+
+    Attributes:
+        email (EmailStr): The email address of the account to reset.
+    """
+
+    email: EmailStr = Field(..., description="Email address of the account")
 
     model_config = model_config
 

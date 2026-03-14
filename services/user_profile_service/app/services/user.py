@@ -22,7 +22,12 @@ from app.repositories.user import UserRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.household import HouseholdRepository
 from app.repositories.admin_management import AdminRepository
-from app.services.token import generate_email_token, decode_email_token
+from app.services.token import (
+    generate_email_token,
+    decode_email_token,
+    generate_password_reset_token,
+    decode_password_reset_token,
+)
 from app.libs.password_utils import (
     generate_random_password,
     hash_password,
@@ -770,6 +775,112 @@ class UserService:
 
         token = generate_email_token(str(user.id))
         return user.email, token
+
+    async def forgot_password(self, email: str) -> tuple[str, str] | None:
+        """
+        Initiates the forgot password flow for a given email.
+
+        Looks up the user by email. If the user exists and is activated,
+        generates a password reset token and returns (email, token).
+        Returns None if the user does not exist or is not activated,
+        so the caller always responds the same way (no enumeration).
+
+        Args:
+            email: The email address to reset the password for.
+
+        Returns:
+            Tuple of (email, token) if user found and active, else None.
+        """
+        user = await self.repository.get_user_by_email(email)
+
+        if not user or not user.status or user.is_deleted:
+            return None
+
+        token = generate_password_reset_token(str(user.id))
+        return user.email, token
+
+    async def verify_password_reset_token(
+        self, token: str
+    ) -> EmailTokenResponse:
+        """
+        Validates a password reset token and returns the associated user info.
+
+        Args:
+            token: The password reset JWT token.
+
+        Returns:
+            EmailTokenResponse: User info for proceeding with password reset.
+
+        Raises:
+            HTTPException: If token is invalid, expired,
+            or user not found/inactive.
+        """
+        try:
+            user_id = decode_password_reset_token(token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired password reset token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
+
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if not user.status:
+            raise HTTPException(
+                status_code=400, detail="Account is not activated."
+            )
+
+        return EmailTokenResponse(
+            message="Token verified. You may now reset your password.",
+            user_id=str(user.id),
+            email=user.email,
+            must_change_password=False,
+        )
+
+    async def reset_password(
+        self, request: SetPasswordRequest
+    ) -> SetPasswordResponse:
+        """
+        Resets the password for an activated user
+        (no current password required).
+
+        Args:
+            request: Contains user_id and the new password.
+
+        Returns:
+            SetPasswordResponse: Operation result.
+
+        Raises:
+            HTTPException: If user not found or account not activated.
+        """
+        user = await self.repository.get_user_by_id(str(request.user_id))
+
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if not user.status:
+            raise HTTPException(
+                status_code=400, detail="Account is not activated."
+            )
+
+        hashed_password = hash_password(request.new_password)
+        url = f"{self.repository.users_endpoint}/{request.user_id}"
+        response = await self.repository.client.async_patch(
+            url,
+            json_data={"password": hashed_password},
+        )
+
+        if not response:
+            raise HTTPException(
+                status_code=500, detail="Password reset failed."
+            )
+
+        return SetPasswordResponse(
+            success=True, message="Password has been reset successfully."
+        )
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
         """
