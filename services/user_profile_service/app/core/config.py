@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     BASE_URL: str = os.getenv("BASE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
     LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
+    TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
 
 
 settings = Settings()

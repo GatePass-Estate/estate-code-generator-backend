@@ -27,6 +27,7 @@ from app.services.token import (
     decode_email_token,
     generate_password_reset_token,
     decode_password_reset_token,
+    decode_tos_pending_token,
 )
 from app.libs.password_utils import (
     generate_random_password,
@@ -881,6 +882,52 @@ class UserService:
         return SetPasswordResponse(
             success=True, message="Password has been reset successfully."
         )
+
+    async def accept_tos(self, tos_token: str) -> dict:
+        """
+        Validates a TOS-pending token, records acceptance, and returns the
+        data needed to generate a full access token.
+
+        Args:
+            tos_token: The tos_pending JWT token issued at login.
+
+        Returns:
+            dict: User data (id, email, role) for generating a full token.
+
+        Raises:
+            HTTPException: If token is invalid/expired or user not found.
+        """
+        from app.core.config import settings
+
+        try:
+            user_id = decode_tos_pending_token(tos_token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired TOS token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
+
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if not user.status:
+            raise HTTPException(
+                status_code=400, detail="Account is not activated."
+            )
+
+        url = f"{self.repository.users_endpoint}/{user.id}"
+        await self.repository.client.async_patch(
+            url,
+            json_data={"tos_accepted_version": settings.TOS_VERSION},
+        )
+
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+        }
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
         """
