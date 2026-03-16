@@ -84,6 +84,9 @@ async def send_verification_email(email: str, token: str) -> None:
     # base_url = settings.BASE_URL
     # query = urlencode({"token": token})
     # verify_link = f"{base_url}api/v1/users/verify/email?{query}"
+    # Temporary placeholder until we have a real frontend URL to link to
+    # @TODO: Update this to point to the actual frontend email verification
+    # page once it's implemented
     verify_link = "https://www.google.com"  # Temporary placeholder
 
     content = f"""
@@ -192,6 +195,9 @@ async def send_password_reset_email(email: str, token: str) -> None:
     # base_url = settings.BASE_URL
     # query = urlencode({"token": token})
     # reset_link = f"{base_url}api/v1/users/verify/password-reset?{query}"
+    # Temporary placeholder until we have a real frontend URL to link to
+    # @TODO: Update this to point to the actual frontend email verification
+    # page once it's implemented
     reset_link = "https://www.google.com"  # Temporary placeholder
 
     content = f"""
