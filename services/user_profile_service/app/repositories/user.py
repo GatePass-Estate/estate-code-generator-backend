@@ -457,6 +457,7 @@ class UserRepository:
             created_at=user_data["created_at"],
             updated_at=user_data.get("updated_at"),
             is_deleted=user_data.get("is_deleted", False),
+            tos_accepted_version=user_data.get("tos_accepted_version"),
         )
 
         return user

@@ -103,6 +103,10 @@ class UserBase(BaseModel):
 
     status: bool = Field(default=True, description="Active/inactive status")
 
+    tos_accepted_version: str | None = Field(
+        default=None, description="TOS version the user has accepted"
+    )
+
     model_config = model_config
 
 
@@ -202,6 +206,9 @@ class UpdateRequest(BaseModel):
     )
     status: bool | None = Field(
         default=None, description="Active/inactive status"
+    )
+    tos_accepted_version: str | None = Field(
+        default=None, description="TOS version the user has accepted"
     )
 
     model_config = model_config

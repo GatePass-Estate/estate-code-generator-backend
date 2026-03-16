@@ -55,3 +55,4 @@ class Users(BaseModelDB):
         nullable=False,
     )
     status = Column(Boolean, default=False)
+    tos_accepted_version = Column(String, nullable=True)

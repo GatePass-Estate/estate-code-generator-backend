@@ -1,7 +1,12 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from enum import Enum
 
-__all__ = ["LoginRequest", "LoginResponse", "ForgotPasswordRequest"]
+__all__ = [
+    "LoginRequest",
+    "LoginResponse",
+    "ForgotPasswordRequest",
+    "AcceptTosRequest",
+]
 
 model_config = ConfigDict(
     from_attributes=True,
@@ -51,6 +56,19 @@ class ForgotPasswordRequest(BaseModel):
     model_config = model_config
 
 
+class AcceptTosRequest(BaseModel):
+    """
+    Request model for accepting the Terms of Service.
+
+    Attributes:
+        tos_token (str): The TOS-pending JWT token received at login.
+    """
+
+    tos_token: str = Field(..., description="TOS-pending JWT token from login")
+
+    model_config = model_config
+
+
 class LoginResponse(BaseModel):
     """
     Response model returned after successful authentication.
@@ -58,13 +76,20 @@ class LoginResponse(BaseModel):
     Attributes:
         success (bool): Indicates if the login was successful.
         role (Role): User's role.
-        access_token (str): JWT access token.
+        access_token (str): JWT access token (or tos_pending token if TOS
+            acceptance is required).
         token_type (str): Type of token. Always 'bearer'.
+        requires_tos_acceptance (bool): If True, the user must call
+            POST /auth/accept-tos before accessing the app.
     """
 
     success: bool = Field(..., description="Login success status")
     role: Role = Field(..., description="User's role")
     access_token: str = Field(..., description="JWT access token")
     token_type: str = Field(default="bearer", description="Token type")
+    requires_tos_acceptance: bool = Field(
+        default=False,
+        description="True if the user must accept the TOS before continuing",
+    )
 
     model_config = model_config

@@ -28,6 +28,11 @@ async def get_current_user(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("scope") == "tos_pending":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please accept the Terms of Service to continue.",
+            )
         user_id = payload["sub"]
         user_repo = UserRepository(ahttp_client)
         valid_user = await user_repo.check_user_exists(user_id)
