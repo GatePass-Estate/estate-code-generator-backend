@@ -92,7 +92,9 @@ async def register_user(
     user, token = await service.register_user(request)
 
     # Trigger background email
-    background_tasks.add_task(send_verification_email, user.email, token)
+    background_tasks.add_task(
+        send_verification_email, user.email, user.first_name, token
+    )
 
     # Return response model
     return user
@@ -618,8 +620,12 @@ async def resend_verification_email(
                 detail="You are not authorized to perform this action.",
             )
 
-    email, token = await service.regenerate_verification_token(user_id)
-    background_tasks.add_task(send_verification_email, email, token)
+    email, first_name, token = await service.regenerate_verification_token(
+        user_id
+    )
+    background_tasks.add_task(
+        send_verification_email, email, first_name, token
+    )
 
     return SetPasswordResponse(
         success=True,
