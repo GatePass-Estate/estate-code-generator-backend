@@ -43,7 +43,7 @@ from app.repositories.admin_management import AdminRepository
 from app.services.user import UserService
 from app.services.guest import GuestService
 from app.services.auth import get_current_user
-from app.services.email import send_verification_email
+from app.services.email import send_verification_email, send_welcome_email
 
 router = APIRouter()
 
@@ -386,6 +386,7 @@ async def reset_password(
 @router.post("/validate/account", response_model=SetPasswordResponse)
 async def set_password(
     payload: SetPasswordRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
     repository = UserRepository(ahttp_client)
@@ -395,7 +396,10 @@ async def set_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.set_password_and_activate(payload)
+    user = await service.get_user(str(payload.user_id))
+    result = await service.set_password_and_activate(payload)
+    background_tasks.add_task(send_welcome_email, user.email, user.first_name)
+    return result
 
 
 @router.post("/password/update", response_model=SetPasswordResponse)

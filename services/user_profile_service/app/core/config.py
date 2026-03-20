@@ -24,5 +24,15 @@ class Settings(BaseSettings):
     LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
 
+    # Email / SMTP configuration
+    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
+    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
+    MAIL_FROM: str = os.getenv("MAIL_FROM", "")
+    MAIL_FROM_NAME: str = os.getenv("MAIL_FROM_NAME", "GatePass")
+    MAIL_SERVER: str = os.getenv("MAIL_SERVER", "")
+    MAIL_PORT: int = int(os.getenv("MAIL_PORT", 587))
+    MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
+    MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
+
 
 settings = Settings()
