@@ -99,8 +99,10 @@ async def forgot_password(
 
     result = await service.forgot_password(request.email)
     if result:
-        email, token = result
-        background_tasks.add_task(send_password_reset_email, email, token)
+        email, first_name, token = result
+        background_tasks.add_task(
+            send_password_reset_email, email, first_name, token
+        )
 
     return SetPasswordResponse(
         success=True,

@@ -43,7 +43,11 @@ from app.repositories.admin_management import AdminRepository
 from app.services.user import UserService
 from app.services.guest import GuestService
 from app.services.auth import get_current_user
-from app.services.email import send_verification_email, send_welcome_email
+from app.services.email import (
+    send_verification_email,
+    send_welcome_email,
+    send_password_reset_confirmation_email,
+)
 
 router = APIRouter()
 
@@ -92,7 +96,9 @@ async def register_user(
     user, token = await service.register_user(request)
 
     # Trigger background email
-    background_tasks.add_task(send_verification_email, user.email, token)
+    background_tasks.add_task(
+        send_verification_email, user.email, user.first_name, token
+    )
 
     # Return response model
     return user
@@ -369,6 +375,7 @@ async def verify_password_reset_token(
 @router.post("/password/reset", response_model=SetPasswordResponse)
 async def reset_password(
     payload: SetPasswordRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
     """Resets the password for an active account
@@ -380,7 +387,12 @@ async def reset_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.reset_password(payload)
+    user = await service.get_user(str(payload.user_id))
+    result = await service.reset_password(payload)
+    background_tasks.add_task(
+        send_password_reset_confirmation_email, user.email, user.first_name
+    )
+    return result
 
 
 @router.post("/validate/account", response_model=SetPasswordResponse)
@@ -618,8 +630,12 @@ async def resend_verification_email(
                 detail="You are not authorized to perform this action.",
             )
 
-    email, token = await service.regenerate_verification_token(user_id)
-    background_tasks.add_task(send_verification_email, email, token)
+    email, first_name, token = await service.regenerate_verification_token(
+        user_id
+    )
+    background_tasks.add_task(
+        send_verification_email, email, first_name, token
+    )
 
     return SetPasswordResponse(
         success=True,

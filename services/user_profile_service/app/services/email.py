@@ -1,4 +1,4 @@
-# from urllib.parse import urlencode
+from urllib.parse import urlencode
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from app.core.config import settings
 
@@ -15,57 +15,267 @@ _conf = ConnectionConfig(
     VALIDATE_CERTS=True,
 )
 
-_BRAND_COLOR = "#2E7D32"
-_BTN_COLOR = "#2E7D32"
+_LOGO_URL = (
+    "https://res.cloudinary.com/dcozenahn/image/upload"
+    "/v1773876604/gatepass_ng_Gate_Pass_so5mc2.png"
+)
+_BTN_COLOR = "#113e55"
+_TEXT_COLOR = "#172024"
+_HEADING_COLOR = "#113e55"
 
 
-def _base_template(content: str) -> str:
-    """Wraps email content in a shared branded shell."""
+def _build_email(
+    heading: str,
+    first_name: str,
+    instruction: str,
+    button_label: str,
+    button_href: str,
+) -> str:
+    """Builds a full email HTML string using the GatePass branded template."""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Ubuntu+Sans:wght@400;600&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    @media only screen and (max-width: 620px) {{
+      .wrapper {{
+        padding: 80px 31px 16px 31px !important;
+      }}
+      .content {{
+        max-width: 100% !important;
+      }}
+      .logo {{
+        padding-bottom: 17px !important;
+      }}
+      .logo img {{
+        width: 166px !important;
+        height: 68px !important;
+        max-width: 166px !important;
+      }}
+      .heading {{
+        font-size: 21px !important;
+      }}
+      .heading-cell {{
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+        padding-bottom: 33px !important;
+      }}
+      .button {{
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 8px 16px !important;
+        font-size: 14px !important;
+        box-sizing: border-box !important;
+      }}
+      .body-text {{
+        font-size: 12px !important;
+      }}
+      .body-text.instruction-text {{
+        margin-bottom: 27px !important;
+        line-height: 20px !important;
+      }}
+      .content-group {{
+        padding-left: 16px !important;
+      }}
+      .content-group .body-text {{
+        font-weight: 500 !important;
+      }}
+      .button-cell {{
+        padding-bottom: 27px !important;
+      }}
+    }}
+  </style>
 </head>
-<body style="margin:0;padding:0;background-color:#f0f2f5;
-font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0"
-  style="background-color:#f0f2f5;padding:40px 0;">
+<body
+  style="
+    margin: 0;
+    padding: 0;
+    background-color: #ffffff;
+    font-family:
+      'Ubuntu Sans',
+      Ubuntu,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+  "
+>
+  <table
+    role="presentation"
+    cellpadding="0"
+    cellspacing="0"
+    width="100%"
+    style="background-color: #ffffff"
+  >
     <tr>
-      <td align="center">
-        <!-- Header -->
-        <table width="560" cellpadding="0" cellspacing="0"
-               style="background-color:{_BRAND_COLOR};
-               border-radius:8px 8px 0 0;">
+      <td align="center" class="wrapper" style="padding: 164px 20px">
+        <table
+          role="presentation"
+          cellpadding="0"
+          cellspacing="0"
+          width="100%"
+          class="content"
+          style="max-width: 600px; margin: 0 auto"
+        >
+          <!-- Logo -->
           <tr>
-            <td align="center" style="padding:28px 40px;">
-              <span style="font-size:26px;font-weight:bold;color:#ffffff;
-                           letter-spacing:1px;">GatePass</span>
+            <td align="left" class="logo" style="padding-bottom: 27px">
+              <img
+                src="{_LOGO_URL}"
+                width="254"
+                height="104"
+                alt="Gate Pass"
+                style="display: block; max-width: 100%; height: auto"
+              />
             </td>
           </tr>
-        </table>
-        <!-- Card -->
-        <table width="560" cellpadding="0" cellspacing="0"
-               style="background-color:#ffffff;border-radius:0 0 8px 8px;
-                      box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <!-- Main Heading -->
           <tr>
-            <td style="padding:40px 48px 32px;">
-              {content}
+            <td
+              align="left"
+              class="heading-cell"
+              style="
+                padding-bottom: 27px;
+                padding-left: 30px;
+                padding-right: 30px;
+              "
+            >
+              <h1
+                class="heading"
+                style="
+                  margin: 0;
+                  font-size: 50px;
+                  font-weight: 600;
+                  color: {_HEADING_COLOR};
+                  font-family:
+                    'Ubuntu Sans',
+                    Ubuntu,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    'Segoe UI',
+                    sans-serif;
+                "
+              >
+                {heading}
+              </h1>
             </td>
           </tr>
-          <!-- Footer -->
+          <!-- Body Content -->
           <tr>
-            <td style="padding:0 48px 32px;">
-              <hr style="border:none;border-top:1px solid #eeeeee;
-              margin:0 0 20px;"/>
-              <p style="margin:0;font-size:12px;color:#999999;
-              line-height:1.6;">
-                You received this email because an action was performed on your
-                GatePass account. If you did not request this, you can safely
-                ignore this email.
+            <td
+              class="content-group"
+              style="
+                padding: 0 16px 0px 16px;
+                padding-left: 36px;
+                font-family:
+                  'Inter',
+                  -apple-system,
+                  BlinkMacSystemFont,
+                  sans-serif;
+              "
+            >
+              <p
+                class="body-text"
+                style="
+                  margin: 0;
+                  font-size: 16px;
+                  line-height: 1.8;
+                  color: {_TEXT_COLOR};
+                  text-align: left;
+                  font-family:
+                    'Inter',
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    sans-serif !important;
+                "
+              >
+                Hi {first_name},
               </p>
-              <p style="margin:12px 0 0;font-size:12px;color:#bbbbbb;">
-                &copy; 2025 GatePass. All rights reserved.
+              <p
+                class="body-text instruction-text"
+                style="
+                  margin: 27px 0 62px 0;
+                  font-size: 16px;
+                  line-height: 24px;
+                  color: {_TEXT_COLOR};
+                  text-align: left;
+                  font-family:
+                    'Inter',
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    sans-serif !important;
+                "
+              >
+                {instruction}
+              </p>
+            </td>
+          </tr>
+          <!-- CTA Button -->
+          <tr>
+            <td
+              align="left"
+              class="button-cell content-group"
+              style="padding-bottom: 71px; padding-left: 36px; width: 100%"
+            >
+              <a
+                href="{button_href}"
+                class="button"
+                style="
+                  display: inline-block;
+                  width: 100%;
+                  max-width: 526px;
+                  padding: 20px 32px;
+                  box-sizing: border-box;
+                  background-color: {_BTN_COLOR};
+                  color: #ffffff;
+                  font-size: 16px;
+                  font-weight: 600;
+                  text-decoration: none;
+                  border-radius: 8px;
+                  font-family:
+                    &quot;Ubuntu Sans&quot;,
+                      Ubuntu,
+                      -apple-system,
+                      BlinkMacSystemFont,
+                      &quot;Segoe UI&quot;,
+                      sans-serif;
+                  text-align: center;
+                "
+              >
+                {button_label}
+              </a>
+            </td>
+          </tr>
+          <!-- Closing -->
+          <tr>
+            <td class="content-group" style="padding-left: 36px">
+              <p
+                class="body-text"
+                style="
+                  margin: 0;
+                  font-size: 16px;
+                  line-height: 1.8;
+                  color: {_TEXT_COLOR};
+                  text-align: left;
+                  font-family:
+                    'Inter',
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    sans-serif !important;
+                "
+              >
+                Thanks,<br />
+                GatePass Team
               </p>
             </td>
           </tr>
@@ -77,53 +287,31 @@ font-family:Arial,sans-serif;">
 </html>"""
 
 
-async def send_verification_email(email: str, token: str) -> None:
-    """
-    Sends an email verification link to the user.
-    """
-    # base_url = settings.BASE_URL
-    # query = urlencode({"token": token})
-    # verify_link = f"{base_url}api/v1/users/verify/email?{query}"
-    # Temporary placeholder until we have a real frontend URL to link to
-    # @TODO: Update this to point to the actual frontend email verification
-    # page once it's implemented
-    verify_link = "https://www.google.com"  # Temporary placeholder
+async def send_verification_email(
+    email: str, first_name: str, token: str
+) -> None:
+    """Sends an account activation / email verification link to the user."""
+    query = urlencode({"token": token})
+    # verify_link = f"https://app.gatepassng.com/activate?{query}"
+    verify_link = f"http://localhost:8081/activate?{query}"
+    # @TO-DO: Replace with your frontend account activation URL once available
 
-    content = f"""
-      <h2 style="margin:0 0 8px;font-size:22px;color:#1a1a1a;">
-        Verify your Email Address
-      </h2>
-      <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:1.6;">
-        Thanks for signing up for GatePass! Please confirm your email address
-        by clicking the button below. This helps us keep your account secure.
-      </p>
-      <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
-        <tr>
-          <td align="center"
-              style="background-color:{_BTN_COLOR};border-radius:6px;">
-            <a href="{verify_link}"
-               style="display:inline-block;padding:14px 36px;font-size:15px;
-                      font-weight:bold;color:#ffffff;text-decoration:none;">
-              Verify Email Address
-            </a>
-          </td>
-        </tr>
-      </table>
-      <p style="margin:0 0 6px;font-size:13px;color:#888888;">
-        Or copy this link into your browser:
-      </p>
-      <p style="margin:0 0 24px;font-size:12px;word-break:break-all;">
-        <a href="{verify_link}" style="color:{_BRAND_COLOR};">{verify_link}</a>
-      </p>
-      <p style="margin:0;font-size:13px;color:#aaaaaa;">
-        This link expires in <strong>24 hours</strong>.
-      </p>
-    """
-
-    body = _base_template(content)
+    body = _build_email(
+        heading="Activate Your Account",
+        first_name=first_name,
+        instruction=(
+            "You're almost there! Confirm your email address "
+            "by clicking below, "
+            "and we'll guide you through setting your password to unlock your "
+            "GatePass account. If you did not create a GatePass account, "
+            "you can safely ignore this email."
+        ),
+        button_label="Activate Your Account",
+        button_href=verify_link,
+    )
 
     message = MessageSchema(
-        subject="Verify your GatePass email address",
+        subject="Activate your GatePass account",
         recipients=[email],
         body=body,
         subtype=MessageType.html,
@@ -133,50 +321,24 @@ async def send_verification_email(email: str, token: str) -> None:
 
 
 async def send_welcome_email(email: str, first_name: str) -> None:
-    """
-    Sends a welcome email after a user activates their account.
-    """
-    content = f"""
-      <h2 style="margin:0 0 8px;font-size:22px;color:#1a1a1a;">
-        Welcome to GatePass, {first_name}! &#127881;
-      </h2>
-      <p style="margin:0 0 20px;font-size:15px;color:#555555;line-height:1.6;">
-        Your account has been verified and activated. You are now part of the
-        GatePass community &mdash; a smarter way to manage estate access and
-        keep your home secure.
-      </p>
-      <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:1.6;">
-        Here&rsquo;s what you can do with GatePass:
-      </p>
-      <table cellpadding="0" cellspacing="0" width="100%"
-             style="margin:0 0 28px;">
-        <tr>
-          <td style="padding:8px 0;font-size:14px;color:#444444;">
-            &#9989;&nbsp; Manage guest access and invitations
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:8px 0;font-size:14px;color:#444444;">
-            &#9989;&nbsp; Track visitor arrivals in real time
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:8px 0;font-size:14px;color:#444444;">
-            &#9989;&nbsp; Communicate with estate security staff
-          </td>
-        </tr>
-      </table>
-      <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:1.6;">
-        Log in to your account to get started.
-      </p>
-      <p style="margin:0;font-size:13px;color:#aaaaaa;">
-        If you have any questions, reply to this email or contact our support
-        team at <a href="mailto:info@gatepassng.com"
-        style="color:{_BRAND_COLOR};">info@gatepassng.com</a>.
-      </p>
-    """
+    """Sends a welcome email after a user successfully
+    activates their account."""
+    # @TODO: Replace with your frontend login/dashboard URL once available
+    # login_link = "https://app.gatepassng.com/login"
+    login_link = "http://localhost:8081/auth/login"
 
-    body = _base_template(content)
+    body = _build_email(
+        heading="Welcome to GatePass",
+        first_name=first_name,
+        instruction=(
+            "Your account has been successfully activated. "
+            "You are now part of the GatePass community — "
+            "a smarter way to manage estate access and keep your home secure. "
+            "Log in to get started."
+        ),
+        button_label="Log In to GatePass",
+        button_href=login_link,
+    )
 
     message = MessageSchema(
         subject="Welcome to GatePass — you're all set!",
@@ -188,54 +350,59 @@ async def send_welcome_email(email: str, first_name: str) -> None:
     await FastMail(_conf).send_message(message)
 
 
-async def send_password_reset_email(email: str, token: str) -> None:
-    """
-    Sends a password reset link to the user.
-    """
-    # base_url = settings.BASE_URL
-    # query = urlencode({"token": token})
-    # reset_link = f"{base_url}api/v1/users/verify/password-reset?{query}"
-    # Temporary placeholder until we have a real frontend URL to link to
-    # @TODO: Update this to point to the actual frontend email verification
-    # page once it's implemented
-    reset_link = "https://www.google.com"  # Temporary placeholder
+async def send_password_reset_email(
+    email: str, first_name: str, token: str
+) -> None:
+    """Sends a password reset link to the user."""
+    query = urlencode({"token": token})
+    # reset_link = f"https://app.gatepassng.com/auth/reset-password?{query}"
+    reset_link = f"http://localhost:8081/auth/reset-password?{query}"
 
-    content = f"""
-      <h2 style="margin:0 0 8px;font-size:22px;color:#1a1a1a;">
-        Reset your Password
-      </h2>
-      <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:1.6;">
-        We received a request to reset the password for your GatePass account.
-        Click the button below to choose a new password.
-      </p>
-      <table cellpadding="0" cellspacing="0" style="margin:0 0 28px;">
-        <tr>
-          <td align="center"
-              style="background-color:{_BTN_COLOR};border-radius:6px;">
-            <a href="{reset_link}"
-               style="display:inline-block;padding:14px 36px;font-size:15px;
-                      font-weight:bold;color:#ffffff;text-decoration:none;">
-              Reset Password
-            </a>
-          </td>
-        </tr>
-      </table>
-      <p style="margin:0 0 6px;font-size:13px;color:#888888;">
-        Or copy this link into your browser:
-      </p>
-      <p style="margin:0 0 24px;font-size:12px;word-break:break-all;">
-        <a href="{reset_link}" style="color:{_BRAND_COLOR};">{reset_link}</a>
-      </p>
-      <p style="margin:0;font-size:13px;color:#aaaaaa;">
-        This link expires in <strong>24 hours</strong>. If you did not request
-        a password reset, no action is needed.
-      </p>
-    """
-
-    body = _base_template(content)
+    body = _build_email(
+        heading="Reset Your Password",
+        first_name=first_name,
+        instruction=(
+            "We received a request to reset your GatePass password. "
+            "Click the button below to set a new password. "
+            "This link expires in 24 hours. "
+            "If you did not request a password reset,"
+            " you can safely ignore this email."
+        ),
+        button_label="Reset Password",
+        button_href=reset_link,
+    )
 
     message = MessageSchema(
         subject="Reset your GatePass password",
+        recipients=[email],
+        body=body,
+        subtype=MessageType.html,
+    )
+
+    await FastMail(_conf).send_message(message)
+
+
+async def send_password_reset_confirmation_email(
+    email: str, first_name: str
+) -> None:
+    """Sends a security notification after a password reset is completed."""
+    body = _build_email(
+        heading="Password Reset",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass password has been successfully reset. "
+            "Log in with your new password to continue accessing "
+            "your account. "
+            "If you did not make this change, please contact your estate "
+            "administrator immediately."
+        ),
+        button_label="Log In",
+        # @TODO: Replace with your frontend login/dashboard URL once available
+        button_href="http://localhost:8081/auth/login",
+    )
+
+    message = MessageSchema(
+        subject="Your GatePass password has been reset",
         recipients=[email],
         body=body,
         subtype=MessageType.html,
