@@ -299,9 +299,11 @@ async def send_verification_email(
         heading="Activate Your Account",
         first_name=first_name,
         instruction=(
-            "Please verify your email address by clicking the link to "
-            "Gatepassng.com. You will be prompted to also set your password "
-            "to complete account activation."
+            "You're almost there! Confirm your email address "
+            "by clicking below, "
+            "and we'll guide you through setting your password to unlock your "
+            "GatePass account. If you did not create a GatePass account, "
+            "you can safely ignore this email."
         ),
         button_label="Activate Your Account",
         button_href=verify_link,
@@ -370,6 +372,34 @@ async def send_password_reset_email(
 
     message = MessageSchema(
         subject="Reset your GatePass password",
+        recipients=[email],
+        body=body,
+        subtype=MessageType.html,
+    )
+
+    await FastMail(_conf).send_message(message)
+
+
+async def send_password_reset_confirmation_email(
+    email: str, first_name: str
+) -> None:
+    """Sends a security notification after a password reset is completed."""
+    body = _build_email(
+        heading="Password Reset",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass password has been successfully reset. "
+            "Log in with your new password to continue accessing "
+            "your account. "
+            "If you did not make this change, please contact your estate "
+            "administrator immediately."
+        ),
+        button_label="Log In",
+        button_href="https://app.gatepassng.com/login",
+    )
+
+    message = MessageSchema(
+        subject="Your GatePass password has been reset",
         recipients=[email],
         body=body,
         subtype=MessageType.html,
