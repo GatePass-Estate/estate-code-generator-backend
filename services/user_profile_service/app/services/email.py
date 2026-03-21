@@ -292,7 +292,8 @@ async def send_verification_email(
 ) -> None:
     """Sends an account activation / email verification link to the user."""
     query = urlencode({"token": token})
-    verify_link = f"https://app.gatepassng.com/activate?{query}"
+    # verify_link = f"https://app.gatepassng.com/activate?{query}"
+    verify_link = f"http://localhost:8081/activate?{query}"
     # @TO-DO: Replace with your frontend account activation URL once available
 
     body = _build_email(
@@ -323,7 +324,8 @@ async def send_welcome_email(email: str, first_name: str) -> None:
     """Sends a welcome email after a user successfully
     activates their account."""
     # @TODO: Replace with your frontend login/dashboard URL once available
-    login_link = "https://app.gatepassng.com/login"
+    # login_link = "https://app.gatepassng.com/login"
+    login_link = "http://localhost:8081/auth/login"
 
     body = _build_email(
         heading="Welcome to GatePass",
@@ -353,8 +355,8 @@ async def send_password_reset_email(
 ) -> None:
     """Sends a password reset link to the user."""
     query = urlencode({"token": token})
-    reset_link = f"https://app.gatepassng.com/password-reset?{query}"
-    # @TO-DO: Replace with your frontend password reset URL once available
+    # reset_link = f"https://app.gatepassng.com/auth/reset-password?{query}"
+    reset_link = f"http://localhost:8081/auth/reset-password?{query}"
 
     body = _build_email(
         heading="Reset Your Password",
@@ -395,7 +397,8 @@ async def send_password_reset_confirmation_email(
             "administrator immediately."
         ),
         button_label="Log In",
-        button_href="https://app.gatepassng.com/login",
+        # @TODO: Replace with your frontend login/dashboard URL once available
+        button_href="http://localhost:8081/auth/login",
     )
 
     message = MessageSchema(
