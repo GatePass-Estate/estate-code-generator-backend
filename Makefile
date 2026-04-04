@@ -1,4 +1,4 @@
-.PHONY: build clean logs restart start stop
+.PHONY: build clean logs restart start stop gcp-deploy gcp-teardown
 
 clean:
 	chmod +x ./scripts/clean.sh
@@ -34,3 +34,11 @@ clean-db:
 run_migrations:
 	docker compose up --no-start db-migration
 	docker compose start db-migration
+
+# GCP: run from repository root. build.sh writes infra/.gcp_image_tag; deploy.sh reads it.
+gcp-deploy:
+	bash infra/deploy.sh
+
+# GCP: remove microservice Services/Deployments, migration Job, then delete the cluster (see infra/teardown.sh).
+gcp-teardown:
+	bash infra/teardown.sh
