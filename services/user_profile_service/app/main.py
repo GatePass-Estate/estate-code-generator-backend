@@ -14,6 +14,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
+    root_path="/user",
 )
 
 # Enable CORS for all origins/methods/headers
