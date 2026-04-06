@@ -10,6 +10,8 @@ BASE_SERVICES_FILE="infra/gatepass-baseimage-service.yaml"
 DEPLOYMENT_FILE="infra/gatepass-microservice-deployment.yaml"
 SERVICES_FILE="infra/gatepass-microservice-service.yaml"
 MIGRATION_FILE="infra/gatepass-migrations.yaml"
+CERTIFICATE_FILE="infra/gatepass-certificate.yaml"
+INGRESS_FILE="infra/gatepass-ingress.yaml"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Services configuration arrays
@@ -52,7 +54,7 @@ for i in "${!SERVICES[@]}"; do
     docker push "$full_image_path"
 done
 
-# Create cluster if it doesn't exist
+# Create cluster if it doesn't exist (re-running deploy when the cluster already exists is OK — this branch is skipped)
 if ! gcloud container clusters describe $CLUSTER_NAME --zone=$ZONE --project=$PROJECT_ID &>/dev/null; then
     gcloud container clusters create $CLUSTER_NAME \
         --zone=$ZONE \
@@ -62,20 +64,57 @@ if ! gcloud container clusters describe $CLUSTER_NAME --zone=$ZONE --project=$PR
         --enable-autoscaling \
         --min-nodes=1 \
         --max-nodes=5
+else
+    echo "Cluster '${CLUSTER_NAME}' already exists in ${ZONE}; reusing it (no error)."
 fi
 
 # Get cluster credentials
 gcloud container clusters get-credentials $CLUSTER_NAME --zone=$ZONE --project=$PROJECT_ID
 
-# Postgres and Redis must exist before migrations or microservices can use DB/cache (see infra/Note.txt)
-echo "Deploying Redis and Postgres..."
-kubectl apply -f $BASE_DEPLOYMENT_FILE
-kubectl apply -f $BASE_SERVICES_FILE
-kubectl rollout status deployment/redis --timeout=300s
-kubectl rollout status deployment/postgres --timeout=300s
+# Kubernetes Secrets from local .env.secrets (gitignored). Injects at runtime; images stay secret-free.
+# Keys in .env.secrets become container env vars; explicit env: in deployments still overrides for cluster-specific values.
+apply_secrets_from_env_files() {
+    local file name
+    while IFS= read -r line; do
+        file="${line%%:*}"
+        name="${line##*:}"
+        if [[ -f "$file" ]]; then
+            echo "Applying Secret ${name} from ${file}"
+            kubectl create secret generic "$name" --from-env-file="$file" --dry-run=client -o yaml | kubectl apply -f -
+        else
+            echo "Skipping Secret ${name}: file not found (${file}). Copy .env.secrets into place or create the Secret manually."
+        fi
+    done <<'EOF'
+services/cache_service/.env.secrets:cache-service-gcp-secrets
+services/code_service/.env.secrets:code-service-gcp-secrets
+services/db-service/.env.secrets:db-service-gcp-secrets
+services/user_profile_service/.env.secrets:user-profile-service-gcp-secrets
+EOF
+}
+
+apply_secrets_from_env_files
+
+# Postgres and Redis must exist before migrations (see infra/Note.txt). Skip baseimage apply if already healthy.
+baseimage_already_up() {
+    local r p
+    r=$(kubectl get deploy redis -o jsonpath='{.status.availableReplicas}' 2>/dev/null) || return 1
+    p=$(kubectl get deploy postgres -o jsonpath='{.status.availableReplicas}' 2>/dev/null) || return 1
+    [[ "${r:-0}" -ge 1 ]] && [[ "${p:-0}" -ge 1 ]]
+}
+
+if baseimage_already_up; then
+    echo "Redis and Postgres deployments are already available; skipping ${BASE_DEPLOYMENT_FILE} and ${BASE_SERVICES_FILE}."
+else
+    echo "Deploying Redis and Postgres (baseimage)..."
+    kubectl apply -f $BASE_DEPLOYMENT_FILE
+    kubectl apply -f $BASE_SERVICES_FILE
+    kubectl rollout status deployment/redis --timeout=300s
+    kubectl rollout status deployment/postgres --timeout=300s
+fi
 
 # Migrations before app pods so schema exists when services connect (no race on startup)
 echo "Running database migrations..."
+kubectl delete job db-migration-gcp --ignore-not-found --wait=true 2>/dev/null || true
 cp $MIGRATION_FILE /tmp/migration-temp.yaml
 sed -i '' 's|gcr.io/gatepass-461616/db-migration-gcp:latest|'"${REGISTRY_URL}/${PROJECT_ID}/db-migration-gcp:${TIMESTAMP}"'|g' /tmp/migration-temp.yaml
 kubectl apply -f /tmp/migration-temp.yaml
@@ -100,10 +139,10 @@ kubectl rollout status deployment/code-service-gcp --timeout=300s
 kubectl rollout status deployment/db-service-gcp --timeout=300s
 kubectl rollout status deployment/user-profile-service-gcp --timeout=300s
 
-echo "Deploying Kubernetes services (ClusterIP db + user-profile; LoadBalancers for db/user-profile external + code)..."
+echo "Deploying Kubernetes services (ClusterIP for cache, code, db, user-profile; LoadBalancer only for db-service-gcp-external)..."
 kubectl apply -f $SERVICES_FILE
 
-echo "Waiting for LoadBalancer IPs (up to ~6m each; GCP provisions network LB)..."
+echo "Waiting for db-service-gcp-external LoadBalancer IP (up to ~6m; GCP provisions network LB)..."
 wait_lb_ip() {
     local svc="$1"
     local ip=""
@@ -121,16 +160,25 @@ wait_lb_ip() {
 }
 
 DB_LB_IP=$(wait_lb_ip db-service-gcp-external || true)
-CODE_LB_IP=$(wait_lb_ip code-service-gcp || true)
-UP_LB_IP=$(wait_lb_ip user-profile-service-gcp-external || true)
 
-if [[ -n "$UP_LB_IP" ]]; then
-    kubectl set env deployment/user-profile-service-gcp BASE_URL="http://${UP_LB_IP}:9034/"
-    echo "Set user-profile BASE_URL to http://${UP_LB_IP}:9034/ (use https + DNS when fronting with TLS)"
+echo "ManagedCertificate and Ingress (api.gatepassng.com)..."
+if kubectl get managedcertificate gatepass-cert &>/dev/null; then
+    echo "ManagedCertificate gatepass-cert already exists; skipping kubectl apply -f ${CERTIFICATE_FILE}"
 else
-    echo "Note: user-profile-service-gcp-external has no EXTERNAL-IP yet. When ready: kubectl get svc user-profile-service-gcp-external"
-    echo "  Then: kubectl set env deployment/user-profile-service-gcp BASE_URL=http://<EXTERNAL-IP>:9034/"
+    kubectl apply -f "$CERTIFICATE_FILE"
 fi
+if kubectl get ingress gatepass-ingress &>/dev/null; then
+    echo "Ingress gatepass-ingress already exists; skipping kubectl apply -f ${INGRESS_FILE}"
+else
+    kubectl apply -f "$INGRESS_FILE"
+fi
+
+echo ""
+echo "ManagedCertificate status (TLS stays Pending until DNS points at the Ingress IP):"
+kubectl describe managedcertificate gatepass-cert 2>/dev/null || echo "(no ManagedCertificate gatepass-cert yet)"
+echo ""
+echo "Ingress:"
+kubectl get ingress gatepass-ingress -o wide 2>/dev/null || echo "(no Ingress gatepass-ingress yet)"
 
 # Cleanup temporary files
 rm -f /tmp/deployment-temp.yaml
@@ -139,12 +187,13 @@ rm -f /tmp/migration-temp.yaml
 # Output deployment info
 echo "Deployment completed with timestamp: $TIMESTAMP"
 echo ""
-echo "LoadBalancer endpoints (http://IP:port — add DNS/TLS as needed):"
-[[ -n "$DB_LB_IP" ]] && echo "  db-service (external): http://${DB_LB_IP}:9032/" || echo "  db-service (external): (pending — kubectl get svc db-service-gcp-external)"
-echo "  db-service (in-cluster): http://db-service-gcp:9032"
-[[ -n "$CODE_LB_IP" ]] && echo "  code-service:      http://${CODE_LB_IP}:9033/" || echo "  code-service:      (pending — kubectl get svc code-service-gcp)"
-[[ -n "$UP_LB_IP" ]] && echo "  user-profile (external): http://${UP_LB_IP}:9034/" || echo "  user-profile (external): (pending — kubectl get svc user-profile-service-gcp-external)"
-echo "  user-profile (in-cluster): http://user-profile-service-gcp:9034"
+echo "External (LoadBalancer):"
+[[ -n "$DB_LB_IP" ]] && echo "  db-service: http://${DB_LB_IP}:9032/" || echo "  db-service: (pending — kubectl get svc db-service-gcp-external)"
+echo ""
+echo "In-cluster only (ClusterIP — use port-forward, Ingress, or another proxy to reach from outside):"
+echo "  code-service:      http://code-service-gcp:9033/"
+echo "  user-profile:      http://user-profile-service-gcp:9034/"
+echo "  db-service:        http://db-service-gcp:9032/"
 echo ""
 echo "Deployments:"
 kubectl get deployments

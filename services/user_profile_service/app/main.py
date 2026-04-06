@@ -55,7 +55,7 @@ def custom_openapi():
     openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
 
     for path in openapi_schema["paths"]:
-        if path == "/healthz":
+        if path in ("/", "/healthz"):
             for method in openapi_schema["paths"][path]:
                 openapi_schema["paths"][path][method]["security"] = []
 
@@ -64,6 +64,14 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
+
+
+@app.get("/")
+async def root():
+    """Avoid 404 on GET / (LB probes and browsers); use /healthz or /api/v1 for APIs."""
+    return JSONResponse(
+        content={"service": "user-profile-service", "status": "ok"}
+    )
 
 
 @app.get("/healthz", status_code=200)
