@@ -179,4 +179,7 @@ gatepass-microservice-deployment.yaml
 gatepass-microservice-service.yaml
 gatepass-baseimage-service.yaml
 gatepass-migrations.yaml
+gatepass-certificate.yaml
+gatepass-ingress.yaml
 Note.txt
+k8s-services-snapshot.csv

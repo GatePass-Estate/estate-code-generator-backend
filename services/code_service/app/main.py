@@ -14,6 +14,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
+    root_path="/code",
 )
 
 # Add CORS middleware
@@ -55,9 +56,9 @@ def custom_openapi():
     # Apply security globally
     openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
 
-    # Remove security requirement from healthz endpoint
+    # Remove security requirement from healthz and root
     for path in openapi_schema["paths"]:
-        if path == "/healthz":
+        if path in ("/", "/healthz"):
             for method in openapi_schema["paths"][path]:
                 openapi_schema["paths"][path][method]["security"] = []
 
@@ -66,6 +67,12 @@ def custom_openapi():
 
 
 app.openapi = custom_openapi
+
+
+@app.get("/")
+async def root():
+    """Avoid 404 on GET / (LB probes and browsers); use /healthz or /api/v1 for APIs."""
+    return JSONResponse(content={"service": "code-service", "status": "ok"})
 
 
 @app.get("/healthz", status_code=200)
