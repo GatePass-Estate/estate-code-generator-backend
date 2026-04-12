@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     DB_SERVICE_URL: str = os.getenv(
         "DB_SERVICE_URL", "http://db-service:9032/"
     )
+    SECRET_KEY: str | None = os.getenv("SECRET_KEY")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     USER_PROFILE_SERVICE_URL: str = os.getenv(
         "USER_PROFILE_SERVICE_URL", "http://user-profile-service:9034/"
     )

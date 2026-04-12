@@ -1,3 +1,19 @@
-from app.models.schemas import AnalyzeRequest, AnalyzeResponse
+from app.models.schemas import (
+    AnalysisTransparency,
+    AnalyzeRequest,
+    AnalyzeResponse,
+    CodeValidationPayload,
+    FeatureContribution,
+    Receiver,
+    ScopeTransparencyDetail,
+)
 
-__all__ = ["AnalyzeRequest", "AnalyzeResponse"]
+__all__ = [
+    "AnalysisTransparency",
+    "AnalyzeRequest",
+    "AnalyzeResponse",
+    "CodeValidationPayload",
+    "FeatureContribution",
+    "Receiver",
+    "ScopeTransparencyDetail",
+]

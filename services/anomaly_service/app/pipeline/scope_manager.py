@@ -1,13 +1,11 @@
-"""Resolves which analysis scopes apply for a given request (config-driven later)."""
+"""Resolves feature scopes for a pipeline (config-driven, internal-only)."""
 
 from app.domain.scopes import AnalysisScope
+from app.pipeline.anomaly_pipeline import AnomalyPipelineBase
 
 
-def resolve_scopes(
-    requested: list[AnalysisScope] | None,
-    *,
-    default: list[AnalysisScope] | None = None,
+def resolve_scopes_for_pipeline(
+    pipeline: AnomalyPipelineBase,
 ) -> list[AnalysisScope]:
-    if requested:
-        return list(requested)
-    return default or [AnalysisScope.VISITOR]
+    """Return scopes configured for this anomaly type (see scope_config)."""
+    return pipeline.allowed_feature_scopes()

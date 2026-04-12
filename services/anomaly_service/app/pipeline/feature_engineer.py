@@ -2,12 +2,16 @@
 
 from typing import Any
 
-from app.pipeline.base import ScopeAnalysisBase
+from app.domain.scopes import AnalysisScope
+from app.pipeline.anomaly_pipeline import AnomalyPipelineBase
 
 
 async def build_feature_vector(
-    scope_impl: ScopeAnalysisBase,
+    pipeline: AnomalyPipelineBase,
+    scope: AnalysisScope,
     cleaned_records: list[dict[str, Any]],
     context: dict[str, Any],
 ) -> dict[str, float]:
-    return await scope_impl.engineer_features(cleaned_records, context)
+    return await pipeline.engineer_scope_features(
+        scope, cleaned_records, context
+    )

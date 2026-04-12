@@ -1,4 +1,4 @@
-"""Natural language / structured explanation of scores (stub)."""
+"""Human-readable and structured transparency for anomaly scores."""
 
 
 def explain(
