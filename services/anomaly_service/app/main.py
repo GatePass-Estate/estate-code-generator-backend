@@ -1,3 +1,5 @@
+"""FastAPI application for visit anomaly detection (HTTP API and OpenAPI)."""
+
 import logging
 
 from fastapi import FastAPI
@@ -28,6 +30,7 @@ app.add_middleware(
 
 
 def custom_openapi():
+    """Build OpenAPI schema with bearer auth; relax security on public paths."""
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
@@ -60,6 +63,7 @@ app.openapi = custom_openapi
 
 @app.get("/")
 async def root():
+    """Service identity and version for shallow health checks."""
     return JSONResponse(
         content={
             "service": "anomaly-service",
@@ -71,6 +75,7 @@ async def root():
 
 @app.get("/healthz", status_code=200)
 async def healthz():
+    """Liveness probe for orchestrators and load balancers."""
     return JSONResponse(content={"status": "ok"})
 
 

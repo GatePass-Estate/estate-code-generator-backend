@@ -1,27 +1,70 @@
 """Wires anomaly type → db log fetch → scopes → features → analysis."""
 
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# ``python orchestrator.py`` from this folder puts ``.../app/pipeline`` on
+# ``sys.path[0]``. Without the repo root for *this* service first, ``import app``
+# can resolve to another microservice's top-level ``app`` package (e.g.
+# user-profile-service), which then loads the wrong ``Settings`` and fails
+# validation. Prepend ``services/anomaly_service`` so ``app.*`` is always ours.
+_ANOMALY_SVC_ROOT = Path(__file__).resolve().parents[2]
+if str(_ANOMALY_SVC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ANOMALY_SVC_ROOT))
+
+import asyncio
+import json
 from typing import Any
+from uuid import UUID
 
 import httpx
 
 from app.core.config import settings
 from app.domain.anomaly_types import AnomalyType
-from app.integrations.db_service_logs import load_log_records_for_analysis
+from app.domain.log_feature_store import (
+    historical_vectors_for_scope,
+    previous_anchor_log_ids,
+)
+from app.domain.scopes import AnalysisScope
+from app.integrations.db_service_feature_engineering import (
+    batch_lookup_engineered_features,
+    log_kind_from_slices_source,
+    upsert_focal_engineered_features,
+)
+from app.integrations.db_service_logs import (
+    history_window_days,
+    load_log_records_for_analysis,
+)
 from app.models.schemas import (
     AnalysisTransparency,
     CodeValidationPayload,
     FeatureContribution,
+    Receiver,
     ScopeTransparencyDetail,
 )
 from app.pipeline.analysis_manager import ensemble_score, run_models
-from app.pipeline.anomaly_pipeline import pipeline_for_type
-from app.pipeline.data_wrangler import wrangle_visit_records
+from app.pipeline.anomaly_pipeline import (
+    RECORDS_PRE_SLICED_CONTEXT_KEY,
+    pipeline_for_type,
+)
 from app.pipeline.feature_engineer import build_feature_vector
 from app.pipeline.scope_manager import resolve_scopes_for_pipeline
 from app.pipeline.transparency_manager import explain
 
+# LogHistorySlices field used for each ``AnalysisScope`` (feature engineering input).
+_SLICE_LABEL: dict[AnalysisScope, str] = {
+    AnalysisScope.ESTATE_WIDE: "estate_wide",
+    AnalysisScope.VISITOR: "visitor_specific",
+    AnalysisScope.RESIDENT: "resident_specific",
+    AnalysisScope.SECURITY: "security_specific",
+}
+
 
 class AnomalyOrchestrator:
+    """Coordinates log fetch, wrangling, scoped features, scoring, and output."""
+
     async def analyze(
         self,
         *,
@@ -29,27 +72,109 @@ class AnomalyOrchestrator:
         anomaly_type: AnomalyType,
         code_validation: CodeValidationPayload,
     ) -> dict[str, Any]:
-        raw_records = await load_log_records_for_analysis(
+        """
+        End-to-end analysis: fetch logs, clean rows, engineer per-scope features,
+        run detector models (K-means, DBSCAN), aggregate scores, and attach
+        transparency payloads.
+
+        Returns:
+            A dict compatible with ``AnalyzeResponse`` (including nested
+            ``transparency``).
+        """
+        log_slices = await load_log_records_for_analysis(
             client, settings, code_validation
         )
+        focal_record = log_slices.focal_record
+        merged_full = log_slices.merged_full
+        focal_id = focal_record.get("id")
+        print(
+            "\n[AnomalyOrchestrator.analyze] load_log_records_for_analysis "
+            f"merged_full={len(merged_full)} focal_record.id={focal_id!r} "
+            f"slice_counts estate={len(log_slices.estate_wide)} "
+            f"visitor={len(log_slices.visitor_specific)} "
+            f"resident={len(log_slices.resident_specific)} "
+            f"security={len(log_slices.security_specific)}"
+        )
+        print(
+            "\n[AnomalyOrchestrator.analyze] focal_record (truncated): "
+            f"{json.dumps(focal_record, default=str)[:800]}"
+        )
+
         pipeline = pipeline_for_type(anomaly_type)
         ctx: dict[str, Any] = {
             **code_validation.model_dump(mode="json"),
             "trigger_context": {"anomaly_type": anomaly_type.value},
+            "focal_record": focal_record,
+            "history_window_days": float(history_window_days()),
+            RECORDS_PRE_SLICED_CONTEXT_KEY: True,
         }
+        print(f"\n[AnomalyOrchestrator.analyze] context={ctx!r}")
+
         resolved = resolve_scopes_for_pipeline(pipeline)
-        cleaned = await wrangle_visit_records(raw_records)
+        print(
+            "\n[AnomalyOrchestrator.analyze] resolve_scopes_for_pipeline "
+            f"scopes={[s.value for s in resolved]} pipeline={type(pipeline).__name__}"
+        )
+
+        print(
+            "\n[AnomalyOrchestrator.analyze] log rows (wrangled in "
+            "load_log_records_for_analysis) merged_full="
+            f"{len(merged_full)}"
+        )
 
         scope_scores: dict[str, float] = {}
         scope_details: list[ScopeTransparencyDetail] = []
         global_model_outputs: dict[str, float] = {}
+        focal_features_by_scope: dict[str, dict[str, float]] = {}
+        log_kind = log_kind_from_slices_source(log_slices.source)
 
         for scope in resolved:
-            feats = await build_feature_vector(pipeline, scope, cleaned, ctx)
-            model_outputs = await run_models(feats)
+            print(
+                "\n[AnomalyOrchestrator.analyze] per-scope loop "
+                f"scope={scope.value!r} (build_feature_vector next)"
+            )
+            scope_rows = log_slices.rows_for_analysis_scope(scope)
+            print(
+                "\n[AnomalyOrchestrator.analyze] feature_rows "
+                f"analysis_scope={scope.value!r} "
+                f"log_slice={_SLICE_LABEL[scope]} cleaned_n={len(scope_rows)}"
+            )
+            feats = await build_feature_vector(
+                pipeline, scope, scope_rows, ctx
+            )
+            focal_features_by_scope[scope.value] = feats
+            print(
+                "\n[AnomalyOrchestrator.analyze] after build_feature_vector "
+                f"scope={scope.value!r} feature_keys={list(feats.keys())}"
+            )
+            prev_log_ids = previous_anchor_log_ids(scope_rows, focal_record)
+            stored_rows = await batch_lookup_engineered_features(
+                client,
+                settings,
+                log_ids=prev_log_ids,
+                anomaly_type=anomaly_type,
+                log_kind=log_kind,
+            )
+            historical_vectors = historical_vectors_for_scope(
+                stored_rows, scope
+            )
+            print(
+                "\n[AnomalyOrchestrator.analyze] historical engineered rows "
+                f"scope={scope.value!r} prev_ids={len(prev_log_ids)} "
+                f"vectors={len(historical_vectors)}"
+            )
+            model_outputs = await run_models(
+                scope=scope,
+                focal_features=feats,
+                historical_features=historical_vectors,
+            )
             for k, v in model_outputs.items():
                 global_model_outputs[f"{scope.value}:{k}"] = v
             score = await pipeline.score_scope(scope, feats)
+            print(
+                "\n[AnomalyOrchestrator.analyze] after run_models/score_scope "
+                f"scope={scope.value!r} model_outputs={model_outputs!r} score={score}"
+            )
             scope_scores[scope.value] = score
             scope_details.append(
                 ScopeTransparencyDetail(
@@ -66,15 +191,32 @@ class AnomalyOrchestrator:
                     ],
                     thresholds={},
                     model_ids=[
-                        "stub-kmeans-v0",
-                        "stub-dbscan-v0",
-                        "stub-lfoa-v0",
+                        "kmeans-distance-v1",
+                        "dbscan-noise-v1",
+                        "lfoa-pending",
                     ],
                     model_outputs=dict(model_outputs),
                 )
             )
 
         final = await ensemble_score(list(scope_scores.values()))
+        print(
+            f"\n[AnomalyOrchestrator.analyze] ensemble_score final={final!r}"
+        )
+
+        focal_is_anomalous = (
+            final >= settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD
+        )
+        await upsert_focal_engineered_features(
+            client,
+            settings,
+            code_validation=code_validation,
+            anomaly_type=anomaly_type,
+            features_by_scope_value=focal_features_by_scope,
+            log_kind=log_kind,
+            is_anomalous=focal_is_anomalous,
+        )
+
         explanation = explain(
             final,
             scope_scores,
@@ -87,11 +229,46 @@ class AnomalyOrchestrator:
             global_model_outputs=global_model_outputs,
         )
 
-        return {
+        out = {
             "final_score": final,
             "per_scope_scores": scope_scores,
             "explanation": explanation,
             "scopes_evaluated": [s.value for s in resolved],
             "anomaly_type": anomaly_type.value,
+            "is_anomalous": focal_is_anomalous,
             "transparency": transparency.model_dump(),
         }
+        print(
+            "\n[AnomalyOrchestrator.analyze] return "
+            f"final_score={out['final_score']} "
+            f"per_scope_scores={out['per_scope_scores']}"
+        )
+        return out
+
+
+async def _main() -> None:
+    """Local e2e: replace UUIDs and ``hashed_code`` with real db-service values."""
+    code_validation = CodeValidationPayload(
+        user_id=UUID("ea544461-05f0-43f0-b207-066d5f128a07"),
+        security_id=UUID("5eaaf13e-d9e2-4e01-a65d-277fb55623b0"),
+        estate_id=UUID("6eb0c18d-5505-4601-a211-1584b6a5bc31"),
+        hashed_code="NL2JG5",
+        valid_until="2026-03-05 08:11:47.795922+00",
+        is_expired=False,
+        receiver=Receiver.VISITOR,
+        visitor_log_id=UUID("51c43fa0-5432-4b39-94da-5299581c3537"),
+        resident_log_id=None,
+    )
+    orch = AnomalyOrchestrator()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        result = await orch.analyze(
+            client=client,
+            anomaly_type=AnomalyType.VISITOR,
+            code_validation=code_validation,
+        )
+    print("\n[__main__] analyze result:")
+    print("\n" + json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())

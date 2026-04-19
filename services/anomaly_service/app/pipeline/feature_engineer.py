@@ -12,6 +12,25 @@ async def build_feature_vector(
     cleaned_records: list[dict[str, Any]],
     context: dict[str, Any],
 ) -> dict[str, float]:
-    return await pipeline.engineer_scope_features(
+    """
+    Compute the feature vector for one ``AnalysisScope`` via the pipeline.
+
+    ``cleaned_records`` must be the wrangled per-scope slice for ``scope`` from
+    ``LogHistorySlices.rows_for_analysis_scope`` (wrangling runs inside
+    ``load_log_records_for_analysis`` before the split).
+
+    Delegates to ``AnomalyPipelineBase.engineer_scope_features`` so visitor vs
+    resident behaviour stays encapsulated on the pipeline instance.
+    """
+    print(
+        "\n[build_feature_vector] enter "
+        f"scope={scope.value!r} cleaned_rows={len(cleaned_records)} "
+        f"pipeline={type(pipeline).__name__}"
+    )
+    out = await pipeline.engineer_scope_features(
         scope, cleaned_records, context
     )
+    print(
+        f"\n[build_feature_vector] exit scope={scope.value!r} dim={len(out)}"
+    )
+    return out

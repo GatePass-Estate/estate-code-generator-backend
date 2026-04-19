@@ -1,3 +1,5 @@
+"""API v1 router aggregation."""
+
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.anomaly import router as anomaly_router

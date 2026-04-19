@@ -6,6 +6,7 @@ def explain(
     scope_scores: dict[str, float],
     model_outputs: dict[str, float],
 ) -> str:
+    """Build a short human-readable summary line for the analysis response."""
     parts = [
         f"final_score={final_score:.4f}",
         f"scopes={scope_scores}",

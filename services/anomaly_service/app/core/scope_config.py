@@ -17,5 +17,10 @@ _DEFAULT_SCOPES: dict[AnomalyType, tuple[AnalysisScope, ...]] = {
 
 
 def scopes_for_anomaly_type(anomaly_type: AnomalyType) -> list[AnalysisScope]:
-    """Ordered list of feature scopes to run for the given anomaly pipeline."""
+    """
+    Return the ordered analysis scopes to run for ``anomaly_type``.
+
+    Visitor pipelines include all scopes; resident pipelines omit the
+    visitor-specific lens. Values come from static ``_DEFAULT_SCOPES``.
+    """
     return list(_DEFAULT_SCOPES[anomaly_type])
