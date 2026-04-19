@@ -104,6 +104,22 @@ async def register_user(
     return user
 
 
+@router.delete("/me/account", response_model=DeleteUserResponse)
+async def close_account(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    current_user: dict = Depends(get_current_user),
+):
+    """Close the authenticated user's own account."""
+    repository = UserRepository(ahttp_client)
+    estate_repository = EstateRepository(ahttp_client)
+    household_repository = HouseholdRepository(ahttp_client)
+    admin_repository = AdminRepository(ahttp_client)
+    service = UserService(
+        repository, estate_repository, household_repository, admin_repository
+    )
+    return await service.close_account(current_user["id"])
+
+
 @router.get("/profile/me", response_model=UserProfileResponse)
 async def get_my_profile(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
