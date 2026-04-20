@@ -70,42 +70,19 @@ class AnomalyPipelineBase(ABC):
         Security scope uses the full window ``raw_records``; other scopes use a
         focal-centred cohort (same visitor / resident stream).
         """
-        print(
-            f"\n[AnomalyPipelineBase.engineer_scope_features] scope={scope.value!r} "
-            f"raw_records={len(raw_records)}"
-        )
-
+        # Pre-sliced path: orchestrator already split rows by scope; else filter
+        # cohort then apply scope-specific row filter (security = full window).
         if context.get(RECORDS_PRE_SLICED_CONTEXT_KEY):
             records = list(raw_records)
-            print(
-                "\n[AnomalyPipelineBase.engineer_scope_features] "
-                f"using pre-sliced rows for scope={scope.value!r} n={len(records)}"
-            )
         else:
             cohort = self._cohort_records(raw_records, context)
-            print(
-                "\n[AnomalyPipelineBase.engineer_scope_features] "
-                f"cohort_after_stream_filter={len(cohort)}"
-            )
 
             if scope == AnalysisScope.SECURITY:
                 records = self._for_scope(scope, raw_records, context)
-                print(
-                    "\n[AnomalyPipelineBase.engineer_scope_features] SECURITY "
-                    f"full_window_rows={len(records)}"
-                )
             else:
                 records = self._for_scope(scope, cohort, context)
-                print(
-                    "\n[AnomalyPipelineBase.engineer_scope_features] "
-                    f"scope={scope.value!r} rows_for_feature_methods={len(records)}"
-                )
 
         keys = self._scope_feature_keys(scope)
-        print(
-            "\n[AnomalyPipelineBase.engineer_scope_features] "
-            f"feature_keys({len(keys)})={keys}"
-        )
 
         ctx = dict(context)
         ctx[_FE_SCOPE_ROW_CACHE_KEY] = self._build_fe_scope_row_cache(
@@ -118,14 +95,6 @@ class AnomalyPipelineBase(ABC):
             method = getattr(self, method_name)
             value = float(method(records, ctx))
             feats[key] = value
-            print(
-                "\n[AnomalyPipelineBase.engineer_scope_features] "
-                f"aggregated {key!r} -> {value}"
-            )
-        print(
-            "\n[AnomalyPipelineBase.engineer_scope_features] "
-            f"done scope={scope.value!r} vector={feats}"
-        )
         return feats
 
     def _cohort_records(
@@ -425,7 +394,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         else:
             ts = self._focal_event_ts(context)
             out = float(ts.hour) if ts is not None else 0.0
-        print(f"\n[VisitorAnomalyPipeline._feature_hour_of_day] -> {out}")
         return out
 
     def _feature_day_of_week(
@@ -438,7 +406,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         else:
             ts = self._focal_event_ts(context)
             out = float(ts.weekday()) if ts is not None else 0.0
-        print(f"\n[VisitorAnomalyPipeline._feature_day_of_week] -> {out}")
         return out
 
     def _feature_is_weekend(
@@ -448,15 +415,12 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_is_weekend" in c:
             out = float(c["focal_is_weekend"])
-            print(f"\n[VisitorAnomalyPipeline._feature_is_weekend] -> {out}")
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(f"\n[VisitorAnomalyPipeline._feature_is_weekend] -> {out}")
             return out
         out = float(1.0 if ts.weekday() >= 5 else 0.0)
-        print(f"\n[VisitorAnomalyPipeline._feature_is_weekend] -> {out}")
         return out
 
     def _feature_visit_hour_bucket(
@@ -466,21 +430,12 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_hour_bucket" in c:
             out = float(c["focal_hour_bucket"])
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-            )
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-            )
             return out
         out = float(self._hour_bucket(ts.hour))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-        )
         return out
 
     def _feature_time_since_last_visit(
@@ -493,9 +448,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
             prev_ts = c.get("prev_event_ts")
             if focal_ts is not None and prev_ts is not None:
                 out = (focal_ts - prev_ts).total_seconds() / 3600.0
-                print(
-                    f"\n[VisitorAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-                )
                 return out
         ordered = self._ordered_for_features(records, context)
         idx = self._focal_index_for_features(ordered, context)
@@ -503,14 +455,8 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         prev_ts = self._prev_event_ts(ordered, idx)
         if focal_ts is None or prev_ts is None:
             out = 0.0
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-            )
             return out
         out = (focal_ts - prev_ts).total_seconds() / 3600.0
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-        )
         return out
 
     def _feature_visit_interarrival_time(
@@ -520,16 +466,10 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "gaps_through_focal" in c:
             out = self._mean(c["gaps_through_focal"])
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_visit_interarrival_time] -> {out}"
-            )
             return out
         ordered = self._ordered_for_features(records, context)
         idx = self._focal_index_for_features(ordered, context)
         out = self._mean(self._gaps_through_focal(ordered, idx))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_visit_interarrival_time] -> {out}"
-        )
         return out
 
     def _feature_night_visit_flag(
@@ -539,19 +479,12 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_night_flag" in c:
             out = float(c["focal_night_flag"])
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_night_visit_flag] -> {out}"
-            )
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_night_visit_flag] -> {out}"
-            )
             return out
         out = float(1.0 if ts.hour < 6 or ts.hour >= 22 else 0.0)
-        print(f"\n[VisitorAnomalyPipeline._feature_night_visit_flag] -> {out}")
         return out
 
     def _feature_visitor_total_visits(
@@ -559,9 +492,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Count of cohort rows (same visitor stream in the window)."""
         out = float(len(records))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_visitor_total_visits] -> {out}"
-        )
         return out
 
     def _feature_visitor_weekly_frequency(
@@ -569,9 +499,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Visits per week implied by cohort size and the history window."""
         out = float(len(records) / self._history_weeks(context))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_visitor_weekly_frequency] -> {out}"
-        )
         return out
 
     def _feature_resident_visit_frequency(
@@ -579,9 +506,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Cohort visit count per week (resident stream proxy on visitor data)."""
         out = float(len(records) / self._history_weeks(context))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_resident_visit_frequency] -> {out}"
-        )
         return out
 
     def _feature_guard_total_validations(
@@ -597,9 +521,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
                     1 for r in records if str(r.get("security_id")) == str(sec)
                 )
             )
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_guard_total_validations] -> {out}"
-        )
         return out
 
     def _feature_guard_night_validations(
@@ -612,9 +533,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
             if ts is not None and (ts.hour < 6 or ts.hour >= 22):
                 n += 1
         out = float(n)
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_guard_night_validations] -> {out}"
-        )
         return out
 
     def _feature_relationship_frequency(
@@ -629,17 +547,11 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         )
         if rel0 is None or not records:
             out = 0.0
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_relationship_frequency] -> {out}"
-            )
             return out
         same = sum(
             1 for r in records if r.get("relationship_with_resident") == rel0
         )
         out = float(same / len(records))
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_relationship_frequency] -> {out}"
-        )
         return out
 
     def _feature_relationship_transition(
@@ -656,15 +568,9 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         )
         if rel0 is None or idx <= 0:
             out = 0.0
-            print(
-                f"\n[VisitorAnomalyPipeline._feature_relationship_transition] -> {out}"
-            )
             return out
         prev_rel = ordered[idx - 1].get("relationship_with_resident")
         out = float(1.0 if prev_rel != rel0 else 0.0)
-        print(
-            f"\n[VisitorAnomalyPipeline._feature_relationship_transition] -> {out}"
-        )
         return out
 
     async def score_scope(
@@ -692,7 +598,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         else:
             ts = self._focal_event_ts(context)
             out = float(ts.hour) if ts is not None else 0.0
-        print(f"\n[ResidentAnomalyPipeline._feature_hour_of_day] -> {out}")
         return out
 
     def _feature_day_of_week(
@@ -705,7 +610,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         else:
             ts = self._focal_event_ts(context)
             out = float(ts.weekday()) if ts is not None else 0.0
-        print(f"\n[ResidentAnomalyPipeline._feature_day_of_week] -> {out}")
         return out
 
     def _feature_is_weekend(
@@ -715,15 +619,12 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_is_weekend" in c:
             out = float(c["focal_is_weekend"])
-            print(f"\n[ResidentAnomalyPipeline._feature_is_weekend] -> {out}")
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(f"\n[ResidentAnomalyPipeline._feature_is_weekend] -> {out}")
             return out
         out = float(1.0 if ts.weekday() >= 5 else 0.0)
-        print(f"\n[ResidentAnomalyPipeline._feature_is_weekend] -> {out}")
         return out
 
     def _feature_visit_hour_bucket(
@@ -733,21 +634,12 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_hour_bucket" in c:
             out = float(c["focal_hour_bucket"])
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-            )
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-            )
             return out
         out = float(self._hour_bucket(ts.hour))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_visit_hour_bucket] -> {out}"
-        )
         return out
 
     def _feature_time_since_last_visit(
@@ -760,9 +652,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
             prev_ts = c.get("prev_event_ts")
             if focal_ts is not None and prev_ts is not None:
                 out = (focal_ts - prev_ts).total_seconds() / 3600.0
-                print(
-                    f"\n[ResidentAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-                )
                 return out
         ordered = self._ordered_for_features(records, context)
         idx = self._focal_index_for_features(ordered, context)
@@ -770,14 +659,8 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         prev_ts = self._prev_event_ts(ordered, idx)
         if focal_ts is None or prev_ts is None:
             out = 0.0
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-            )
             return out
         out = (focal_ts - prev_ts).total_seconds() / 3600.0
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_time_since_last_visit] -> {out}"
-        )
         return out
 
     def _feature_visit_interarrival_time(
@@ -787,16 +670,10 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "gaps_through_focal" in c:
             out = self._mean(c["gaps_through_focal"])
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_visit_interarrival_time] -> {out}"
-            )
             return out
         ordered = self._ordered_for_features(records, context)
         idx = self._focal_index_for_features(ordered, context)
         out = self._mean(self._gaps_through_focal(ordered, idx))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_visit_interarrival_time] -> {out}"
-        )
         return out
 
     def _feature_night_visit_flag(
@@ -806,21 +683,12 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
         if isinstance(c, dict) and "focal_night_flag" in c:
             out = float(c["focal_night_flag"])
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_night_visit_flag] -> {out}"
-            )
             return out
         ts = self._focal_event_ts(context)
         if ts is None:
             out = 0.0
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_night_visit_flag] -> {out}"
-            )
             return out
         out = float(1.0 if ts.hour < 6 or ts.hour >= 22 else 0.0)
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_night_visit_flag] -> {out}"
-        )
         return out
 
     def _feature_visitor_total_visits(
@@ -828,9 +696,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Row count in cohort (resident pipeline; key name kept for parity)."""
         out = float(len(records))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_visitor_total_visits] -> {out}"
-        )
         return out
 
     def _feature_visitor_weekly_frequency(
@@ -838,9 +703,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Cohort events per week for shared feature key naming."""
         out = float(len(records) / self._history_weeks(context))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_visitor_weekly_frequency] -> {out}"
-        )
         return out
 
     def _feature_resident_visit_frequency(
@@ -848,9 +710,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
     ) -> float:
         """Resident cohort accesses per week over the history window."""
         out = float(len(records) / self._history_weeks(context))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_resident_visit_frequency] -> {out}"
-        )
         return out
 
     def _feature_guard_total_validations(
@@ -866,9 +725,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
                     1 for r in records if str(r.get("security_id")) == str(sec)
                 )
             )
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_guard_total_validations] -> {out}"
-        )
         return out
 
     def _feature_guard_night_validations(
@@ -881,9 +737,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
             if ts is not None and (ts.hour < 6 or ts.hour >= 22):
                 n += 1
         out = float(n)
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_guard_night_validations] -> {out}"
-        )
         return out
 
     def _feature_relationship_frequency(
@@ -898,17 +751,11 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         )
         if rel0 is None or not records:
             out = 0.0
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_relationship_frequency] -> {out}"
-            )
             return out
         same = sum(
             1 for r in records if r.get("relationship_with_resident") == rel0
         )
         out = float(same / len(records))
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_relationship_frequency] -> {out}"
-        )
         return out
 
     def _feature_relationship_transition(
@@ -925,15 +772,9 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         )
         if rel0 is None or idx <= 0:
             out = 0.0
-            print(
-                f"\n[ResidentAnomalyPipeline._feature_relationship_transition] -> {out}"
-            )
             return out
         prev_rel = ordered[idx - 1].get("relationship_with_resident")
         out = float(1.0 if prev_rel != rel0 else 0.0)
-        print(
-            f"\n[ResidentAnomalyPipeline._feature_relationship_transition] -> {out}"
-        )
         return out
 
     async def score_scope(

@@ -22,15 +22,6 @@ async def build_feature_vector(
     Delegates to ``AnomalyPipelineBase.engineer_scope_features`` so visitor vs
     resident behaviour stays encapsulated on the pipeline instance.
     """
-    print(
-        "\n[build_feature_vector] enter "
-        f"scope={scope.value!r} cleaned_rows={len(cleaned_records)} "
-        f"pipeline={type(pipeline).__name__}"
-    )
-    out = await pipeline.engineer_scope_features(
+    return await pipeline.engineer_scope_features(
         scope, cleaned_records, context
     )
-    print(
-        f"\n[build_feature_vector] exit scope={scope.value!r} dim={len(out)}"
-    )
-    return out

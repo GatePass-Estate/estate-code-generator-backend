@@ -27,7 +27,6 @@ from app.domain.log_feature_store import (
     historical_vectors_for_scope,
     previous_anchor_log_ids,
 )
-from app.domain.scopes import AnalysisScope
 from app.integrations.db_service_feature_engineering import (
     batch_lookup_engineered_features,
     log_kind_from_slices_source,
@@ -53,14 +52,6 @@ from app.pipeline.feature_engineer import build_feature_vector
 from app.pipeline.scope_manager import resolve_scopes_for_pipeline
 from app.pipeline.transparency_manager import explain
 
-# LogHistorySlices field used for each ``AnalysisScope`` (feature engineering input).
-_SLICE_LABEL: dict[AnalysisScope, str] = {
-    AnalysisScope.ESTATE_WIDE: "estate_wide",
-    AnalysisScope.VISITOR: "visitor_specific",
-    AnalysisScope.RESIDENT: "resident_specific",
-    AnalysisScope.SECURITY: "security_specific",
-}
-
 
 class AnomalyOrchestrator:
     """Coordinates log fetch, wrangling, scoped features, scoring, and output."""
@@ -85,20 +76,6 @@ class AnomalyOrchestrator:
             client, settings, code_validation
         )
         focal_record = log_slices.focal_record
-        merged_full = log_slices.merged_full
-        focal_id = focal_record.get("id")
-        print(
-            "\n[AnomalyOrchestrator.analyze] load_log_records_for_analysis "
-            f"merged_full={len(merged_full)} focal_record.id={focal_id!r} "
-            f"slice_counts estate={len(log_slices.estate_wide)} "
-            f"visitor={len(log_slices.visitor_specific)} "
-            f"resident={len(log_slices.resident_specific)} "
-            f"security={len(log_slices.security_specific)}"
-        )
-        print(
-            "\n[AnomalyOrchestrator.analyze] focal_record (truncated): "
-            f"{json.dumps(focal_record, default=str)[:800]}"
-        )
 
         pipeline = pipeline_for_type(anomaly_type)
         ctx: dict[str, Any] = {
@@ -108,19 +85,8 @@ class AnomalyOrchestrator:
             "history_window_days": float(history_window_days()),
             RECORDS_PRE_SLICED_CONTEXT_KEY: True,
         }
-        print(f"\n[AnomalyOrchestrator.analyze] context={ctx!r}")
 
         resolved = resolve_scopes_for_pipeline(pipeline)
-        print(
-            "\n[AnomalyOrchestrator.analyze] resolve_scopes_for_pipeline "
-            f"scopes={[s.value for s in resolved]} pipeline={type(pipeline).__name__}"
-        )
-
-        print(
-            "\n[AnomalyOrchestrator.analyze] log rows (wrangled in "
-            "load_log_records_for_analysis) merged_full="
-            f"{len(merged_full)}"
-        )
 
         scope_scores: dict[str, float] = {}
         scope_details: list[ScopeTransparencyDetail] = []
@@ -128,25 +94,14 @@ class AnomalyOrchestrator:
         focal_features_by_scope: dict[str, dict[str, float]] = {}
         log_kind = log_kind_from_slices_source(log_slices.source)
 
+        # Per scope: focal vector → batch-load prior engineered rows (non-anomalous)
+        # → K-means / DBSCAN vs history → pipeline score → transparency row.
         for scope in resolved:
-            print(
-                "\n[AnomalyOrchestrator.analyze] per-scope loop "
-                f"scope={scope.value!r} (build_feature_vector next)"
-            )
             scope_rows = log_slices.rows_for_analysis_scope(scope)
-            print(
-                "\n[AnomalyOrchestrator.analyze] feature_rows "
-                f"analysis_scope={scope.value!r} "
-                f"log_slice={_SLICE_LABEL[scope]} cleaned_n={len(scope_rows)}"
-            )
             feats = await build_feature_vector(
                 pipeline, scope, scope_rows, ctx
             )
             focal_features_by_scope[scope.value] = feats
-            print(
-                "\n[AnomalyOrchestrator.analyze] after build_feature_vector "
-                f"scope={scope.value!r} feature_keys={list(feats.keys())}"
-            )
             prev_log_ids = previous_anchor_log_ids(scope_rows, focal_record)
             stored_rows = await batch_lookup_engineered_features(
                 client,
@@ -158,11 +113,6 @@ class AnomalyOrchestrator:
             historical_vectors = historical_vectors_for_scope(
                 stored_rows, scope
             )
-            print(
-                "\n[AnomalyOrchestrator.analyze] historical engineered rows "
-                f"scope={scope.value!r} prev_ids={len(prev_log_ids)} "
-                f"vectors={len(historical_vectors)}"
-            )
             model_outputs = await run_models(
                 scope=scope,
                 focal_features=feats,
@@ -171,10 +121,6 @@ class AnomalyOrchestrator:
             for k, v in model_outputs.items():
                 global_model_outputs[f"{scope.value}:{k}"] = v
             score = await pipeline.score_scope(scope, feats)
-            print(
-                "\n[AnomalyOrchestrator.analyze] after run_models/score_scope "
-                f"scope={scope.value!r} model_outputs={model_outputs!r} score={score}"
-            )
             scope_scores[scope.value] = score
             scope_details.append(
                 ScopeTransparencyDetail(
@@ -200,9 +146,6 @@ class AnomalyOrchestrator:
             )
 
         final = await ensemble_score(list(scope_scores.values()))
-        print(
-            f"\n[AnomalyOrchestrator.analyze] ensemble_score final={final!r}"
-        )
 
         focal_is_anomalous = (
             final >= settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD
@@ -238,11 +181,6 @@ class AnomalyOrchestrator:
             "is_anomalous": focal_is_anomalous,
             "transparency": transparency.model_dump(),
         }
-        print(
-            "\n[AnomalyOrchestrator.analyze] return "
-            f"final_score={out['final_score']} "
-            f"per_scope_scores={out['per_scope_scores']}"
-        )
         return out
 
 

@@ -13,6 +13,8 @@ incremental counters are **not** wired yet.
 **Next steps:** connect to `db-service` / visit log APIs, add Alembic migrations for feature-store
 tables, implement incremental aggregates, add GCP Pub/Sub consumer for real-time path.
 
+For a **non-technical overview** of K-means, DBSCAN, and how scores combine, see **[EXPLAINER.md](EXPLAINER.md)**.
+
 ---
 
 ## Architecture: top-down flow
