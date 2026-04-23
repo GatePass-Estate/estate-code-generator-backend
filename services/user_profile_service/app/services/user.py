@@ -934,3 +934,60 @@ class UserService:
         Updates an admin record.
         """
         return await self.admin_repository.update_admin_record(admin_id, data)
+
+    async def close_account(self, user_id: str) -> DeleteUserResponse:
+        """
+        Closes the authenticated user's own account.
+
+        Primary admins must transfer their role before closing their account.
+        Admin records and household records are cleaned up automatically.
+
+        Args:
+            user_id: The ID of the user closing their account.
+
+        Returns:
+            DeleteUserResponse: Deletion confirmation.
+
+        Raises:
+            HTTPException: If the user cannot close their account.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if user.role == "root":
+            raise HTTPException(
+                status_code=403,
+                detail="Root accounts cannot be closed.",
+            )
+
+        if user.role == "primary_admin":
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "You must transfer your primary admin role to another "
+                    "admin before closing your account."
+                ),
+            )
+
+        if user.role == "admin":
+            try:
+                admin_record = (
+                    await self.admin_repository.get_admin_from_user_id(user_id)
+                )
+                await self.admin_repository.delete_admin_record(
+                    admin_record["id"]
+                )
+            except HTTPException:
+                pass
+
+        if user.household_id:
+            try:
+                await self.household_repository.delete_household(
+                    str(user.household_id)
+                )
+            except HTTPException:
+                pass
+
+        return await self.repository.delete_user(user_id)

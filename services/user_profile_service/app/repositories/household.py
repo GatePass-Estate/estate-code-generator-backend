@@ -52,3 +52,20 @@ class HouseholdRepository:
     async def get_household_by_id(self, household_id: str) -> dict | None:
         url = f"{self.households_endpoint}/{household_id}"
         return await self.client.async_get(url)
+
+    async def delete_household(self, household_id: str) -> dict:
+        """
+        Soft deletes a household in the db-service.
+
+        Arguments:
+            household_id: The ID of the household to delete.
+        """
+        url = f"{self.households_endpoint}/{household_id}"
+        response = await self.client.async_delete(url)
+
+        if not response:
+            raise HTTPException(
+                status_code=500, detail="Failed to delete household."
+            )
+
+        return response
