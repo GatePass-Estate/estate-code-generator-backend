@@ -3,6 +3,9 @@ from fastapi import APIRouter
 from app.api.v1.endpoints.code_service.access_code import (
     router as accesscode_router,
 )
+from app.api.v1.endpoints.code_service.log_feature_engineering import (
+    router as logfeatureengineering_router,
+)
 from app.api.v1.endpoints.code_service.resident_log import (
     router as residentlog_router,
 )
@@ -45,6 +48,12 @@ api_router.include_router(
     visitorlog_router,
     prefix="/codeservice/visitorlog",
     tags=["VisitorLog"],
+)
+
+api_router.include_router(
+    logfeatureengineering_router,
+    prefix="/codeservice/logfeatureengineering",
+    tags=["LogFeatureEngineering"],
 )
 
 api_router.include_router(
