@@ -22,6 +22,7 @@ _LOGO_URL = (
 _BTN_COLOR = "#113e55"
 _TEXT_COLOR = "#172024"
 _HEADING_COLOR = "#113e55"
+_FRONTEND_BASE_URL = "https://app.gatepassng.com"
 
 
 def _build_email(
@@ -292,9 +293,7 @@ async def send_verification_email(
 ) -> None:
     """Sends an account activation / email verification link to the user."""
     query = urlencode({"token": token})
-    # verify_link = f"https://app.gatepassng.com/activate?{query}"
-    verify_link = f"http://localhost:8081/activate?{query}"
-    # @TO-DO: Replace with your frontend account activation URL once available
+    verify_link = f"{_FRONTEND_BASE_URL}/activate?{query}"
 
     body = _build_email(
         heading="Activate Your Account",
@@ -323,9 +322,7 @@ async def send_verification_email(
 async def send_welcome_email(email: str, first_name: str) -> None:
     """Sends a welcome email after a user successfully
     activates their account."""
-    # @TODO: Replace with your frontend login/dashboard URL once available
-    # login_link = "https://app.gatepassng.com/login"
-    login_link = "http://localhost:8081/auth/login"
+    login_link = f"{_FRONTEND_BASE_URL}/auth/login"
 
     body = _build_email(
         heading="Welcome to GatePass",
@@ -355,8 +352,7 @@ async def send_password_reset_email(
 ) -> None:
     """Sends a password reset link to the user."""
     query = urlencode({"token": token})
-    # reset_link = f"https://app.gatepassng.com/auth/reset-password?{query}"
-    reset_link = f"http://localhost:8081/auth/reset-password?{query}"
+    reset_link = f"{_FRONTEND_BASE_URL}/auth/reset-password?{query}"
 
     body = _build_email(
         heading="Reset Your Password",
@@ -382,6 +378,32 @@ async def send_password_reset_email(
     await FastMail(_conf).send_message(message)
 
 
+async def send_account_closure_email(email: str, first_name: str) -> None:
+    """Sends a confirmation email after a user closes their account."""
+    body = _build_email(
+        heading="Account Closed",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass account has been successfully closed. "
+            "We're sorry to see you go. If you ever change your mind, "
+            "you're welcome to create a new account at any time. "
+            "If you did not request this, please contact your estate "
+            "administrator immediately."
+        ),
+        button_label="Visit GatePass",
+        button_href=_FRONTEND_BASE_URL,
+    )
+
+    message = MessageSchema(
+        subject="Your GatePass account has been closed",
+        recipients=[email],
+        body=body,
+        subtype=MessageType.html,
+    )
+
+    await FastMail(_conf).send_message(message)
+
+
 async def send_password_reset_confirmation_email(
     email: str, first_name: str
 ) -> None:
@@ -397,8 +419,7 @@ async def send_password_reset_confirmation_email(
             "administrator immediately."
         ),
         button_label="Log In",
-        # @TODO: Replace with your frontend login/dashboard URL once available
-        button_href="http://localhost:8081/auth/login",
+        button_href=f"{_FRONTEND_BASE_URL}/auth/login",
     )
 
     message = MessageSchema(
