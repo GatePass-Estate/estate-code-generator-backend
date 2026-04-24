@@ -47,6 +47,7 @@ from app.services.email import (
     send_verification_email,
     send_welcome_email,
     send_password_reset_confirmation_email,
+    send_account_closure_email,
 )
 
 router = APIRouter()
@@ -106,6 +107,7 @@ async def register_user(
 
 @router.delete("/me/account", response_model=DeleteUserResponse)
 async def close_account(
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -117,7 +119,12 @@ async def close_account(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.close_account(current_user["id"])
+    user = await service.get_user(current_user["id"])
+    result = await service.close_account(current_user["id"])
+    background_tasks.add_task(
+        send_account_closure_email, user.email, user.first_name
+    )
+    return result
 
 
 @router.get("/profile/me", response_model=UserProfileResponse)
