@@ -11,7 +11,10 @@ from app.schemas.base import model_config
 
 
 class AnomalyType(StrEnum):
-    """Visitor- vs resident-centred pipeline (same values as anomaly-service)."""
+    """Visitor- vs resident-centred pipeline.
+
+    Uses the same values as anomaly-service.
+    """
 
     VISITOR = "visitor"
     RESIDENT = "resident"
@@ -22,6 +25,16 @@ class LogKind(StrEnum):
 
     VISITOR = "visitor"
     RESIDENT = "resident"
+
+
+class PredictionType(StrEnum):
+    """Prediction classes persisted in ``core.predictionresult``.
+
+    Expand this enum as new prediction producers are introduced.
+    """
+
+    VISITOR_ANOMALY_REALTIME = "VisitorAnomalyRealtime"
+    RESIDENT_ANOMALY_REALTIME = "ResidentAnomalyRealtime"
 
 
 class BatchLookupRequest(BaseModel):
@@ -59,7 +72,9 @@ class StoredFeatureRecord(BaseModel):
     features_estate_wide: dict[str, Any] | None = None
     is_anomalous: bool = Field(
         default=False,
-        description="True if this snapshot was from a validation flagged anomalous.",
+        description=(
+            "True if this snapshot was from a validation flagged anomalous."
+        ),
     )
 
 
@@ -86,7 +101,20 @@ class UpsertRequest(BaseModel):
     features_estate_wide: dict[str, Any] | None = None
     is_anomalous: bool | None = Field(
         default=None,
-        description="Set when persisting after scoring; omit to leave unchanged on update.",
+        description=(
+            "Set when persisting after scoring; omit to leave unchanged "
+            "on update."
+        ),
+    )
+    prediction_type: PredictionType | None = Field(
+        default=None,
+        description=("Prediction classifier label (enum-backed in database)."),
+    )
+    prediction_result: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Prediction payload JSON; usually {'result': <analysis_output>}."
+        ),
     )
 
     @model_validator(mode="after")
@@ -103,6 +131,11 @@ class UpsertRequest(BaseModel):
         if r is not None and self.log_kind != LogKind.RESIDENT:
             raise ValueError(
                 "log_kind must be resident when resident_log_id is set."
+            )
+        if (self.prediction_type is None) != (self.prediction_result is None):
+            raise ValueError(
+                "prediction_type and prediction_result must be "
+                "provided together."
             )
         return self
 

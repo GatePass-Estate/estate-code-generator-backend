@@ -1,4 +1,4 @@
-"""Service layer for persisted per-scope feature vectors."""
+"""Service layer for feature snapshots and prediction-result upserts."""
 
 import logging
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class LogFeatureEngineeringService:
-    """Batch lookup and upsert for ``LogFeatureEngineering``."""
+    """Batch lookup and upsert for ``LogFeatureEngineering`` records."""
 
     def __init__(self, db_session: AsyncSession) -> None:
         self.repository = Repository(db_session)

@@ -1,4 +1,4 @@
-"""HTTP API for stored engineered feature vectors (per log id + anomaly type)."""
+"""HTTP API for feature snapshots and prediction-result persistence."""
 
 import logging
 
@@ -51,7 +51,10 @@ async def batch_lookup(
     "/upsert",
     response_model=UpsertResponse,
     responses={500: {"description": "Internal server error"}},
-    description="Create or merge feature JSON columns for one log validation anchor.",
+    description=(
+        "Create/merge feature JSON columns and optional prediction payload "
+        "for one log-validation anchor."
+    ),
 )
 async def upsert(
     request: UpsertRequest,

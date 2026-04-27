@@ -54,3 +54,22 @@ async def run_models(
         "lfoa": 0.0,
         "historical_reference_count": float(len(historical_features)),
     }
+
+
+def score_from_model_outputs(model_outputs: dict[str, float]) -> float:
+    """
+    Collapse detector outputs to one score in ``[0, 1]``.
+
+    Uses the simple mean of known detector keys present in ``model_outputs``.
+    Non-detector metadata (e.g. historical counts) is ignored.
+    """
+    detector_keys = ("kmeans", "dbscan", "lfoa")
+    vals: list[float] = []
+    for key in detector_keys:
+        raw = model_outputs.get(key)
+        if raw is None:
+            continue
+        vals.append(float(raw))
+    if not vals:
+        return 0.0
+    return float(sum(vals) / len(vals))

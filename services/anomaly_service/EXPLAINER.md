@@ -45,6 +45,10 @@ Today we **average** those scope-level results into one **final score**. That av
 
 The **final score** is compared to a **threshold** (configurable). If the score is **at or above** that bar, we mark the visit as **anomalous** for reporting and store that flag with the engineered features so future runs don’t treat this visit as “normal history” by mistake.
 
+At persistence time, the service also writes a prediction payload to db-service as
+`{"result": <analysis output>}` and tags it with a prediction type enum
+(`VisitorAnomalyRealtime` or `ResidentAnomalyRealtime`).
+
 ---
 
 ## What’s not here yet
