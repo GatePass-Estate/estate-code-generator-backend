@@ -3,6 +3,7 @@ from app.models.code_service.access_code import AccessCode
 from app.models.code_service.log_feature_engineering import (
     LogFeatureEngineering,
 )
+from app.models.code_service.prediction_result import PredictionResult
 from app.models.code_service.resident_log import ResidentLog
 from app.models.code_service.visitor_log import VisitorLog
 from app.models.user_profile.admin_management import AdminManagement
@@ -20,6 +21,7 @@ from app.models.user_profile.users import Users
 __all__ = [
     "AccessCode",
     "LogFeatureEngineering",
+    "PredictionResult",
     "VisitorLog",
     "ResidentLog",
     "Users",

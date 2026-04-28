@@ -1,4 +1,4 @@
-"""Persistence for engineered feature vectors keyed by log id + anomaly type."""
+"""Persistence for feature vectors keyed by log id + anomaly type."""
 
 import logging
 from uuid import UUID
@@ -11,6 +11,9 @@ from app.core.exceptions import DatabaseError
 from app.models.code_service.log_feature_engineering import (
     LogFeatureEngineering as TableModel,
 )
+from app.models.code_service.prediction_result import (
+    PredictionResult as PredictionResultModel,
+)
 from app.schemas.code_service.log_feature_engineering import (
     BatchLookupRequest,
     LogKind,
@@ -22,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class LogFeatureEngineeringRepository:
-    """Read / upsert rows in ``core.logfeatureengineering``."""
+    """Read/upsert ``core.logfeatureengineering`` and prediction rows."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -44,7 +47,7 @@ class LogFeatureEngineeringRepository:
     async def batch_lookup(
         self, request: BatchLookupRequest
     ) -> list[StoredFeatureRecord]:
-        """Return stored rows for any of ``log_ids`` (same log table as ``log_kind``)."""
+        """Return rows for ``log_ids`` in the table from ``log_kind``."""
         if not request.log_ids:
             return []
         ids = [UUID(str(x)) for x in request.log_ids]
@@ -71,7 +74,9 @@ class LogFeatureEngineeringRepository:
         """
         Insert or update the single active row for (log id, anomaly_type).
 
-        JSON columns are updated only when the request field is not ``None``.
+        Feature JSON columns are updated only when the request field is not
+        ``None``. If ``prediction_type`` + ``prediction_result`` are supplied,
+        upsert one ``core.predictionresult`` row for the same feature-log id.
         """
         try:
             if request.visitor_log_id is not None:
@@ -94,9 +99,15 @@ class LogFeatureEngineeringRepository:
                     resident_log_id=request.resident_log_id,
                     anomaly_type=request.anomaly_type,
                     log_kind=request.log_kind,
-                    features_visitor_specific=request.features_visitor_specific,
-                    features_resident_specific=request.features_resident_specific,
-                    features_security_specific=request.features_security_specific,
+                    features_visitor_specific=(
+                        request.features_visitor_specific
+                    ),
+                    features_resident_specific=(
+                        request.features_resident_specific
+                    ),
+                    features_security_specific=(
+                        request.features_security_specific
+                    ),
                     features_estate_wide=request.features_estate_wide,
                     is_anomalous=(
                         request.is_anomalous
@@ -126,6 +137,32 @@ class LogFeatureEngineeringRepository:
                     row.is_anomalous = request.is_anomalous
             await self.session.flush()
             await self.session.refresh(row)
+            if (
+                request.prediction_type is not None
+                and request.prediction_result is not None
+            ):
+                prediction_q = select(PredictionResultModel).where(
+                    PredictionResultModel.is_deleted == False,  # noqa: E712
+                    PredictionResultModel.feature_log_id == row.id,
+                    PredictionResultModel.prediction_type
+                    == request.prediction_type,
+                )
+                prediction_result = (
+                    await self.session.execute(prediction_q)
+                ).scalar_one_or_none()
+                if prediction_result is None:
+                    prediction_result = PredictionResultModel(
+                        feature_log_id=row.id,
+                        visitor_log_id=request.visitor_log_id,
+                        resident_log_id=request.resident_log_id,
+                        prediction_type=request.prediction_type,
+                        result=request.prediction_result,
+                    )
+                    self.session.add(prediction_result)
+                else:
+                    prediction_result.visitor_log_id = request.visitor_log_id
+                    prediction_result.resident_log_id = request.resident_log_id
+                    prediction_result.result = request.prediction_result
             return row.id
         except SQLAlchemyError as e:
             logger.exception("upsert log feature engineering")

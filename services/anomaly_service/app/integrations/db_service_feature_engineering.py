@@ -1,4 +1,4 @@
-"""Persisted feature vectors in db-service (batch lookup + focal upsert)."""
+"""Persist feature vectors and prediction payloads in db-service."""
 
 from __future__ import annotations
 
@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 _SCOPE_VALUE_TO_UPSERT_KEY: dict[str, str] = {
     scope.value: col for scope, col in FEATURE_JSON_COLUMN.items()
+}
+_PREDICTION_TYPE_BY_ANOMALY: dict[AnomalyType, str] = {
+    # Keep these values aligned with db-service enum ``PredictionType``.
+    AnomalyType.VISITOR: "VisitorAnomalyRealtime",
+    AnomalyType.RESIDENT: "ResidentAnomalyRealtime",
 }
 
 
@@ -86,18 +91,22 @@ async def upsert_focal_engineered_features(
     features_by_scope_value: dict[str, dict[str, float]],
     log_kind: LogKind,
     is_anomalous: bool,
+    prediction_result: dict[str, Any],
 ) -> None:
     """
     POST ``/logfeatureengineering/upsert`` for the focal log anchor.
 
-    Merges per-scope feature dicts into the JSON columns for keys present in
-    ``features_by_scope_value``. Raises :class:`FeatureStoreError` on failure.
+    Merges per-scope feature dicts into feature JSON columns and stores a
+    prediction payload under ``prediction_result`` as ``{"result": ...}``.
+    Raises :class:`FeatureStoreError` on failure.
     """
     url = _db_url(settings, "api/v1/codeservice/logfeatureengineering/upsert")
     body: dict[str, Any] = {
         "anomaly_type": anomaly_type.value,
         "log_kind": log_kind.value,
         "is_anomalous": is_anomalous,
+        "prediction_type": _PREDICTION_TYPE_BY_ANOMALY[anomaly_type],
+        "prediction_result": {"result": prediction_result},
     }
     if code_validation.visitor_log_id is not None:
         body["visitor_log_id"] = str(code_validation.visitor_log_id)

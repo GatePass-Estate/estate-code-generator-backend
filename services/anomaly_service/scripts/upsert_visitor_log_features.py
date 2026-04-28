@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-Backfill ``core.logfeatureengineering`` from visitor log rows.
+Backfill ``core.logfeatureengineering`` from visitor or resident log rows.
 
-1. Lists all non-deleted rows from ``GET .../codeservice/visitorlog`` (paginated).
-2. Sorts by ``visit_time`` descending; drops the single most recent visit.
-3. For each remaining id, loads history, engineers features, and upserts (same
-   paths as the live orchestrator).
+1. Lists all rows from ``GET .../codeservice/{visitorlog|residentlog}``.
+2. Sorts by event time descending and drops the single most recent row.
+3. For each remaining id, loads history, engineers features, and upserts.
 
 Run from ``services/anomaly_service``::
 
-    python scripts/upsert_visitor_log_features.py visitor \\
+    python scripts/upsert_visitor_log_features.py visitor visitor \\
         [--is-anomalous] [--estate-id <uuid>] [--page-size 100]
 
-Requires ``DB_SERVICE_URL`` (see ``app.core.config``). Without ``--estate-id``,
-``estate_id`` per row is taken from ``GET .../userprofile/users/{user_id}``.
+First positional is log source (visitor or resident), second is anomaly type.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +29,13 @@ from uuid import UUID
 _SVC_ROOT = Path(__file__).resolve().parents[1]
 if str(_SVC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SVC_ROOT))
+
+# This CLI is usually run on the host, while ``.env.localdocker`` may set
+# ``DB_SERVICE_URL`` to a Docker-only hostname. Point at localhost **before**
+# ``app.core.config`` is imported so all db-service clients use a resolvable
+# base. Set ``DB_SERVICE_URL`` in the environment to override.
+if "DB_SERVICE_URL" not in os.environ:
+    os.environ["DB_SERVICE_URL"] = "http://localhost:9032/"
 
 import httpx  # noqa: E402
 
@@ -66,9 +72,13 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return data
 
 
-def _visit_time_sort_key(rec: dict[str, Any]) -> tuple[datetime, str]:
-    """Descending sort: latest visit first; tie-break on id string."""
-    raw = rec.get("visit_time")
+def _event_time_sort_key(rec: dict[str, Any]) -> tuple[datetime, str]:
+    """Descending sort by event timestamp; tie-break on id string."""
+    raw = (
+        rec.get("visit_time")
+        or rec.get("access_time")
+        or rec.get("created_at")
+    )
     ts: datetime
     if isinstance(raw, datetime):
         ts = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
@@ -85,13 +95,15 @@ def _visit_time_sort_key(rec: dict[str, Any]) -> tuple[datetime, str]:
     return (ts, str(rid) if rid is not None else "")
 
 
-async def _fetch_all_visitor_logs(
+async def _fetch_all_logs(
     client: httpx.AsyncClient,
     *,
+    log_source: LogKind,
     page_size: int,
 ) -> list[dict[str, Any]]:
     """All pages from list endpoint (items are JSON dicts)."""
-    url = _db_url("api/v1/codeservice/visitorlog")
+    resource = "visitorlog" if log_source == LogKind.VISITOR else "residentlog"
+    url = _db_url(f"api/v1/codeservice/{resource}")
     all_items: list[dict[str, Any]] = []
     page = 1
     while True:
@@ -99,9 +111,7 @@ async def _fetch_all_visitor_logs(
         r.raise_for_status()
         data = r.json()
         if not isinstance(data, dict):
-            raise SystemExit(
-                f"Expected JSON object from visitor log list {url!r}"
-            )
+            raise SystemExit(f"Expected JSON object from log list {url!r}")
         items = data.get("items") or []
         total = int(data.get("total") or 0)
         for it in items:
@@ -138,31 +148,53 @@ async def _resolve_estate_id(
     return UUID(str(raw))
 
 
-async def upsert_one_visitor_log(
+async def upsert_one_log(
     client: httpx.AsyncClient,
     *,
-    visitor_log_id: UUID,
+    log_source: LogKind,
+    anchor_log_id: UUID,
     anomaly_type: AnomalyType,
     is_anomalous: bool,
     estate_id_override: UUID | None,
 ) -> None:
+    resource = "visitorlog" if log_source == LogKind.VISITOR else "residentlog"
     anchor = await _get_json(
         client,
-        _db_url(f"api/v1/codeservice/visitorlog/{visitor_log_id}"),
+        _db_url(f"api/v1/codeservice/{resource}/{anchor_log_id}"),
     )
     uid = UUID(str(anchor["user_id"]))
     estate_id = await _resolve_estate_id(client, uid, estate_id_override)
 
+    valid_until_raw = (
+        anchor.get("visit_time")
+        or anchor.get("access_time")
+        or anchor.get("created_at")
+        or ""
+    )
+    receiver = (
+        Receiver.VISITOR
+        if log_source == LogKind.VISITOR
+        else Receiver.RESIDENT
+    )
     payload = CodeValidationPayload(
         user_id=uid,
         security_id=UUID(str(anchor["security_id"])),
         estate_id=estate_id,
         hashed_code=str(anchor["hashed_code"]),
-        valid_until=_as_iso_z(anchor["visit_time"]),
+        valid_until=_as_iso_z(valid_until_raw),
         is_expired=False,
-        receiver=Receiver.VISITOR,
-        visitor_log_id=visitor_log_id,
-        visitor_fullname=anchor.get("visitor_fullname"),
+        receiver=receiver,
+        visitor_log_id=(
+            anchor_log_id if log_source == LogKind.VISITOR else None
+        ),
+        resident_log_id=(
+            anchor_log_id if log_source == LogKind.RESIDENT else None
+        ),
+        visitor_fullname=(
+            anchor.get("visitor_fullname")
+            if log_source == LogKind.VISITOR
+            else None
+        ),
         relationship_with_resident=(
             str(anchor["relationship_with_resident"])
             if anchor.get("relationship_with_resident") is not None
@@ -196,13 +228,18 @@ async def upsert_one_visitor_log(
         code_validation=payload,
         anomaly_type=anomaly_type,
         features_by_scope_value=focal_features_by_scope,
-        log_kind=LogKind.VISITOR,
+        log_kind=log_source,
         is_anomalous=is_anomalous,
+        prediction_result={
+            "backfill": True,
+            "is_anomalous": is_anomalous,
+            "anomaly_type": anomaly_type.value,
+        },
     )
 
     keys = list(focal_features_by_scope.keys())
     print(
-        f"Upserted visitor_log_id={visitor_log_id} "
+        f"Upserted {resource}_id={anchor_log_id} "
         f"anomaly_type={anomaly_type.value} scopes={keys} "
         f"is_anomalous={is_anomalous}"
     )
@@ -210,28 +247,42 @@ async def upsert_one_visitor_log(
 
 async def run(
     *,
+    log_source: LogKind,
     anomaly_type: AnomalyType,
     is_anomalous: bool,
     estate_id_override: UUID | None,
     page_size: int,
 ) -> None:
     async with httpx.AsyncClient(timeout=120.0) as client:
-        rows = await _fetch_all_visitor_logs(client, page_size=page_size)
+        rows = await _fetch_all_logs(
+            client, log_source=log_source, page_size=page_size
+        )
         if len(rows) < 2:
+            label = (
+                "visitor logs"
+                if log_source == LogKind.VISITOR
+                else "resident logs"
+            )
             print(
-                f"Need at least 2 visitor logs (after list); got {len(rows)}. "
+                f"Need at least 2 {label} (after list); got {len(rows)}. "
                 "Nothing to upsert."
             )
             return
 
-        ordered = sorted(rows, key=_visit_time_sort_key, reverse=True)
+        ordered = sorted(rows, key=_event_time_sort_key, reverse=True)
         skipped = ordered[0]
         targets = ordered[1:]
-        print(
-            "Skipping most recent visit_time: "
-            f"id={skipped.get('id')!r} visit_time={skipped.get('visit_time')!r}"
+        event_key = (
+            "visit_time" if log_source == LogKind.VISITOR else "access_time"
         )
-        print(f"Upserting {len(targets)} visitor log(s).")
+        print(
+            f"Skipping most recent {event_key}: "
+            f"id={skipped.get('id')!r} {event_key}={skipped.get(event_key)!r}"
+        )
+        source_label = (
+            "visitor" if log_source == LogKind.VISITOR else "resident"
+        )
+        print(f"Upserting {len(targets)} {source_label} log(s).")
 
         for rec in targets:
             rid = rec.get("id")
@@ -239,13 +290,14 @@ async def run(
                 print("Skipping row with no id", rec)
                 continue
             try:
-                vid = rid if isinstance(rid, UUID) else UUID(str(rid))
+                anchor_id = rid if isinstance(rid, UUID) else UUID(str(rid))
             except ValueError:
                 print(f"Skipping non-UUID id {rid!r}")
                 continue
-            await upsert_one_visitor_log(
+            await upsert_one_log(
                 client,
-                visitor_log_id=vid,
+                log_source=log_source,
+                anchor_log_id=anchor_id,
                 anomaly_type=anomaly_type,
                 is_anomalous=is_anomalous,
                 estate_id_override=estate_id_override,
@@ -255,9 +307,14 @@ async def run(
 def main() -> None:
     p = argparse.ArgumentParser(
         description=(
-            "List visitor logs, drop the latest by visit_time, upsert features "
-            "for the rest into logfeatureengineering."
+            "List visitor/resident logs, drop latest event, upsert features."
         ),
+    )
+    p.add_argument(
+        "log_source",
+        type=str,
+        choices=[LogKind.VISITOR.value, LogKind.RESIDENT.value],
+        help="Anchor source table to backfill from.",
     )
     p.add_argument(
         "anomaly_type",
@@ -286,6 +343,7 @@ def main() -> None:
     args = p.parse_args()
     asyncio.run(
         run(
+            log_source=LogKind(args.log_source),
             anomaly_type=AnomalyType(args.anomaly_type),
             is_anomalous=bool(args.is_anomalous),
             estate_id_override=args.estate_id,

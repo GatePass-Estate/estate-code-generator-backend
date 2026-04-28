@@ -4,14 +4,14 @@ Implements the **Visit Anomaly Detection** slice from the GatePass design doc: m
 pipeline (scope → data → features → analysis → transparency), pluggable per **analysis scope**
 (visitor / resident / security / estate-wide).
 
-This package is a **scaffold**: HTTP API + domain enums + ABC-based managers with stub
-implementations. ML (K-means, DBSCAN, LFOA ensemble), Pub/Sub, feature store tables, and
-incremental counters are **not** wired yet.
+This package is a **draft implementation**: HTTP API + domain enums + ABC-based managers with
+K-means/DBSCAN model wiring and a db-service-backed feature store integration.
+LFOA, Pub/Sub, and incremental counters are still **not** wired yet.
 
 **Port:** `9035` (local and intended K8s service port).
 
-**Next steps:** connect to `db-service` / visit log APIs, add Alembic migrations for feature-store
-tables, implement incremental aggregates, add GCP Pub/Sub consumer for real-time path.
+**Next steps:** add weighted/learned ensembling, implement incremental aggregates, and add GCP
+Pub/Sub consumer support for the real-time path.
 
 For a **non-technical overview** of K-means, DBSCAN, and how scores combine, see **[EXPLAINER.md](EXPLAINER.md)**.
 
@@ -42,8 +42,8 @@ flowchart TB
     SL[LogHistorySlices.rows_for_analysis_scope]
     FE[build_feature_vector\napp/pipeline/feature_engineer.py]
     ENG[engineer_scope_features\n_scope_feature_keys + feature methods]
-    MD[run_models\nstub outputs]
-    SS[score_scope\nper-scope score]
+    MD[run_models\nK-means + DBSCAN + placeholders]
+    SCORE[score_from_model_outputs\ncollapse detectors → 0..1]
   end
 
   subgraph outcome
@@ -62,8 +62,8 @@ flowchart TB
   SL --> FE
   FE --> ENG
   ENG --> MD
-  MD --> SS
-  SS --> ENS
+  MD --> SCORE
+  SCORE --> ENS
   ENS --> TR
 ```
 
@@ -121,8 +121,8 @@ So: **scope → subset of keys → subset of `_feature_*` calls → one `dict[st
 Today this layer is intentionally stubbed but the **wiring** matches the intended production shape:
 
 - **Per scope:** `run_models` in `app/pipeline/analysis_manager.py` consumes the feature vector
-  and returns placeholder model outputs (e.g. k-means / DBSCAN / LFOA-style keys). The
-  orchestrator also calls `pipeline.score_scope(scope, feats)` for a scalar per-scope score.
+  and returns model outputs (e.g. k-means / DBSCAN / LFOA-style keys). The orchestrator then
+  calls `score_from_model_outputs` in the same file for a scalar per-scope score in ``[0, 1]``.
 - **Across scopes:** `ensemble_score` takes the list of per-scope scores and combines them (today
   an **unweighted mean**; transparency records `ensemble_method` and notes for a future weighted
   or learned ensemble).
@@ -131,6 +131,17 @@ Transparency (`ScopeTransparencyDetail`, `AnalysisTransparency`) is built **per 
 the same feature dict and model outputs, then attached to the response alongside the final
 ensemble score and explanation (`app/pipeline/transparency_manager.py`).
 
+### 5. Persistence after scoring
+
+After scoring, the orchestrator calls db-service `logfeatureengineering/upsert` to persist:
+
+- per-scope engineered feature JSON on `core.logfeatureengineering`,
+- anomaly flag (`is_anomalous`) for future historical filtering, and
+- prediction payload on `core.predictionresult` as `{"result": <AnalyzeResponse>}`.
+
+Prediction rows are tagged with enum-backed `prediction_type` values:
+`VisitorAnomalyRealtime` or `ResidentAnomalyRealtime`.
+
 ### Summary
 
 | Layer | Responsibility |
@@ -138,8 +149,9 @@ ensemble score and explanation (`app/pipeline/transparency_manager.py`).
 | `AnomalyType` | Chooses visitor vs resident **pipeline** and **which scopes** run (via config). |
 | `AnalysisScope` | Chooses **which row slice** and **which feature key set** is evaluated. |
 | `engineer_scope_features` | Maps scope → feature keys → `_feature_*` methods → vector. |
-| `run_models` / `score_scope` | Per-scope **detection** inputs (stubs today). |
+| `run_models` / `score_from_model_outputs` | Per-scope **detection** and scalar score. |
 | `ensemble_score` | **Single** decision from multiple scope scores (placeholder combiner). |
 
-When real models and a weighted ensemble land, the same boundaries apply: extend `run_models` and
-`ensemble_score` without changing how scopes and feature keys are resolved.
+When real models and a weighted ensemble land, the same boundaries apply: extend `run_models`,
+`score_from_model_outputs`, and `ensemble_score` without changing how scopes and feature keys
+are resolved.

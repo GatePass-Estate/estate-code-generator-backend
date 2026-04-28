@@ -356,12 +356,6 @@ class AnomalyPipelineBase(ABC):
             gaps.append((t1 - t0).total_seconds() / 3600.0)
         return gaps
 
-    @abstractmethod
-    async def score_scope(
-        self, scope: AnalysisScope, features: dict[str, float]
-    ) -> float:
-        """Single-scope score in [0, 1] (stub until ensemble models exist)."""
-
 
 class VisitorAnomalyPipeline(AnomalyPipelineBase):
     """Visitor mode: all feature scopes; focal = anchor visitor log row."""
@@ -573,12 +567,6 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         out = float(1.0 if prev_rel != rel0 else 0.0)
         return out
 
-    async def score_scope(
-        self, scope: AnalysisScope, features: dict[str, float]
-    ) -> float:
-        """Stub per-scope anomaly score until models are trained."""
-        return 0.0
-
 
 class ResidentAnomalyPipeline(AnomalyPipelineBase):
     """Resident mode; focal = anchor resident log row."""
@@ -776,12 +764,6 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         prev_rel = ordered[idx - 1].get("relationship_with_resident")
         out = float(1.0 if prev_rel != rel0 else 0.0)
         return out
-
-    async def score_scope(
-        self, scope: AnalysisScope, features: dict[str, float]
-    ) -> float:
-        """Stub per-scope anomaly score until models are trained."""
-        return 0.0
 
 
 def pipeline_for_type(anomaly_type: AnomalyType) -> AnomalyPipelineBase:

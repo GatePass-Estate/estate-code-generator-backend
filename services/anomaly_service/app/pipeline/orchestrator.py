@@ -43,7 +43,11 @@ from app.models.schemas import (
     Receiver,
     ScopeTransparencyDetail,
 )
-from app.pipeline.analysis_manager import ensemble_score, run_models
+from app.pipeline.analysis_manager import (
+    ensemble_score,
+    run_models,
+    score_from_model_outputs,
+)
 from app.pipeline.anomaly_pipeline import (
     RECORDS_PRE_SLICED_CONTEXT_KEY,
     pipeline_for_type,
@@ -120,7 +124,9 @@ class AnomalyOrchestrator:
             )
             for k, v in model_outputs.items():
                 global_model_outputs[f"{scope.value}:{k}"] = v
-            score = await pipeline.score_scope(scope, feats)
+            # Both anomaly types use the same detector-based scoring logic.
+            # The only difference between visitor vs resident is the scopes run.
+            score = score_from_model_outputs(model_outputs)
             scope_scores[scope.value] = score
             scope_details.append(
                 ScopeTransparencyDetail(
@@ -150,15 +156,6 @@ class AnomalyOrchestrator:
         focal_is_anomalous = (
             final >= settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD
         )
-        await upsert_focal_engineered_features(
-            client,
-            settings,
-            code_validation=code_validation,
-            anomaly_type=anomaly_type,
-            features_by_scope_value=focal_features_by_scope,
-            log_kind=log_kind,
-            is_anomalous=focal_is_anomalous,
-        )
 
         explanation = explain(
             final,
@@ -181,6 +178,16 @@ class AnomalyOrchestrator:
             "is_anomalous": focal_is_anomalous,
             "transparency": transparency.model_dump(),
         }
+        await upsert_focal_engineered_features(
+            client,
+            settings,
+            code_validation=code_validation,
+            anomaly_type=anomaly_type,
+            features_by_scope_value=focal_features_by_scope,
+            log_kind=log_kind,
+            is_anomalous=focal_is_anomalous,
+            prediction_result=out,
+        )
         return out
 
 
