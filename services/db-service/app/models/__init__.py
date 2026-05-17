@@ -1,5 +1,6 @@
 # Code Service Models
 from app.models.code_service.access_code import AccessCode
+from app.models.code_service.incident_report import IncidentReport
 from app.models.code_service.log_feature_engineering import (
     LogFeatureEngineering,
 )
@@ -20,6 +21,7 @@ from app.models.user_profile.users import Users
 
 __all__ = [
     "AccessCode",
+    "IncidentReport",
     "LogFeatureEngineering",
     "PredictionResult",
     "VisitorLog",

@@ -13,7 +13,7 @@ from app.schemas.base import model_config
 class AnomalyType(StrEnum):
     """Visitor- vs resident-centred pipeline.
 
-    Uses the same values as anomaly-service.
+    Uses the same values as ai-service.
     """
 
     VISITOR = "visitor"
