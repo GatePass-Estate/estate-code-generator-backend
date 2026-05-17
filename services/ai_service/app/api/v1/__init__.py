@@ -10,5 +10,5 @@ api_router.include_router(anomaly_router, prefix="/anomaly", tags=["Anomaly"])
 api_router.include_router(
     incident_router,
     prefix="/incident-reports",
-    tags=["Incident reports"],
+    tags=["Incident reports (TF-IDF/NMF + paid LLM)"],
 )

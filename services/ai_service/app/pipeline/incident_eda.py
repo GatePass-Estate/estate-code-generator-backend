@@ -1,4 +1,9 @@
-"""Lightweight exploratory summaries for incident report cohorts."""
+"""
+Exploratory descriptive statistics for incident cohorts (paid tier).
+
+Counts category labels, custom categories, field completeness, and occurred-at
+range. Output is JSON-safe and fed to the LLM summariser; not used in NMF.
+"""
 
 from __future__ import annotations
 
@@ -44,11 +49,10 @@ def _custom_category_label(row: dict[str, Any]) -> str | None:
 
 def build_incident_eda(records: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    Produce compact JSON-friendly statistics for prompting / transparency.
+    Build descriptive cohort statistics for the paid LLM prompt and API ``summary.eda``.
 
-    Enum categories may appear multiple times per row (multi-label).
-    Distributions count label occurrences across rows; ``custom_category`` is
-    counted separately.
+    Multi-label rows increment each category label separately. Used only when
+    ``estate_payment_active``; not part of TF-IDF/NMF.
     """
     n = len(records)
     if n == 0:

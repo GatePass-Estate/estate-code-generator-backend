@@ -1,4 +1,9 @@
-"""Orchestrate incident fetch → topic modelling → payment-gated LLM summary."""
+"""
+Incident intelligence orchestrator (free topics + paid LLM summary).
+
+Single ``analyze`` entry used by ``POST /incident-reports/summarize``. See
+``INCIDENT_REPORTS.md`` for tier behaviour and mathematics.
+"""
 
 from __future__ import annotations
 
@@ -45,11 +50,10 @@ def _coerce_summary_keys(raw: dict[str, Any]) -> dict[str, Any]:
 
 class IncidentReportOrchestrator:
     """
-    Incident intelligence orchestration for ``POST /incident-reports/summarize``.
+    Coordinates db fetch, topic modelling, and optional paid summarisation.
 
-    Always runs TF-IDF + NMF topic modelling and a human-readable theme report.
-    When ``fetch_estate_payment_active`` is true, also runs cohort EDA and an
-    OpenAI/heuristic structured summary; otherwise returns an empty ``summary``.
+    Free tier: TF-IDF + NMF + ``report_text``. Paid tier adds EDA + LLM JSON when
+    estate payment is active.
     """
 
     async def analyze(
@@ -63,10 +67,10 @@ class IncidentReportOrchestrator:
         n_topics: int | None = None,
     ) -> dict[str, Any]:
         """
-        Fetch incidents once; always run topic modelling.
+        Load estate incidents once, then run topic modelling for all tiers.
 
-        When estate payment is active, also run EDA + LLM/heuristic summary.
-        Otherwise return an empty ``summary`` section.
+        Paid estates (``fetch_estate_payment_active``) also receive ``summary``
+        with EDA and LLM/heuristic fields; free estates get empty ``summary``.
         """
         records = await load_incident_reports_for_estate(
             client,
@@ -149,7 +153,7 @@ async def _run(
     as_json: bool,
     json_output: Path | None = None,
 ) -> None:
-    """Local e2e for merged analyze (topics + payment-gated summary)."""
+    """CLI harness: run analyze and print human output or write JSON + latency."""
     orch = IncidentReportOrchestrator()
     async with httpx.AsyncClient(timeout=120.0) as client:
         started = time.perf_counter()

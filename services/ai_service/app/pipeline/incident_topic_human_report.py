@@ -1,4 +1,10 @@
-"""Human-readable incident theme reports from TF-IDF + NMF topic discovery."""
+"""
+Presentation layer for NMF topics: friendly names, shares, and plain-text reports.
+
+Maps latent topic keywords to operator-facing theme titles via rule tables,
+deduplicates redundant n-grams, and formats ``report_text``. Does not change
+the underlying factorisation; see ``INCIDENT_REPORTS.md``.
+"""
 
 from __future__ import annotations
 

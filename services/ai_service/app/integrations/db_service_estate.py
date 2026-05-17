@@ -1,4 +1,8 @@
-"""Estate metadata from db-service (payment / subscription gating)."""
+"""
+Estate payment lookup for incident summarise tier gating (free vs paid).
+
+Used by ``IncidentReportOrchestrator`` to decide whether to run EDA + LLM.
+"""
 
 from __future__ import annotations
 
@@ -23,10 +27,10 @@ async def fetch_estate_payment_active(
     estate_id: UUID,
 ) -> bool:
     """
-    Return whether the estate may receive LLM narrative summaries.
+    Return whether the paid incident summary tier should run.
 
-    Reads ``payment_status`` or ``is_paid`` from the estate row when present;
-    otherwise defaults to ``True`` (see ``_DEFAULT_PAYMENT_ACTIVE``).
+    Reads ``payment_status`` or ``is_paid`` from user-profile estate GET when
+    present; otherwise defaults to ``True`` (``_DEFAULT_PAYMENT_ACTIVE``).
     """
     url = _db_url(settings, f"api/v1/userprofile/estates/{estate_id}")
     try:

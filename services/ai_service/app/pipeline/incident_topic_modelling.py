@@ -1,4 +1,10 @@
-"""Lightweight TF-IDF + NMF topic discovery for incident report cohorts."""
+"""
+Latent theme discovery for incident cohorts via TF-IDF and NMF.
+
+Builds a document-term matrix from incident text, factorises it into
+document-topic and topic-term matrices, and assigns each report to a
+dominant topic. See ``INCIDENT_REPORTS.md`` for the mathematical specification.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ def _parse_occurred_at(raw: Any) -> datetime | None:
 
 
 def _clean_document(text: str) -> str:
+    """Lowercase and strip punctuation so tokens are alphanumeric words."""
     lowered = text.lower().strip()
     if not lowered:
         return ""
@@ -45,6 +52,7 @@ def _clean_document(text: str) -> str:
 
 
 def _resolve_n_topics(n_docs: int, requested: int | None) -> int:
+    """Choose NMF rank ``K`` from API override or cohort-size heuristic."""
     if requested is not None:
         return max(2, min(requested, n_docs - 1, 12))
     # Heuristic: one topic per ~8 reports, between 2 and 8.
@@ -74,9 +82,21 @@ def discover_incident_topics(
     top_terms_per_topic: int = _DEFAULT_TOP_TERMS,
 ) -> dict[str, Any]:
     """
-    Run TF-IDF + NMF topic modelling on incident narratives and metadata text.
+    Discover recurring themes with TF-IDF vectorisation and NMF factorisation.
 
-    Returns topic terms, per-document dominant topics, and coarse temporal stats.
+    Steps: build documents → clean → ``TfidfVectorizer`` → ``NMF.fit_transform`` →
+    top terms per topic, argmax document assignments, temporal aggregates, human report.
+
+    Args:
+        records: Incident dicts from db-service (title, category, narrative, …).
+        n_topics: Optional NMF rank ``K``; auto-selected from cohort size when ``None``.
+        max_features: Vocabulary cap for TF-IDF.
+        top_terms_per_topic: How many weighted terms to expose per theme.
+
+    Returns:
+        Dict with ``method``, ``topics``, ``assignments``, ``temporal_overview``,
+        ``human_report``, and ``report_text``. On insufficient data, ``n_topics`` is 0
+        and ``note`` explains why.
     """
     n = len(records)
     if n < _MIN_RECORDS:

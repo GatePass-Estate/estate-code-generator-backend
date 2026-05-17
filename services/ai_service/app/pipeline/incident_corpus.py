@@ -1,4 +1,9 @@
-"""Shared text extraction from incident report rows."""
+"""
+Concatenate incident fields into a single document for vectorisation.
+
+Each row becomes one bag-of-words input to TF-IDF (title, enum categories,
+custom category, narrative). See ``INCIDENT_REPORTS.md`` § Document construction.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +17,11 @@ from app.pipeline.incident_eda import (
 
 def build_incident_document_text(row: dict[str, Any]) -> str:
     """
-    Single document string for topic modelling (title, labels, narrative).
+    Build one space-separated document string from a db-service incident row.
 
-    Lowercasing is applied later; this only concatenates fields.
+    Category enums and custom labels are included so structured tags influence
+    topics even when narratives are short. Lowercasing happens in
+    ``incident_topic_modelling._clean_document``.
     """
     parts: list[str] = []
     title = str(row.get("title") or "").strip()

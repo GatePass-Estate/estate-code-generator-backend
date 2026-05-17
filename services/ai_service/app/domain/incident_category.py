@@ -1,4 +1,8 @@
-"""Incident taxonomy values (aligned with db-service ``IncidentCategory``)."""
+"""
+Incident category enum (aligned with db-service ``incident_category``).
+
+Labels are included in TF-IDF documents and counted in paid-tier EDA.
+"""
 
 from enum import StrEnum
 

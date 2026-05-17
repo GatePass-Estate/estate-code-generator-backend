@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class IncidentReportService:
-    """Business logic for incident reports."""
+    """CRUD and search for ``core.incidentreport`` (consumed by ai-service analyse)."""
 
     def __init__(self, db_session: AsyncSession) -> None:
         self.repository = Repository(db_session)

@@ -1,4 +1,9 @@
-"""Request / response models for incident topic modelling and summarisation API."""
+"""
+Pydantic models for ``POST /api/v1/incident-reports/summarize``.
+
+Free tier populates ``topics``; paid tier also fills ``summary`` when
+``estate_payment_active`` is true. See ``INCIDENT_REPORTS.md``.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +46,7 @@ class IncidentSummarizeRequest(BaseModel):
 
 
 class IncidentStructuredSummary(BaseModel):
-    """LLM (or heuristic) output schema exposed to clients."""
+    """Paid-tier narrative fields from OpenAI chat or heuristic fallback."""
 
     executive_summary: str = ""
     key_patterns: list[str] = Field(default_factory=list)
@@ -52,9 +57,9 @@ class IncidentStructuredSummary(BaseModel):
 
 class IncidentSummarySection(BaseModel):
     """
-    Narrative summary block (LLM/heuristic).
+    Paid-tier block: cohort EDA plus structured summary.
 
-    Empty when the estate does not have active payment / premium access.
+    Empty (default factory) when ``estate_payment_active`` is false.
     """
 
     eda: dict = Field(default_factory=dict)
@@ -80,7 +85,7 @@ class IncidentTopicExample(BaseModel):
 
 
 class DiscoveredIncidentTopic(BaseModel):
-    """One latent topic with interpretable terms and sample ids."""
+    """One NMF topic: top TF-IDF-weighted terms, share %, and example rows."""
 
     topic_id: int
     label: str
@@ -94,7 +99,7 @@ class DiscoveredIncidentTopic(BaseModel):
 
 
 class IncidentTopicAssignment(BaseModel):
-    """Dominant topic assignment for one incident row."""
+    """Dominant topic for one incident (argmax of document-topic weights)."""
 
     incident_id: str | None = None
     topic_id: int
@@ -122,7 +127,7 @@ class HumanTopicReport(BaseModel):
 
 
 class IncidentTopicsSection(BaseModel):
-    """TF-IDF + NMF topic discovery (always populated when rows exist)."""
+    """Free-tier TF-IDF + NMF output (always populated when modelling succeeds)."""
 
     method: str = "tfidf_nmf"
     documents_modelled: int = 0
@@ -137,10 +142,9 @@ class IncidentTopicsSection(BaseModel):
 
 class IncidentSummarizeResponse(BaseModel):
     """
-    Combined incident intelligence response.
+    Combined free + paid incident intelligence payload.
 
-    ``topics`` is always filled when incidents exist. ``summary`` is only
-    populated when ``estate_payment_active`` is true.
+    ``topics``: TF-IDF/NMF themes (free). ``summary``: EDA + LLM (paid only).
     """
 
     estate_id: str

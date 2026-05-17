@@ -12,7 +12,7 @@ class LogHistoryError(Exception):
 
 
 class IncidentReportError(Exception):
-    """Raised when incident rows cannot be loaded or summarised."""
+    """Raised when incident fetch, payment lookup, or analyse preconditions fail."""
 
     def __init__(self, message: str, *, status_code: int = 422) -> None:
         super().__init__(message)

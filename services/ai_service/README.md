@@ -5,9 +5,8 @@ GatePass **AI microservice** on port **9036** with two capabilities:
 1. **Visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN →
    ensemble → transparency), pluggable per **analysis scope** (visitor / resident / security /
    estate-wide). Orchestrated by `AnomalyOrchestrator` in `app/pipeline/anomaly_orchestration.py`.
-2. **Incident report intelligence** — TF-IDF + NMF **topic modelling** on estate incident cohorts,
-   plus **payment-gated** EDA and structured LLM/heuristic summaries via
-   `IncidentReportOrchestrator` (`POST /api/v1/incident-reports/summarize`).
+2. **Incident report intelligence** — TF-IDF + NMF topic modelling (free) and payment-gated
+   EDA + LLM summaries (paid). Documented in **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
 
 This package is a **draft implementation**: HTTP API + domain enums + ABC-based managers with
 db-service integrations. LFOA, Pub/Sub, and incremental counters are still **not** wired on the
@@ -165,21 +164,14 @@ are resolved.
 
 ## Incident report intelligence
 
-`POST /api/v1/incident-reports/summarize` loads incident rows for an estate from db-service,
-then always runs **topic discovery** (TF-IDF vectorisation + NMF, human-readable `report_text`).
-When `estate_payment_active` is true (estate lookup via user-profile service; defaults to
-`true` until a payment flag exists), the response also includes cohort **EDA** and a structured
-**LLM summary** (`executive_summary`, patterns, severity, actions). When payment is inactive,
-`summary` is empty and `topics` is still populated.
+Estate incident cohorts are analysed via `POST /api/v1/incident-reports/summarize`:
 
-| Module | Role |
-|--------|------|
-| `incident_report_orchestrator.py` | Fetch once → topics → optional EDA + LLM |
-| `incident_topic_modelling.py` | TF-IDF + NMF, assignments, temporal overview |
-| `incident_topic_human_report.py` | Operator-facing theme names and `report_text` |
-| `incident_eda.py` | Category/time stats for the LLM prompt |
-| `incident_llm_summarizer.py` | OpenAI chat or heuristic fallback |
-| `db_service_incident_reports.py` | Paginated incident search |
-| `db_service_estate.py` | Payment gating for premium summary |
+- **Free tier:** TF-IDF + NMF topic modelling, per-incident assignments, and human-readable
+  `report_text` (always when rows exist).
+- **Paid tier:** same topics plus cohort EDA and a structured LLM/heuristic summary when
+  `estate_payment_active` is true.
 
-Local CLI: `python -m app.pipeline.incident_report_orchestrator --json` (writes JSON + `latency_ms`).
+**Full documentation** (API, architecture, TF-IDF and NMF mathematics, hyperparameters,
+limitations): **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
+
+Local CLI: `poetry run python -m app.pipeline.incident_report_orchestrator --json`

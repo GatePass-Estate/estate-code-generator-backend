@@ -1,4 +1,8 @@
-"""Incident report intelligence: topic modelling and payment-gated LLM summary."""
+"""
+HTTP API for estate incident intelligence (free topics + paid LLM summary).
+
+See ``INCIDENT_REPORTS.md`` for mathematics and tier behaviour.
+"""
 
 import logging
 
@@ -22,6 +26,7 @@ router = APIRouter()
 async def _run_analyze(
     body: IncidentSummarizeRequest,
 ) -> IncidentSummarizeResponse:
+    """Execute ``IncidentReportOrchestrator.analyze`` and validate the response."""
     orch = IncidentReportOrchestrator()
     timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -45,11 +50,10 @@ async def summarize_incidents(
     current_user: dict = Depends(get_current_user),
 ) -> IncidentSummarizeResponse:
     """
-    Pull incidents for an estate, discover themes (TF-IDF + NMF), and when
-    ``estate_payment_active`` is true also return EDA + structured LLM summary.
+    Analyse an estate's incident cohort (TF-IDF + NMF themes always).
 
-    When payment is inactive, ``summary`` is empty and ``topics`` is still
-    populated.
+    **Free:** ``topics`` with ``report_text`` and assignments. **Paid** (when
+    ``estate_payment_active``): adds ``summary`` with EDA and LLM JSON fields.
     """
     logger.debug(
         "incident analyze caller_id=%s estate_id=%s",

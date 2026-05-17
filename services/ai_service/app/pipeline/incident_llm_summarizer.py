@@ -1,4 +1,11 @@
-"""LLM-backed structured summarisation for paid incident cohorts (OpenAI/heuristic)."""
+"""
+Paid-tier narrative synthesis over incident cohorts.
+
+Combines exploratory statistics (EDA) with truncated row snippets and requests a
+structured JSON summary from an OpenAI-compatible chat API. Falls back to
+category-frequency heuristics when ``OPENAI_API_KEY`` is unset or the call fails.
+Does not alter TF-IDF/NMF topic assignments.
+"""
 
 from __future__ import annotations
 
@@ -83,10 +90,11 @@ async def summarize_incidents_with_llm(
     eda: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None, bool]:
     """
-    Return ``(structured_summary_dict, model_name_or_none, llm_used)``.
+    Produce a structured executive summary for a paid estate.
 
-    When ``OPENAI_API_KEY`` is unset, returns heuristic fallback without calling
-    the chat API.
+    Returns:
+        Tuple of ``(summary_dict, model_name_or_none, llm_used)``. ``llm_used`` is
+        ``True`` only when the remote chat API returned parseable JSON.
     """
     api_key = settings.OPENAI_API_KEY
     if not api_key:

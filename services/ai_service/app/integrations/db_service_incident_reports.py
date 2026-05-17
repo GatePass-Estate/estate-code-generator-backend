@@ -1,8 +1,9 @@
-"""Fetch incident report rows from db-service.
+"""
+Paginated incident search against db-service for ai-service analyse.
 
-Expects ``core.incidentreport`` rows (migration ``c17962ae653d``):
-optional ``title``, optional ``custom_category``, and ``category`` as an
-array of ``incident_category`` enum values (e.g. ``security``, ``theft``).
+Reads ``core.incidentreport`` (migration ``c17962ae653d``). Search date filters
+apply to ``created_at``. Rows include optional ``title``, ``custom_category``,
+and ``category`` as a PostgreSQL enum array.
 """
 
 from __future__ import annotations
@@ -68,10 +69,13 @@ async def load_incident_reports_for_estate(
     max_records: int,
 ) -> list[dict[str, Any]]:
     """
-    Page through ``GET .../incidentreport/search`` until ``max_records`` or end.
+    Page ``GET /api/v1/codeservice/incidentreport/search`` for one estate.
+
+    Results are ordered by ``created_at`` descending in db-service. Stops when
+    ``max_records`` is reached or the server reports no further pages.
 
     Raises:
-        IncidentReportError: On transport errors or empty result when filters apply.
+        IncidentReportError: On transport or HTTP errors from db-service.
     """
     url = _db_url(settings, "api/v1/codeservice/incidentreport/search")
     collected: list[dict[str, Any]] = []
