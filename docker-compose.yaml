@@ -103,13 +103,13 @@ services:
     ports:
       - "9034:9034"
 
-  anomaly-service:
-    container_name: anomaly-service
+  ai-service:
+    container_name: ai-service
     depends_on:
       - db-service
     build:
       context: .
-      dockerfile: services/anomaly_service/Dockerfile
+      dockerfile: services/ai_service/Dockerfile
     command:
       [
         "uvicorn",
@@ -117,16 +117,16 @@ services:
         "--host",
         "0.0.0.0",
         "--port",
-        "9035",
+        "9036",
         "--reload",
       ]
     volumes:
-      - ./services/anomaly_service/app:/src/service/app
+      - ./services/ai_service/app:/src/service/app
     env_file:
-      - ./services/anomaly_service/.env.secrets
-      - ./services/anomaly_service/.env.localdocker
+      - ./services/ai_service/.env.secrets
+      - ./services/ai_service/.env.localdocker
     ports:
-      - "9035:9035"
+      - "9036:9036"
 
   db-service:
     container_name: db-service
