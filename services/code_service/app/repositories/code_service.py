@@ -39,6 +39,64 @@ class CodeServiceRepository:
         ms = int(dt.microsecond / 1000)
         return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
 
+    async def _soft_delete_previous_resident_codes(
+        self,
+        ahttp_client: AsyncHttpHandler,
+        *,
+        user_id: str,
+        estate_id: str,
+        keep_id: str,
+    ) -> None:
+        """
+        Soft-delete active access codes for this resident except ``keep_id``.
+
+        Called after a new code row is persisted so only one active code
+        remains. Failures on individual deletes are logged and do not roll back
+        the new code.
+        """
+        search_url = (
+            f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/search"
+        )
+        params = {
+            "user_id": user_id,
+            "estate_id": estate_id,
+            "page": 1,
+            "limit": 50,
+        }
+        try:
+            existing = await ahttp_client.async_get(search_url, params=params)
+        except NotFoundError:
+            return
+        except Exception as exc:
+            logger.warning(
+                "Could not search prior access codes for soft delete "
+                "user_id=%s estate_id=%s: %s",
+                user_id,
+                estate_id,
+                exc,
+            )
+            return
+
+        for item in existing.get("items") or []:
+            old_id = item.get("id")
+            if not old_id or str(old_id) == str(keep_id):
+                continue
+            delete_url = (
+                f"{settings.DB_SERVICE_URL}"
+                f"api/v1/codeservice/accesscode/{old_id}"
+            )
+            try:
+                await ahttp_client.async_delete(delete_url)
+                logger.info(
+                    "Soft-deleted prior resident access code id=%s", old_id
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to soft-delete prior access code id=%s: %s",
+                    old_id,
+                    exc,
+                )
+
     async def _getitem(
         self,
         ahttp_client: AsyncHttpHandler,
@@ -269,7 +327,15 @@ class CodeServiceRepository:
                         code,
                         persist_exception,
                     )
-                    raise Exception("Failed to generate code for resdient!")
+                    raise Exception("Failed to generate code for resident!")
+                new_id = persist_code.get("id") if persist_code else None
+                if new_id:
+                    await self._soft_delete_previous_resident_codes(
+                        self.ahttp_client,
+                        user_id=str(resident_data.get("user_id")),
+                        estate_id=str(resident_data.get("estate_id")),
+                        keep_id=str(new_id),
+                    )
                 response = {
                     "hashed_code": code,
                     "valid_until": valid_until,
