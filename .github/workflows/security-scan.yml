@@ -1,0 +1,64 @@
+name: Security Scan
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read   # minimum needed; no write access required
+
+jobs:
+  scan:
+    name: Supply-chain & IOC scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Fetch enough history so --changed-only can diff HEAD~1.
+          # For PRs the full base branch is fetched automatically via GITHUB_BASE_REF.
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # -----------------------------------------------------------------------
+      # Full repo scan on every push/PR.
+      # --ci        → JSON output, no process check, exit 1 on any finding.
+      # --changed-only → on PRs restricts to files changed vs base branch;
+      #                  on pushes restricts to files changed in the last commit.
+      #                  Remove this flag if you prefer to always scan everything.
+      # -----------------------------------------------------------------------
+      - name: Run security scanner
+        run: |
+          python scripts/security_scanner.py \
+            --ci \
+            --changed-only \
+            --log .security-scan-log.jsonl \
+            2>&1 | tee scan-output.json
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+
+      # Surface the JSON output as a collapsible step summary so it's easy
+      # to read without downloading artefacts.
+      - name: Annotate summary
+        if: always()
+        run: |
+          echo "## Security Scan Results" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat scan-output.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-log
+          path: .security-scan-log.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
