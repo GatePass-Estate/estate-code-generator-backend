@@ -1,0 +1,30 @@
+# Default: normalize line endings to LF in the repo, convert to OS-native on checkout
+* text=auto eol=lf
+
+# Shell scripts must always use LF or they break on Linux/macOS
+*.sh text eol=lf
+
+# Python scripts — keep LF for cross-platform consistency
+*.py text eol=lf
+
+# YAML — keep LF (GitHub Actions runners are Linux)
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Windows batch files must use CRLF or cmd.exe breaks
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files — never touch line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.zip  binary
+*.tar  binary
+*.gz   binary
