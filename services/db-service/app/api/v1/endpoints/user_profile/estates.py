@@ -11,6 +11,7 @@ from app.schemas.user_profile.estates import (
     CreateRequest,
     CreateResponse,
     DeleteResponse,
+    EstateType,
     GetResponse,
     ListResponse,
     SearchRequest,
@@ -168,6 +169,7 @@ async def delete(
     description="Search for items",
 )
 async def search(
+    q: str | None = None,
     name: str | None = None,
     location: str | None = None,
     lga: str | None = None,
@@ -175,6 +177,7 @@ async def search(
     country: str | None = None,
     postal_code: str | None = None,
     primary_admin_id: UUID4 | None = None,
+    estate_type: EstateType | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,

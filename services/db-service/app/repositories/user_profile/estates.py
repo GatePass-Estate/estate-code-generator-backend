@@ -382,8 +382,14 @@ class EstatesRepository:
         )
 
         # Apply filters
+        if request.q:
+            query = query.where(
+                TableModel.name.ilike(f"%{request.q}%")
+                | TableModel.location.ilike(f"%{request.q}%")
+            )
+
         for key, info in request.model_fields.items():
-            if getattr(request, key) is None:
+            if key == "q" or getattr(request, key) is None:
                 continue
             if key in ["from_date", "to_date"]:
                 query = (
@@ -396,11 +402,7 @@ class EstatesRepository:
                 column = getattr(TableModel, key)
 
                 if isinstance(field_value, str):
-                    # Normalize both column and input
-                    # for case-insensitive matching
-                    query = query.where(
-                        func.lower(column) == field_value.lower()
-                    )
+                    query = query.where(column.ilike(f"%{field_value}%"))
                 else:
                     query = query.where(column == field_value)
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from app.schemas.estate import (
+    EstateType,
     RegisterEstateRequest,
     RegisterEstateResponse,
     UpdateEstateRequest,
@@ -9,6 +10,8 @@ from app.schemas.estate import (
     DeleteEstateResponse,
     SearchEstateRequest,
     ListEstateResponse,
+    PublicEstateSearchResponse,
+    PublicEstateListResponse,
 )
 from app.libs.http_handler import get_http_handler, AsyncHttpHandler
 from app.libs.role_permissions import check_permission
@@ -209,6 +212,50 @@ async def assign_primary_admin(
     await admin_service.transfer_admin_records(estate_id, admin_id)
 
     return response
+
+
+@router.get("/public/search", response_model=PublicEstateListResponse)
+async def public_search_estates(
+    q: Optional[str] = Query(
+        None, description="Search by estate name or location"
+    ),
+    estate_type: Optional[EstateType] = Query(
+        None, description="Filter by estate type"
+    ),
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    limit: int = Query(
+        10, ge=1, le=100, description="Number of items per page"
+    ),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+):
+    """Search estates without authentication. Returns limited public fields."""
+    estate_repository = EstateRepository(ahttp_client)
+    user_repository = UserRepository(ahttp_client)
+    service = EstateService(estate_repository, user_repository)
+
+    request = SearchEstateRequest(
+        q=q,
+        estate_type=estate_type,
+        page=page,
+        limit=limit,
+    )
+    result = await service.search_estates(request)
+
+    public_items = [
+        PublicEstateSearchResponse(
+            id=item.id,
+            name=item.name,
+            location=item.location,
+            estate_type=item.estate_type,
+        )
+        for item in result.items
+    ]
+    return PublicEstateListResponse(
+        total=result.total,
+        page=result.page,
+        limit=result.limit,
+        items=public_items,
+    )
 
 
 @router.get("/{estate_id}", response_model=GetEstateResponse)

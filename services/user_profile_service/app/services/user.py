@@ -1,3 +1,4 @@
+from typing import Optional
 from app.schemas.user import (
     RegisterUserRequest,
     RegisterUserResponse,
@@ -97,23 +98,16 @@ class UserService:
         raw_password = generate_random_password()
         hashed_password = hash_password(raw_password)
 
-        # Check if email already exists
-        existing_user = await self.repository.get_user_by_email(request.email)
-
-        if existing_user:
-            if existing_user.status:
-                raise HTTPException(
-                    status_code=400, detail="Email already registered"
-                )
-            # Email exists but user is not yet active — overwrite with new data
-            user = await self.repository.overwrite_user_registration(
-                str(existing_user.id), request, hashed_password
+        # Block if an active account already exists for this (email, estate)
+        if await self.repository.check_active_email_exists(
+            request.email, str(request.estate_id)
+        ):
+            raise HTTPException(
+                status_code=400, detail="Email already registered"
             )
-            token = generate_email_token(str(existing_user.id))
-        else:
-            # Create a brand new user
-            user = await self.repository.create_user(request, hashed_password)
-            token = generate_email_token(str(user.id))
+
+        user = await self.repository.create_user(request, hashed_password)
+        token = generate_email_token(str(user.id))
 
         return user, token
 
@@ -777,22 +771,31 @@ class UserService:
         token = generate_email_token(str(user.id))
         return user.email, user.first_name, token
 
-    async def forgot_password(self, email: str) -> tuple[str, str] | None:
+    async def forgot_password(
+        self, email: str, estate_id: Optional[str] = None
+    ) -> tuple[str, str] | None:
         """
-        Initiates the forgot password flow for a given email.
+        Initiates the forgot password flow for a given email and estate.
 
-        Looks up the user by email. If the user exists and is activated,
-        generates a password reset token and returns (email, token).
-        Returns None if the user does not exist or is not activated,
-        so the caller always responds the same way (no enumeration).
+        Looks up the active user for (email, estate_id). If estate_id is
+        omitted, only resolves for root users. Returns None for any
+        unresolved case to prevent enumeration.
 
         Args:
             email: The email address to reset the password for.
+            estate_id: The estate the account belongs to. None for root only.
 
         Returns:
-            Tuple of (email, token) if user found and active, else None.
+            Tuple of (email, first_name, token) if found and active, else None.
         """
-        user = await self.repository.get_user_by_email(email)
+        if estate_id:
+            user = await self.repository.get_user_by_email_and_estate(
+                email, estate_id, active_only=True
+            )
+        else:
+            user = await self.repository.get_user_by_email(email)
+            if user and user.role != Role.ROOT:
+                return None
 
         if not user or not user.status or user.is_deleted:
             return None
@@ -927,6 +930,7 @@ class UserService:
             "id": str(user.id),
             "email": user.email,
             "role": user.role,
+            "estate_id": str(user.estate_id) if user.estate_id else None,
         }
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:

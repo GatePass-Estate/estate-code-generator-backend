@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import (
@@ -10,6 +11,7 @@ from pydantic import (
 )
 
 __all__ = [
+    "EstateType",
     "RegisterEstateRequest",
     "RegisterEstateResponse",
     "UpdateEstateRequest",
@@ -18,7 +20,15 @@ __all__ = [
     "DeleteEstateResponse",
     "SearchEstateRequest",
     "ListEstateResponse",
+    "PublicEstateSearchResponse",
+    "PublicEstateListResponse",
 ]
+
+
+class EstateType(str, Enum):
+    HOUSING = "housing"
+    CORPORATE = "corporate"
+
 
 model_config = ConfigDict(
     from_attributes=True,
@@ -48,6 +58,9 @@ class RegisterEstateRequest(BaseModel):
     postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
+    )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
     )
 
     @field_serializer("primary_admin_id")
@@ -124,6 +137,9 @@ class UpdateEstateRequest(BaseModel):
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Reference to the primary admin"
     )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
+    )
 
     @field_serializer("primary_admin_id")
     def serialize_primary_admin_id(
@@ -183,6 +199,9 @@ class GetEstateResponse(BaseModel):
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
     )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: Optional[datetime] = Field(
         None, description="Last update timestamp"
@@ -237,6 +256,9 @@ class SearchEstateRequest(BaseModel):
         limit (int): Number of items per page.
     """
 
+    q: Optional[str] = Field(
+        None, description="Search across estate name and location"
+    )
     name: Optional[str] = Field(None, description="Filter by estate name")
     location: Optional[str] = Field(
         None, description="Filter by estate location"
@@ -249,6 +271,9 @@ class SearchEstateRequest(BaseModel):
     )
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Filter by primary admin ID"
+    )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Filter by estate type"
     )
     from_date: Optional[datetime] = Field(
         None, description="Filter by creation date (from)"
@@ -286,6 +311,53 @@ class ListEstateResponse(BaseModel):
     limit: int = Field(..., description="Number of items per page")
     items: List[GetEstateResponse] = Field(
         ..., description="List of estate records"
+    )
+
+    model_config = model_config
+
+
+class PublicEstateSearchResponse(BaseModel):
+    """
+    Public estate record returned in unauthenticated search results.
+
+    Attributes:
+        id (UUID4): Estate ID.
+        name (str): Estate name.
+        location (str): Estate location.
+        estate_type (EstateType): Type of estate.
+    """
+
+    id: UUID4 = Field(..., description="Estate ID")
+    name: str = Field(..., description="Estate name")
+    location: str = Field(..., description="Estate location")
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
+    )
+
+    @field_serializer("id")
+    def serialize_id(self, id: UUID4) -> str:
+        return str(id)
+
+    model_config = model_config
+
+
+class PublicEstateListResponse(BaseModel):
+    """
+    Response model for public estate search.
+
+    Attributes:
+        total (int): Total number of matching estates.
+        page (int): Current page number.
+        limit (int): Number of items per page.
+        items (List[PublicEstateSearchResponse]): List of public estate
+            records.
+    """
+
+    total: int = Field(..., description="Total number of estates")
+    page: int = Field(..., description="Current page number")
+    limit: int = Field(..., description="Number of items per page")
+    items: List[PublicEstateSearchResponse] = Field(
+        ..., description="List of public estate records"
     )
 
     model_config = model_config

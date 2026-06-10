@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
@@ -11,6 +12,7 @@ from app.schemas.base import (
 )
 
 __all__ = [
+    "EstateType",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -20,6 +22,11 @@ __all__ = [
     "SearchRequest",
     "ListResponse",
 ]
+
+
+class EstateType(str, Enum):
+    HOUSING = "housing"
+    CORPORATE = "corporate"
 
 
 class EstateBase(BaseModel):
@@ -44,6 +51,9 @@ class EstateBase(BaseModel):
     postal_code: str | None = Field(default=None, description="Postal code")
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin (optional)"
+    )
+    estate_type: EstateType | None = Field(
+        default=None, description="Type of estate"
     )
 
     @field_serializer("primary_admin_id")
@@ -115,6 +125,9 @@ class UpdateRequest(BaseModel):
     postal_code: str | None = Field(default=None, description="Postal code")
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin"
+    )
+    estate_type: EstateType | None = Field(
+        default=None, description="Type of estate"
     )
 
     @field_serializer("primary_admin_id")
@@ -188,6 +201,9 @@ class SearchRequest(BaseSearchRequest):
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
+    q: Optional[str] = Field(
+        None, description="Search across name and location"
+    )
     name: Optional[str] = Field(None, description="Estate name")
     location: Optional[str] = Field(None, description="Estate location")
     lga: Optional[str] = Field(None, description="Local Government Area")
@@ -196,6 +212,9 @@ class SearchRequest(BaseSearchRequest):
     postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Reference to the primary admin"
+    )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
     )
 
 

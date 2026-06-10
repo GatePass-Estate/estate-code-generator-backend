@@ -250,6 +250,8 @@ class UserRepository:
     async def get_user_by_email(self, email: str) -> GetUserResponse | None:
         """
         Retrieves a single user by email from the db-service.
+        Returns the first match regardless of estate or status.
+        Use get_user_by_email_and_estate for scoped lookups.
 
         Args:
             email: The user email to search for.
@@ -258,6 +260,46 @@ class UserRepository:
             GetUserResponse containing the user data or None if not found.
         """
         url = f"{self.users_endpoint}/search?email={email}"
+        response = await self.client.async_get(url)
+
+        if response and response.get("items"):
+            user_data = response["items"][0]
+            return GetUserResponse(
+                id=user_data["id"],
+                first_name=user_data["first_name"],
+                last_name=user_data["last_name"],
+                email=user_data["email"],
+                home_address=user_data["home_address"],
+                phone_number=user_data.get("phone_number"),
+                gender=user_data["gender"],
+                role=user_data["role"],
+                estate_id=user_data["estate_id"],
+                household_id=user_data.get("household_id"),
+                status=user_data["status"],
+                created_at=user_data["created_at"],
+                updated_at=user_data.get("updated_at"),
+                is_deleted=user_data.get("is_deleted", False),
+            )
+        return None
+
+    async def get_user_by_email_and_estate(
+        self, email: str, estate_id: str, active_only: bool = True
+    ) -> GetUserResponse | None:
+        """
+        Retrieves the active user for a given (email, estate_id) pair.
+
+        Args:
+            email: The user email to search for.
+            estate_id: The estate to scope the lookup to.
+            active_only: If True, only returns records with status=True.
+
+        Returns:
+            GetUserResponse or None if not found.
+        """
+        params = f"email={email}&estate_id={estate_id}"
+        if active_only:
+            params += "&status=true"
+        url = f"{self.users_endpoint}/search?{params}"
         response = await self.client.async_get(url)
 
         if response and response.get("items"):
@@ -411,14 +453,15 @@ class UserRepository:
         return await self.search_users(request)
 
     async def authenticate_user(
-        self, email: str, password: str
+        self, email: str, password: str, estate_id: Optional[str] = None
     ) -> GetUserResponse:
         """
-        Authenticates a user by email and password.
+        Authenticates a user by email, password, and estate.
 
         Args:
             email: User's email.
             password: User's password.
+            estate_id: Estate to scope the lookup to. None for root login.
 
         Returns:
             GetUserResponse: User data if authentication succeeds.
@@ -426,8 +469,10 @@ class UserRepository:
         Raises:
             HTTPException: If authentication fails.
         """
-
-        url = f"{self.users_endpoint}/search?email={email}"
+        if estate_id:
+            url = f"{self.users_endpoint}/search?email={email}&estate_id={estate_id}&status=true"
+        else:
+            url = f"{self.users_endpoint}/search?email={email}&status=true"
         response = await self.client.async_get(url)
 
         if not response or not response.get("items"):
@@ -559,17 +604,23 @@ class UserRepository:
             return True
         return False
 
-    async def check_email_exists(self, email: str) -> bool:
+    async def check_active_email_exists(
+        self, email: str, estate_id: str
+    ) -> bool:
         """
-        Checks if an email is already registered.
+        Checks if an active (status=True) account already exists for the
+        given (email, estate_id) pair.
 
         Args:
             email: The email to check.
+            estate_id: The estate to scope the check to.
 
         Returns:
-            True if email exists, False otherwise.
+            True if an active account exists, False otherwise.
         """
-        user = await self.get_user_by_email(email)
+        user = await self.get_user_by_email_and_estate(
+            email, estate_id, active_only=True
+        )
         return user is not None
 
     async def update_user_field(
