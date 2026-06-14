@@ -10,6 +10,8 @@ from pydantic import (
 )
 
 __all__ = [
+    "ValidityPeriod",
+    "ValidityWindow",
     "VisitorData",
     "ResidentData",
     "CreateRequestVisitor",
@@ -17,6 +19,8 @@ __all__ = [
     "CreateResponse",
     "GetResponseVisitor",
     "GetResponseResident",
+    "ExtendResponse",
+    "FreezeResponse",
 ]
 
 # Shared configuration for the pydantic models
@@ -60,17 +64,50 @@ class Gender(str, Enum):
     PREFER_NOT_TO_SAY = "prefer_not_to_say"
 
 
+class ValidityPeriod(BaseModel):
+    """
+    Total validity period for a visitor access code.
+
+    Optional on create; defaults to one hour from creation when omitted.
+    """
+
+    start: str | None = Field(
+        default=None, description="Total validity period start (UTC datetime)"
+    )
+    end: str | None = Field(
+        default=None, description="Total validity period end (UTC datetime)"
+    )
+
+    model_config = model_config
+
+
+class ValidityWindow(BaseModel):
+    """
+    Daily validity window for a visitor access code.
+
+    Both bounds must be provided for the window to apply.
+    """
+
+    start: str | None = Field(
+        default=None, description="Daily window start (HH:MM or HH:MM:SS)"
+    )
+    end: str | None = Field(
+        default=None, description="Daily window end (HH:MM or HH:MM:SS)"
+    )
+
+    model_config = model_config
+
+
 class VisitorData(BaseModel):
     """
-    Model for Composer Workflows table.
+    Base visitor fields shared across create and validate responses.
 
     Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-        visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
-        gender (Gender): Gender: male, female, prefer_not_to_say
+        user_id: Resident who issued the code.
+        estate_id: Estate the visit targets.
+        visitor_fullname: Visitor name.
+        relationship_with_resident: Visitor relationship enum.
+        gender: Visitor gender enum.
     """
 
     user_id: UUID4 = Field(
@@ -103,13 +140,7 @@ class VisitorData(BaseModel):
 
 
 class ResidentData(BaseModel):
-    """
-    Model for Composer Workflows table.
-
-    Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-    """
+    """Base resident fields for resident access codes."""
 
     user_id: UUID4 = Field(
         ..., description="Reference to the visited resident"
@@ -132,35 +163,29 @@ class ResidentData(BaseModel):
 
 class CreateRequestVisitor(VisitorData):
     """
-    Base request model to CREATE a record.
+    Request body for generating a visitor access code.
 
-    Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-        visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
+    ``validity_period`` sets the total active range (UTC datetimes).
+    ``validity_window`` restricts usage to daily hours (time-of-day).
+    Both are optional; omitted period defaults to one hour from creation.
     """
+
+    validity_period: ValidityPeriod | None = Field(
+        default=None,
+        description="Optional total validity period (absolute UTC datetimes)",
+    )
+    validity_window: ValidityWindow | None = Field(
+        default=None,
+        description="Optional daily validity window (time-of-day only)",
+    )
 
 
 class CreateRequestResident(ResidentData):
-    """
-    Base request model to CREATE a record.
-
-    Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-    """
+    """Request body for generating a resident access code."""
 
 
 class CreateResponse(BaseModel):
-    """
-    Base response model to CREATE a record.
-
-    Attributes:
-        hashed_code (str): Visitor's generated access code.
-        valid_until (DateTime): Timestamp of entry code expiry
-    """
+    """Response returned after generating an access code."""
 
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
@@ -171,26 +196,32 @@ class CreateResponse(BaseModel):
 
 class GetResponseVisitor(VisitorData):
     """
-    Base response model to GET a record by id.
+    Response returned when validating a visitor access code.
 
-    Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-        visitor_fullname (str): Full name of the visitor.
-        relationship_with_resident (Relationship): Relation: family, partner,
-            friend, delivery, taxi, technician
-        hashed_code (str): Visitor's generated access code.
-        valid_until (DateTime): Timestamp of entry code expiry
-        is_expired (bool): Flag indicating whether code is expired or not
-        receiver (Receiver): Receiver: visitor or resident.
+    Includes lifecycle fields and computed ``is_valid`` / ``is_expired``.
     """
 
     hashed_code: str = Field(
         ..., description="Visitor's generated access code"
     )
     valid_until: str = Field(..., description="Timestamp of entry code expiry")
+    validity_period: ValidityPeriod = Field(
+        ..., description="Total validity period (absolute UTC datetimes)"
+    )
+    validity_window: ValidityWindow | None = Field(
+        default=None, description="Daily validity window (time-of-day)"
+    )
+    extended: bool = Field(
+        default=False, description="Whether the code has been extended"
+    )
+    frozen: bool = Field(
+        default=False, description="Whether the code is frozen/paused"
+    )
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
+    )
+    is_valid: bool = Field(
+        ..., description="Whether the code passes all validity checks"
     )
     receiver: Receiver = Field(
         ..., description="Receiver: visitor or resident"
@@ -198,18 +229,7 @@ class GetResponseVisitor(VisitorData):
 
 
 class GetResponseResident(ResidentData):
-    """
-    Base response model to GET a record by id.
-
-    Attributes:
-        user_id (UUID): Reference to the visited resident.
-        estate_id (UUID): Reference to the visited estate.
-        visitor_fullname (str): Full name of the visitor.
-        hashed_code (str): Resident's generated access code.
-        valid_until (DateTime): Timestamp of entry code expiry
-        is_expired (bool): Flag indicating whether code is expired or not
-        receiver (Receiver): Receiver: visitor or resident.
-    """
+    """Response returned when validating a resident access code."""
 
     hashed_code: str = Field(
         ..., description="Resident's generated access code"
@@ -218,18 +238,50 @@ class GetResponseResident(ResidentData):
     is_expired: bool = Field(
         ..., description="Flag indicating whether code is expired or not"
     )
+    is_valid: bool = Field(
+        ..., description="Whether the code passes all validity checks"
+    )
     receiver: Receiver = Field(
         ..., description="Receiver: visitor or resident"
     )
 
 
-class ListResponse(BaseModel):
+class ExtendResponse(BaseModel):
     """
-    Response model to GET the list of items.
+    Response returned after attempting to extend a visitor access code.
 
-    Attributes:
-        items: list of table objects
+    Extension adds one hour to the existing total period end and can only
+    succeed once per code.
     """
+
+    success: bool = Field(..., description="Whether the extension succeeded")
+    hashed_code: str = Field(..., description="Visitor's access code")
+    valid_until: str = Field(..., description="Updated expiry timestamp")
+    validity_period: ValidityPeriod = Field(
+        ..., description="Updated total validity period"
+    )
+    extended: bool = Field(..., description="Whether the code is now extended")
+    message: str | None = Field(
+        default=None, description="Optional failure or status message"
+    )
+
+    model_config = model_config
+
+
+class FreezeResponse(BaseModel):
+    """Response returned after toggling freeze on a visitor access code."""
+
+    hashed_code: str = Field(..., description="Visitor's access code")
+    frozen: bool = Field(..., description="Current frozen state")
+    is_valid: bool = Field(
+        ..., description="Whether the code is valid after the toggle"
+    )
+
+    model_config = model_config
+
+
+class ListResponse(BaseModel):
+    """List of visitor access codes issued by a resident."""
 
     items: List[GetResponseVisitor] = Field(
         ..., description="Ordered list of table objects"
