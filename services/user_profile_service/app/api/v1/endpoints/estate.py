@@ -216,7 +216,7 @@ async def assign_primary_admin(
 
 @router.get("/public/search", response_model=PublicEstateListResponse)
 async def public_search_estates(
-    q: Optional[str] = Query(
+    search_query: Optional[str] = Query(
         None, description="Search by estate name or location"
     ),
     estate_type: Optional[EstateType] = Query(
@@ -234,7 +234,7 @@ async def public_search_estates(
     service = EstateService(estate_repository, user_repository)
 
     request = SearchEstateRequest(
-        q=q,
+        search_query=search_query,
         estate_type=estate_type,
         page=page,
         limit=limit,

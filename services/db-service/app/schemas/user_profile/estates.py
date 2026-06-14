@@ -201,7 +201,7 @@ class SearchRequest(BaseSearchRequest):
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
-    q: Optional[str] = Field(
+    search_query: Optional[str] = Field(
         None, description="Search across name and location"
     )
     name: Optional[str] = Field(None, description="Estate name")

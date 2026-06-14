@@ -382,14 +382,14 @@ class EstatesRepository:
         )
 
         # Apply filters
-        if request.q:
+        if request.search_query:
             query = query.where(
-                TableModel.name.ilike(f"%{request.q}%")
-                | TableModel.location.ilike(f"%{request.q}%")
+                TableModel.name.ilike(f"%{request.search_query}%")
+                | TableModel.location.ilike(f"%{request.search_query}%")
             )
 
         for key, info in request.model_fields.items():
-            if key == "q" or getattr(request, key) is None:
+            if key == "search_query" or getattr(request, key) is None:
                 continue
             if key in ["from_date", "to_date"]:
                 query = (

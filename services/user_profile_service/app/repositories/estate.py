@@ -218,8 +218,8 @@ class EstateRepository:
         """
         # Build query parameters
         params = {}
-        if request.q:
-            params["q"] = request.q
+        if request.search_query:
+            params["search_query"] = request.search_query
         if request.name:
             params["name"] = request.name
         if request.location:

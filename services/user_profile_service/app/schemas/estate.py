@@ -256,7 +256,7 @@ class SearchEstateRequest(BaseModel):
         limit (int): Number of items per page.
     """
 
-    q: Optional[str] = Field(
+    search_query: Optional[str] = Field(
         None, description="Search across estate name and location"
     )
     name: Optional[str] = Field(None, description="Filter by estate name")

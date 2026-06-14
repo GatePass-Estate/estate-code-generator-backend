@@ -169,7 +169,7 @@ async def delete(
     description="Search for items",
 )
 async def search(
-    q: str | None = None,
+    search_query: str | None = None,
     name: str | None = None,
     location: str | None = None,
     lga: str | None = None,
