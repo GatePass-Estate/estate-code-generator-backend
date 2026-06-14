@@ -33,7 +33,10 @@ async def login_user(
     The user must call POST /auth/accept-tos before accessing the app.
     """
     repo = UserRepository(ahttp_client)
-    user = await repo.authenticate_user(request.email, request.password)
+    estate_id = str(request.estate_id) if request.estate_id else None
+    user = await repo.authenticate_user(
+        request.email, request.password, estate_id
+    )
 
     if user.get("tos_accepted_version") != settings.TOS_VERSION:
         tos_token = generate_tos_pending_token(user["id"])
@@ -97,7 +100,8 @@ async def forgot_password(
         repository, estate_repository, household_repository, admin_repository
     )
 
-    result = await service.forgot_password(request.email)
+    estate_id = str(request.estate_id) if request.estate_id else None
+    result = await service.forgot_password(request.email, estate_id)
     if result:
         email, first_name, token = result
         background_tasks.add_task(
