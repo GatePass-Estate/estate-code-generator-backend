@@ -9,6 +9,8 @@ from app.repositories.cache_service.cache_handler import (
 from app.schemas.cache_service.cache_schema import (
     CreateRequest,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponse,
     ListResponse,
 )
@@ -17,65 +19,47 @@ logger = logging.getLogger(__name__)
 
 
 class CacheHandlerService:
-    """
-    Service class for workflows.workflows table.
-
-    Attributes:
-        repository: Repository logic for the table.
-    """
+    """Service layer for visitor access codes stored in Redis."""
 
     def __init__(self, redis_session: redis.Redis) -> None:
         self.repository = Repository(redis_session)
 
     async def create(self, request: CreateRequest) -> CreateResponse:
-        """
-        Create a new item in the table.
-
-        Arguments:
-            request: The request body for creating a new item in the table.
-
-        Returns:
-            The CreateResponse object after creating the item in the table.
-        """
+        """Cache a new visitor access code with lifecycle defaults."""
         return await self.repository.create(request=request)
 
     async def get(self, code: str) -> GetResponse:
-        """
-        Get an item by ID.
-
-        Arguments:
-            code: The generated access code to be retrieved.
-
-        Returns:
-            A GetResponse object after retrieving the item by id.
-        """
+        """Validate and return a visitor access code."""
         return await self.repository.get(code=code)
+
+    async def get_raw(self, code: str) -> dict:
+        """
+        Return a cached visitor record without validity filtering.
+
+        Intended for internal ownership checks before extend/freeze.
+        """
+        return await self.repository.get_raw(code=code)
+
+    async def extend(self, code: str) -> ExtendResponse:
+        """
+        Extend a visitor code once by adding one hour to the period end.
+
+        See repository ``extend`` for one-time semantics and Redis TTL updates.
+        """
+        return await self.repository.extend(code=code)
+
+    async def toggle_freeze(self, code: str) -> FreezeResponse:
+        """Toggle the frozen/paused state of a visitor access code."""
+        return await self.repository.toggle_freeze(code=code)
 
     async def get_all_items_by_user(
         self, user_id: UUID4, estate_id: UUID4
     ) -> ListResponse:
-        """
-        List all items in the table for a given user.
-
-        Arguments:
-            user_id: The ID of the user to retrieve items for.
-            estate_id: The ID of the estate to retrieve items for.
-
-        Returns:
-            A ListResponse object after retrieving the items for the user.
-        """
+        """List active visitor codes for a resident within an estate."""
         return await self.repository._get_all_items(
             user_id=user_id, estate_id=estate_id
         )
 
     async def delete(self, code: str) -> bool:
-        """
-        Delete an item by ID.
-
-        Arguments:
-            code: The generated access code to be deleted.
-
-        Returns:
-            A boolean indicating whether the item was deleted successfully.
-        """
+        """Delete a visitor access code from Redis."""
         return await self.repository.delete(code=code)

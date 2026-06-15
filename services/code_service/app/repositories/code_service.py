@@ -12,6 +12,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
@@ -22,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class CodeServiceRepository:
-    """
-    Repository to operate on workflows.workflows table.
-    """
+    """Orchestrates access code operations across cache and database services."""
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
         """
@@ -103,20 +103,22 @@ class CodeServiceRepository:
         **kwargs,
     ) -> dict:
         """
-        Get an item from the table by its ID.
+        Look up an access code in cache (visitor) or database (resident).
+
+        Visitor codes are validated by cache_service, including total validity
+        period, daily validity window, and freeze checks. Resident codes are
+        checked for expiry only and return ``is_valid=True`` when active.
 
         Arguments:
-            session: The HttpClient session.
-            code: The generated access code to be retrieved.
-            receiver: The status of the code owner (visitor or resident).
+            ahttp_client: HTTP client for downstream services.
+            code: Access code to resolve.
 
         Returns:
-            Returns an instance of orm_model if the requested item is found.
+            Raw record dict including ``receiver`` and validity fields.
 
         Raises:
-            HTTPException: If item is not found, is expired, timestamp is
-                missing, or unexpected error occured during retrieval.
-            NotFoundError: If item is not found or expired.
+            NotFoundError: If the code is missing or invalid.
+            Exception: On unexpected downstream failures.
         """
         code = kwargs.get("code", None)
 
@@ -163,6 +165,7 @@ class CodeServiceRepository:
             else:
                 raise Exception("Expiry timestamp missing in cached data!")
             resident_data["is_expired"] = False
+            resident_data["is_valid"] = True
             resident_data["receiver"] = Receiver.RESIDENT
             return resident_data
         except Exception as e:
@@ -239,6 +242,7 @@ class CodeServiceRepository:
                 else:
                     raise Exception("Expiry timestamp missing in cached data")
                 resident_data["is_expired"] = False
+                resident_data["is_valid"] = True
                 resident_data["receiver"] = Receiver.RESIDENT
                 return resident_data
         except NotFoundError as e:
@@ -255,22 +259,22 @@ class CodeServiceRepository:
         receiver: Receiver,
     ) -> dict:
         """
-        Create a new record in the database.
+        Persist a new access code for a visitor or resident.
+
+        Visitor codes are sent to cache_service with optional
+        ``validity_period`` and ``validity_window``. Resident codes are
+        stored in db-service with a 120-day expiry.
 
         Args:
-            session (AsyncHttpHandler): The HttpClient session.
-            request (CreateRequestVisito | CreateRequestResident): The record
-                to be created/inserted in the database/redis cache.
-            recevier (Receiver): The status of the code owner (visitor or
-                resident).
+            ahttp_client: HTTP client for downstream services.
+            request: Visitor or resident create payload.
+            receiver: Whether the code is for a visitor or resident.
 
         Returns:
-            dict: Returns the response dict containing the details of the
-                operation.
+            Dict with ``hashed_code`` and ``valid_until``.
 
         Raises:
-            HTTPException: If there is an unexpected error occured during
-                retrieval.
+            HTTPException: On downstream persistence failures.
         """
         try:
             if receiver == Receiver.VISITOR:
@@ -534,21 +538,22 @@ class CodeServiceRepository:
         self, code: str, user_details: dict | None = None
     ) -> GetResponseVisitor | GetResponseResident:
         """
-        Get an item by code. If the recevier is a visitor, the retrieved record
-        is persisted to the DB for permanent logging.
+        Validate an access code and persist a visitor or resident log entry.
+
+        Visitor validation uses cache_service lifecycle checks. Resident
+        validation checks expiry only. The caller's estate must match the
+        code's estate.
 
         Arguments:
-            code: The generated access code to be validated.
-            user_details: The user details of the user trying to validate the
-                code.
+            code: Access code to validate.
+            user_details: Authenticated security user performing validation.
 
         Returns:
-            A GetResponse object after retrieving the item by id.
+            Visitor or resident validation response model.
 
         Raises:
-            DatabaseError: If there's an error during the database operation.
-            NotFoundError: If the item with the provided ID is not found or
-                expired.
+            NotFoundError: If the code is invalid or estate mismatches.
+            DatabaseError: If log persistence fails after a valid lookup.
         """
         try:
             # Get the record from the database
@@ -641,6 +646,113 @@ class CodeServiceRepository:
             message = f"Error in getting a record with code {code}"
             logger.exception(message)
             raise Exception(message) from e
+
+    async def _authorize_visitor_code_owner(
+        self, code: str, user_details: dict
+    ) -> dict:
+        """
+        Verify that the requester owns a visitor access code.
+
+        Loads the raw cached record (without validity filtering) and compares
+        ``user_id`` to the authenticated resident.
+
+        Raises:
+            NotFoundError: If the code is missing or the requester is not the
+                owner.
+        """
+        raw_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/raw"
+        )
+        try:
+            record = await self.ahttp_client.async_get(raw_url)
+        except NotFoundError:
+            logger.warning(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "reason=not_found",
+                code,
+                user_details.get("id"),
+            )
+            raise NotFoundError(f"Invalid code: {code}!")
+        except Exception as exc:
+            logger.error(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "error=%s",
+                code,
+                user_details.get("id"),
+                exc,
+            )
+            raise NotFoundError(f"Invalid code: {code}!") from exc
+
+        if str(record.get("user_id")) != user_details.get("id"):
+            logger.warning(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "owner_id=%s reason=user_id_mismatch",
+                code,
+                user_details.get("id"),
+                record.get("user_id"),
+            )
+            raise NotFoundError(f"Invalid code: {code}!")
+        logger.info(
+            "Visitor code owner authorized code=%s requester_id=%s",
+            code,
+            user_details.get("id"),
+        )
+        return record
+
+    async def extend_code(
+        self, code: str, user_details: dict | None = None
+    ) -> ExtendResponse:
+        """
+        Extend a visitor code once by adding one hour to the period end.
+
+        Requires the requester to own the code. Delegates persistence to
+        cache_service, which updates ``validity_period.end``, ``valid_until``,
+        and Redis TTL.
+        """
+        await self._authorize_visitor_code_owner(code, user_details)
+        extend_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/extend"
+        )
+        response = await self.ahttp_client.async_patch(extend_url)
+        result = ExtendResponse.model_validate(response)
+        logger.info(
+            "Visitor code extend requested code=%s requester_id=%s "
+            "success=%s valid_until=%s extended=%s",
+            code,
+            user_details.get("id"),
+            result.success,
+            result.valid_until,
+            result.extended,
+        )
+        return result
+
+    async def toggle_freeze_code(
+        self, code: str, user_details: dict | None = None
+    ) -> FreezeResponse:
+        """
+        Toggle freeze/pause on a visitor access code.
+
+        Requires the requester to own the code. Freeze does not modify the
+        total validity period or daily validity window.
+        """
+        await self._authorize_visitor_code_owner(code, user_details)
+        freeze_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/freeze"
+        )
+        response = await self.ahttp_client.async_patch(freeze_url)
+        result = FreezeResponse.model_validate(response)
+        logger.info(
+            "Visitor code freeze toggled code=%s requester_id=%s "
+            "frozen=%s is_valid=%s",
+            code,
+            user_details.get("id"),
+            result.frozen,
+            result.is_valid,
+        )
+        return result
 
     async def update_resident_code(
         self, user_id: UUID4, user_details: dict | None = None

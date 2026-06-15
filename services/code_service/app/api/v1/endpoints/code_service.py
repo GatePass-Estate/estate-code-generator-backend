@@ -11,6 +11,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
@@ -308,6 +310,112 @@ async def delete(
         raise HTTPException(status_code=404, detail="Item not found") from e
     except Exception as e:
         logger.exception("An unexpected error happened while getting the item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.patch(
+    "/{code}/extend",
+    response_model=ExtendResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Extend attempted"},
+    },
+    description="Extend a visitor access code by one hour",
+)
+async def extend_code(
+    code: str,
+    service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> ExtendResponse:
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+    requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
+
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to extend codes.",
+        )
+
+    try:
+        logger.info(
+            "Extend visitor code requested code=%s requester_id=%s",
+            code,
+            user_details.get("id"),
+        )
+        return await service.extend_code(code=code, user_details=user_details)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"{e}") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while extending the code"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.patch(
+    "/{code}/freeze",
+    response_model=FreezeResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Freeze toggled"},
+    },
+    description="Toggle freeze/pause on a visitor access code",
+)
+async def freeze_code(
+    code: str,
+    service: Service = Depends(get_service),
+    current_user: dict = Depends(get_current_user),
+) -> FreezeResponse:
+    user_details = await get_user_details(
+        service.ahttp_client, current_user["id"]
+    )
+    requester_role = current_user["role"]
+
+    if not await check_status(user_details):
+        raise HTTPException(
+            status_code=403, detail="Your account is not verified yet."
+        )
+
+    if not await check_permission(
+        service.ahttp_client, requester_role, "can_generate_code"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to freeze codes.",
+        )
+
+    try:
+        logger.info(
+            "Freeze visitor code requested code=%s requester_id=%s",
+            code,
+            user_details.get("id"),
+        )
+        return await service.toggle_freeze_code(
+            code=code, user_details=user_details
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"{e}") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while freezing the code"
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e

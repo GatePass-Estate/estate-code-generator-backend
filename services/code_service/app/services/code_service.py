@@ -10,6 +10,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
@@ -96,6 +98,22 @@ class CodeService:
             user_details: The details of the user making the request.
         """
         return await self.repository._delete(
+            code=code, user_details=user_details
+        )
+
+    async def extend_code(
+        self, code: str, user_details: dict | None = None
+    ) -> ExtendResponse:
+        """Extend a visitor code's validity duration by one hour."""
+        return await self.repository.extend_code(
+            code=code, user_details=user_details
+        )
+
+    async def toggle_freeze_code(
+        self, code: str, user_details: dict | None = None
+    ) -> FreezeResponse:
+        """Toggle freeze/pause on a visitor code."""
+        return await self.repository.toggle_freeze_code(
             code=code, user_details=user_details
         )
 
