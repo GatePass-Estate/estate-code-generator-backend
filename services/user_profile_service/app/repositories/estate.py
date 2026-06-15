@@ -218,6 +218,8 @@ class EstateRepository:
         """
         # Build query parameters
         params = {}
+        if request.search_query:
+            params["search_query"] = request.search_query
         if request.name:
             params["name"] = request.name
         if request.location:
@@ -232,6 +234,8 @@ class EstateRepository:
             params["postal_code"] = request.postal_code
         if request.primary_admin_id:
             params["primary_admin_id"] = request.primary_admin_id
+        if request.estate_type:
+            params["estate_type"] = request.estate_type.value
         if request.from_date:
             params["from_date"] = request.from_date
         if request.to_date:

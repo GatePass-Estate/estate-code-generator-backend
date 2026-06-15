@@ -1,5 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from enum import Enum
+from typing import Optional
+from uuid import UUID
 
 __all__ = [
     "LoginRequest",
@@ -35,10 +37,14 @@ class LoginRequest(BaseModel):
     Attributes:
         email (EmailStr): User's email address.
         password (str): User's plaintext password.
+        estate_id (UUID): Estate the user is logging into. None for root.
     """
 
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., description="User's password")
+    estate_id: Optional[UUID] = Field(
+        default=None, description="Estate ID to log into. Omit for root login."
+    )
 
     model_config = model_config
 
@@ -49,9 +55,14 @@ class ForgotPasswordRequest(BaseModel):
 
     Attributes:
         email (EmailStr): The email address of the account to reset.
+        estate_id (UUID): The estate the account belongs to. None for root.
     """
 
     email: EmailStr = Field(..., description="Email address of the account")
+    estate_id: Optional[UUID] = Field(
+        default=None,
+        description="Estate ID the account belongs to. Omit for root.",
+    )
 
     model_config = model_config
 

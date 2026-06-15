@@ -45,6 +45,7 @@ async def get_current_user(
             "id": payload["sub"],
             "role": payload["role"],
             "email": payload["email"],
+            "estate_id": payload.get("estate_id"),
         }
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -65,6 +66,7 @@ def generate_access_token(user: dict) -> str:
         "sub": user["id"],
         "email": user["email"],
         "role": user["role"],
+        "estate_id": user.get("estate_id"),
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
