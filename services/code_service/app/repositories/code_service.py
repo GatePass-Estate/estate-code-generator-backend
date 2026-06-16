@@ -317,7 +317,7 @@ class CodeServiceRepository:
                     receiver=receiver,
                 )
                 resident_data["hashed_code"] = code
-                valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+                valid_until = datetime.now(timezone.utc) + timedelta(days=30)
                 valid_until = self._format_datetime(valid_until)
                 resident_data["valid_until"] = valid_until
                 try:
