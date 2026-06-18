@@ -6,7 +6,8 @@ import redis.asyncio as redis
 from fastapi import HTTPException
 from pydantic import UUID4
 
-from app.core.exceptions import DatabaseError, NotFoundError
+from app.core.config import settings
+from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
 from app.libs.code_validity import evaluate_code_validity, parse_datetime
 from app.schemas.cache_service.cache_schema import (
     CreateRequest,
@@ -19,6 +20,22 @@ from app.schemas.cache_service.cache_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _max_validity_period() -> timedelta:
+    return timedelta(days=settings.VISITOR_CODE_MAX_VALIDITY_DAYS)
+
+
+def _max_period_length() -> timedelta:
+    return timedelta(days=settings.VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS)
+
+
+def _schedule_error_message() -> str:
+    days = settings.VISITOR_CODE_MAX_VALIDITY_DAYS
+    return (
+        f"Validity period cannot be scheduled more than {days} days "
+        "from the current time."
+    )
 
 
 class CacheHandlerRepository:
@@ -45,6 +62,10 @@ class CacheHandlerRepository:
 
         Defaults to ``now`` through ``now + 1 hour`` when both bounds are
         omitted. Partial input fills missing bounds with those defaults.
+        Callers must enforce the configured validity horizon after resolution.
+
+        Raises:
+            ScheduleError: If the resolved end is before the start.
         """
         raw_period = visit_data.get("validity_period") or {}
         if isinstance(raw_period, dict):
@@ -61,7 +82,46 @@ class CacheHandlerRepository:
         period_end = (
             parse_datetime(vp_end) if vp_end else now + timedelta(hours=1)
         )
+        if period_start < now:
+            raise ScheduleError("Validity period start cannot be in the past.")
+        if period_end < period_start:
+            raise ScheduleError(
+                "Validity period end cannot be before the start."
+            )
         return period_start, period_end
+
+    def _enforce_validity_period_horizon(
+        self,
+        period_start: datetime,
+        period_end: datetime,
+        now: datetime,
+    ) -> None:
+        """
+        Reject invalid validity period bounds.
+
+        Ensures the period does not exceed the configured horizon from ``now``,
+        that end is not equal to start, and that the span does not exceed the
+        configured maximum length.
+
+        Raises:
+            ScheduleError: If any bound rule is violated.
+        """
+
+        horizon = now + _max_validity_period()
+        if period_start > horizon:
+            raise ScheduleError(_schedule_error_message())
+
+        if period_end == period_start:
+            raise ScheduleError(
+                "Validity period end cannot be the same as the start."
+            )
+
+        max_span = _max_period_length()
+        if period_end - period_start > max_span:
+            days = settings.VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS
+            raise ScheduleError(
+                f"Validity period cannot exceed {days} days from the start."
+            )
 
     def _normalize_validity_window(self, visit_data: dict) -> dict:
         """Normalize daily validity window to ``{start, end}`` or null bounds."""
@@ -159,6 +219,9 @@ class CacheHandlerRepository:
         ``valid_until`` to ``validity_period.end``, and sets Redis TTL from
         the period end.
 
+        The total validity period must not start or end beyond the configured
+        maximum horizon (``VISITOR_CODE_MAX_VALIDITY_DAYS``).
+
         Args:
             session: The Redis session.
             request: Visitor code payload to cache.
@@ -167,7 +230,10 @@ class CacheHandlerRepository:
             Dict with ``hashed_code`` and ``valid_until``.
 
         Raises:
-            HTTPException: If persistence fails.
+            ScheduleError: If the validity period end is before the start,
+                equal to the start, exceeds the configured maximum span, or
+                either bound exceeds the configured horizon.
+            HTTPException: If persistence fails unexpectedly.
         """
         try:
             code = request.hashed_code
@@ -176,6 +242,9 @@ class CacheHandlerRepository:
 
             period_start, period_end = self._resolve_validity_period(
                 visit_data, now
+            )
+            self._enforce_validity_period_horizon(
+                period_start, period_end, now
             )
             visit_data["validity_period"] = {
                 "start": self._format_datetime(period_start),
@@ -207,6 +276,8 @@ class CacheHandlerRepository:
                 "valid_until": visit_data["valid_until"],
             }
             return response
+        except ScheduleError:
+            raise
         except Exception as e:
             logger.exception(
                 "Visitor code create failed code=%s", request.hashed_code
@@ -494,6 +565,8 @@ class CacheHandlerRepository:
             CreateResponse with ``hashed_code`` and ``valid_until``.
 
         Raises:
+            ScheduleError: If the requested validity period exceeds the
+                configured horizon.
             DatabaseError: If Redis persistence fails.
         """
         try:
@@ -502,6 +575,8 @@ class CacheHandlerRepository:
             )
             created_record = CreateResponse.model_validate(response)
             return created_record
+        except ScheduleError:
+            raise
         except DatabaseError as e:
             message = "REDIS DB Error while inserting item into Cache"
             logger.exception(message)

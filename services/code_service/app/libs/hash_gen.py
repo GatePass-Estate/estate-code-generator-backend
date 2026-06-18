@@ -11,31 +11,40 @@ def generate_unique_code(
     date: str = None,
     hour: str = None,
     receiver: Receiver = None,
+    validity_period: dict | None = None,
 ) -> str:
     """
     Generate a unique 6-character alphanumeric code based on input details.
 
     Arguments:
-        user_id (str): The unique identifier for the user (e.g., a UUID).
-        visitor_fullname (str): The name of the visitor.
-        relationship_with_resident (str): The relationship of the visitor to
-            the user.
-        date (str): The date of the visit, typically in YYYY-MM-DD
-            format.
-        hour (str): The hour of the visit.
-        recevier (Receiver): The status of the code owner (visitor or resident)
-            which determines the logic pathway to execute.
+        user_id: The unique identifier for the user (e.g., a UUID).
+        estate_id: The estate the code belongs to.
+        visitor_fullname: The name of the visitor.
+        relationship_with_resident: The relationship of the visitor to the user.
+        date: The date of the visit, typically in YYYY-MM-DD format.
+        hour: The hour of the visit.
+        receiver: Whether the code is for a visitor or resident.
+        validity_period: Optional visitor validity bounds with ``start`` and
+            ``end`` UTC datetimes. Included in the hash for visitors only.
 
     Returns:
-        str: A 6-character alphanumeric code that uniquely represents the
-            combination of the input values.
+        A 6-character alphanumeric code that uniquely represents the
+        combination of the input values.
     """
 
     # Combine the input fields into a single string
     if receiver == Receiver.VISITOR:
+        raw_period = validity_period or {}
+        if isinstance(raw_period, dict):
+            period_start = raw_period.get("start") or ""
+            period_end = raw_period.get("end") or ""
+        else:
+            period_start = getattr(raw_period, "start", None) or ""
+            period_end = getattr(raw_period, "end", None) or ""
         combined = (
             f"{user_id}|{estate_id}|{visitor_fullname}|"
-            f"{relationship_with_resident}|{date}|{hour}"
+            f"{relationship_with_resident}|{date}|{hour}|"
+            f"{period_start}|{period_end}"
         )
     else:
         combined = f"{user_id}|{estate_id}|{date}|{hour}"
@@ -63,6 +72,7 @@ if __name__ == "__main__":
     visitor_fullname = "Michael"
     relationship_with_resident = "friend"
     date = "2025-04-06"
+    hour = "14"
     print(
         generate_unique_code(
             user_id,
@@ -70,5 +80,11 @@ if __name__ == "__main__":
             visitor_fullname,
             relationship_with_resident,
             date,
+            hour,
+            Receiver.VISITOR,
+            validity_period={
+                "start": "2025-04-06 14:00:00.000+0000",
+                "end": "2025-04-06 18:00:00.000+0000",
+            },
         )
     )

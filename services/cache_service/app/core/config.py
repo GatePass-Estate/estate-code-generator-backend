@@ -28,6 +28,16 @@ class Settings(BaseSettings):
         f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
     )
 
+    # Maximum visitor code validity horizon from creation time (default: 14 days).
+    VISITOR_CODE_MAX_VALIDITY_DAYS: int = int(
+        os.getenv("VISITOR_CODE_MAX_VALIDITY_DAYS", "14")
+    )
+
+    # Maximum span between validity period start and end (default: 7 days).
+    VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS: int = int(
+        os.getenv("VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS", "7")
+    )
+
     @field_validator("REDIS_URL", mode="before")
     def assemble_db_url(cls, v, info: ValidationInfo):
         return (
