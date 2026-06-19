@@ -263,7 +263,7 @@ class CodeServiceRepository:
 
         Visitor codes are sent to cache_service with optional
         ``validity_period`` and ``validity_window``. Resident codes are
-        stored in db-service with a 120-day expiry.
+        stored in db-service with a ``RESIDENT_CODE_EXPIRY_DAYS`` expiry.
 
         Args:
             ahttp_client: HTTP client for downstream services.
@@ -318,7 +318,9 @@ class CodeServiceRepository:
                     receiver=receiver,
                 )
                 resident_data["hashed_code"] = code
-                valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+                valid_until = datetime.now(timezone.utc) + timedelta(
+                    days=settings.RESIDENT_CODE_EXPIRY_DAYS
+                )
                 valid_until = self._format_datetime(valid_until)
                 resident_data["valid_until"] = valid_until
                 try:
@@ -453,7 +455,9 @@ class CodeServiceRepository:
             )
 
             # Calculate new expiry date
-            valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+            valid_until = datetime.now(timezone.utc) + timedelta(
+                days=settings.RESIDENT_CODE_EXPIRY_DAYS
+            )
             valid_until = self._format_datetime(valid_until)
 
             # Update the existing record
