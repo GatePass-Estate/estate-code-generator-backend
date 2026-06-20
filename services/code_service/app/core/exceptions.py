@@ -14,3 +14,10 @@ class ValidationError(Exception):
     """Exception raised when a validation error occurs."""
 
     pass
+
+
+class ScheduleError(Exception):
+    """Exception raised when a requested validity schedule exceeds allowed
+    bounds."""
+
+    code = "schedule_error"

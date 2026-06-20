@@ -4,7 +4,7 @@ import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ScheduleError
 from app.db.session import get_redis_connection
 from app.schemas.cache_service.cache_schema import (
     CreateRequest,
@@ -40,6 +40,7 @@ def get_service(
     response_model=CreateResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
+        400: {"description": "Validity period exceeds allowed schedule"},
         500: {"description": "Internal server error"},
         200: {"description": "item saved successfully"},
     },
@@ -54,9 +55,20 @@ async def create(
 
     Persists lifecycle fields, resolves optional ``validity_period`` and
     ``validity_window``, and sets Redis TTL from the total period end.
+    The validity period may not start or end beyond the configured maximum
+    horizon (``VISITOR_CODE_MAX_VALIDITY_DAYS``).
+
+    Raises:
+        HTTPException: 400 if the validity period exceeds the configured
+            horizon; 500 otherwise.
     """
     try:
         return await service.create(request=request)
+    except ScheduleError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": ScheduleError.code, "message": str(e)},
+        ) from e
     except Exception as e:
         logger.exception(
             "An unexpected error happened while creating the item"
@@ -190,9 +202,16 @@ async def get(
     service: Service = Depends(get_service),
 ) -> GetResponse:
     """
-    Validate and return a visitor access code from Redis.
+    Get an item by its unique ID from the database.
 
-    Applies total validity period, daily validity window, and freeze checks.
+    Arguments:
+        code: The generated access code to be retrieved.
+
+    Returns:
+        A GET response model containing reference to the retrieved item.
+
+    Raises:
+        HTTPException: If there is an internal server error
     """
     try:
         return await service.get(code=code)

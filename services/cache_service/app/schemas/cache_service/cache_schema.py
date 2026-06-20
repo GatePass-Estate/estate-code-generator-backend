@@ -68,7 +68,10 @@ class ValidityPeriod(BaseModel):
     Total validity period for a visitor access code.
 
     Both bounds are absolute UTC datetimes. ``end`` is mirrored by
-    ``valid_until`` on cached records.
+    ``valid_until`` on cached records. Neither bound may be more than the
+    configured maximum validity horizon (``VISITOR_CODE_MAX_VALIDITY_DAYS``).
+    The span from start to end may not exceed
+    ``VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS`` (default 7 days).
     """
 
     start: str | None = Field(

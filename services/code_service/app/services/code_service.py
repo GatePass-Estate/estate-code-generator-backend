@@ -40,15 +40,14 @@ class CodeService:
         user_details: dict | None = None,
     ) -> CreateResponse:
         """
-        Create a new item in the table.
+        Create a visitor or resident access code.
 
-        Arguments:
-            request: The request body for creating a new item in the table.
-            receiver: The status of the code owner (visitor or resident).
-            user_details: The details of the user making the request.
+        Visitor requests may include optional ``validity_period`` and
+        ``validity_window``. The total validity period may not exceed
+        2 weeks from the current time.
 
-        Returns:
-            The CreateResponse object after creating the item in the table.
+        Raises:
+            ScheduleError: If the visitor validity period exceeds 2 weeks.
         """
         return await self.repository.create(
             request=request, receiver=receiver, user_details=user_details

@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ScheduleError
 from app.libs.auth import get_current_user, get_user_details
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.role_permissions import check_permission, check_status
@@ -44,6 +44,7 @@ def get_service(
     response_model=CreateResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
+        400: {"description": "Validity period exceeds allowed schedule"},
         500: {"description": "Internal server error"},
         200: {"description": "item saved successfully"},
     },
@@ -56,18 +57,15 @@ async def generate(
     current_user: dict = Depends(get_current_user),
 ) -> CreateResponse:
     """
-    Creates a new record in the database if it doesn't exist, otherwise
-    updates the existing record.
+    Generate a visitor or resident access code.
 
-    Arguments:
-        request: The request model to CREATE a new record.
-        receiver: The status of the code owner (visitor or resident).
-
-    Returns:
-        The response model to CREATE a new record.
+    Visitor requests may include optional ``validity_period`` (total UTC
+    range) and ``validity_window`` (daily hours). Omitted period defaults to
+    one hour from creation. The total validity period may not start or end
+    more than 2 weeks from the current time.
 
     Raises:
-        HTTPException: If there is an internal server error
+        HTTPException: 400 if the validity period exceeds 2 weeks; 500 otherwise.
     """
     try:
         # Option 1: Direct enum validation
@@ -106,6 +104,8 @@ async def generate(
         return await service.generate(
             request=request, receiver=receiver, user_details=user_details
         )
+    except ScheduleError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception(
             f"An unexpected error happened while creating the item\nError: {e}"

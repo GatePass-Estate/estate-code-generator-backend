@@ -69,6 +69,7 @@ class ValidityPeriod(BaseModel):
     Total validity period for a visitor access code.
 
     Optional on create; defaults to one hour from creation when omitted.
+    Neither bound may be more than 2 weeks from the current time.
     """
 
     start: str | None = Field(
@@ -165,7 +166,8 @@ class CreateRequestVisitor(VisitorData):
     """
     Request body for generating a visitor access code.
 
-    ``validity_period`` sets the total active range (UTC datetimes).
+    ``validity_period`` sets the total active range (UTC datetimes) and may
+    not start or end more than 2 weeks from the current time.
     ``validity_window`` restricts usage to daily hours (time-of-day).
     Both are optional; omitted period defaults to one hour from creation.
     """

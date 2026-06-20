@@ -25,7 +25,13 @@ class CacheHandlerService:
         self.repository = Repository(redis_session)
 
     async def create(self, request: CreateRequest) -> CreateResponse:
-        """Cache a new visitor access code with lifecycle defaults."""
+        """
+        Cache a new visitor access code with lifecycle defaults.
+
+        Raises:
+            ScheduleError: If the requested validity period exceeds the
+                configured horizon.
+        """
         return await self.repository.create(request=request)
 
     async def get(self, code: str) -> GetResponse:

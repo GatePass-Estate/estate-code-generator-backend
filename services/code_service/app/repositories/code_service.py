@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from pydantic import UUID4
 
 from app.core.config import settings
-from app.core.exceptions import DatabaseError, NotFoundError
+from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
 from app.schemas.code_service import (
@@ -295,6 +295,7 @@ class CodeServiceRepository:
                     date=now.strftime("%Y-%m-%d"),
                     hour=now.strftime("%H"),
                     receiver=receiver,
+                    validity_period=visit_data.get("validity_period"),
                 )
                 visit_data["hashed_code"] = code
                 data = {"hashed_code": code, "visit_data": visit_data}
@@ -347,6 +348,8 @@ class CodeServiceRepository:
                     "valid_until": valid_until,
                 }
                 return response
+        except ScheduleError:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -513,6 +516,7 @@ class CodeServiceRepository:
             The CreateResponse object after creating the item in the table.
 
         Raises:
+            ScheduleError: If the visitor validity period exceeds 2 weeks.
             DatabaseError: If there's an error during the database operation.
         """
         if str(request.estate_id) != user_details.get("estate_id") or str(
@@ -533,6 +537,8 @@ class CodeServiceRepository:
             )
             created_record = CreateResponse.model_validate(response)
             return created_record
+        except ScheduleError:
+            raise
         except DatabaseError as e:
             message = "Database error in creating the access code"
             logger.exception(message)
