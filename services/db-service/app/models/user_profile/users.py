@@ -73,3 +73,5 @@ class Users(BaseModelDB):
     )
     status = Column(Boolean, default=False)
     tos_accepted_version = Column(String, nullable=True)
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=True)

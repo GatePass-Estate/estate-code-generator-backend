@@ -69,7 +69,8 @@ app.openapi = custom_openapi
 
 @app.get("/")
 async def root():
-    """Avoid 404 on GET / (LB probes and browsers); use /healthz or /api/v1 for APIs."""
+    """Avoid 404 on GET / (LB probes and browsers); use /healthz or
+    /api/v1 for APIs."""
     return JSONResponse(
         content={"service": "user-profile-service", "status": "ok"}
     )

@@ -246,6 +246,15 @@ class GetUserResponse(BaseModel):
         None, description="Last update timestamp"
     )
     is_deleted: bool = Field(False, description="Deletion status")
+    tos_accepted_version: Optional[str] = Field(
+        None, description="TOS version accepted by the user"
+    )
+    totp_secret: Optional[str] = Field(
+        None, description="Fernet-encrypted TOTP secret"
+    )
+    totp_enabled: Optional[bool] = Field(
+        False, description="Whether TOTP 2FA is active"
+    )
 
     @field_serializer("id")
     def serialize_id(self, id: UUID4) -> str:

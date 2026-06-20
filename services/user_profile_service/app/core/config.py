@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY")
     LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
+    TOTP_ENCRYPTION_KEY: str = os.getenv("TOTP_ENCRYPTION_KEY", "")
 
     # Email / SMTP configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")

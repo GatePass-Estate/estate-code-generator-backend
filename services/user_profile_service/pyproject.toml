@@ -8,7 +8,7 @@ packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.115.4"
+fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = {extras = ["email"], version = "^2.11.4"}
 asyncpg = "^0.30.0"
@@ -16,11 +16,13 @@ databases = "^0.9.0"
 pydantic-settings = "^2.6.1"
 load-dotenv = "^0.1.0"
 pyjwt = "^2.9.0"
-httpx = "^0.27.2"
+httpx = "^0.28.1"
 protobuf = "^5.29.1"
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 bcrypt = "<4.0.0"
-fastapi-mail = "^1.6.2"
+fastapi-mail = "^1.6.5"
+pyotp = "^2.10.0"
+cryptography = "^49.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"

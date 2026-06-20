@@ -37,6 +37,12 @@ from app.api.v1.endpoints.user_profile.resident_departure_log import (
 from app.api.v1.endpoints.user_profile.role_permission import (
     router as rolepermission_router,
 )
+from app.api.v1.endpoints.user_profile.sessions import (
+    router as sessions_router,
+)
+from app.api.v1.endpoints.user_profile.totp_recovery_codes import (
+    router as totprecoverycodes_router,
+)
 from app.api.v1.endpoints.user_profile.users import router as users_router
 
 api_router = APIRouter()
@@ -123,4 +129,16 @@ api_router.include_router(
     requests_router,
     prefix="/userprofile/requests",
     tags=["Requests"],
+)
+
+api_router.include_router(
+    sessions_router,
+    prefix="/userprofile/sessions",
+    tags=["Sessions"],
+)
+
+api_router.include_router(
+    totprecoverycodes_router,
+    prefix="/userprofile/totprecoverycodes",
+    tags=["TotpRecoveryCodes"],
 )
