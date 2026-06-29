@@ -21,9 +21,18 @@ class Settings(BaseSettings):
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL")
     BASE_URL: str = os.getenv("BASE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
-    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
+    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 60))
+    SESSION_EXPIRE_DAYS: int = int(os.getenv("SESSION_EXPIRE_DAYS", 30))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
     TOTP_ENCRYPTION_KEY: str = os.getenv("TOTP_ENCRYPTION_KEY", "")
+    # Days before a 2FA-verified session on the same IP is no longer "familiar"
+    TWO_FA_FAMILIAR_IP_DAYS: int = int(
+        os.getenv("TWO_FA_FAMILIAR_IP_DAYS", 30)
+    )
+    # Days before 2FA is forced again regardless of IP familiarity
+    TWO_FA_FORCE_REAUTH_DAYS: int = int(
+        os.getenv("TWO_FA_FORCE_REAUTH_DAYS", 60)
+    )
 
     # Email / SMTP configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")

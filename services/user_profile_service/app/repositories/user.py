@@ -248,6 +248,7 @@ class UserRepository:
             tos_accepted_version=response.get("tos_accepted_version"),
             totp_secret=response.get("totp_secret"),
             totp_enabled=response.get("totp_enabled", False),
+            last_2fa_verified_at=response.get("last_2fa_verified_at"),
         )
 
     async def get_user_by_email(self, email: str) -> GetUserResponse | None:
@@ -510,6 +511,7 @@ class UserRepository:
             is_deleted=user_data.get("is_deleted", False),
             tos_accepted_version=user_data.get("tos_accepted_version"),
             totp_enabled=user_data.get("totp_enabled", False),
+            last_2fa_verified_at=user_data.get("last_2fa_verified_at"),
         )
 
         return user

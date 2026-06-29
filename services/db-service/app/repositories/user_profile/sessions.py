@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import Sessions as TableModel
+from app.models import Users as UsersModel
 from app.schemas.user_profile.sessions import (
     CreateRequest,
     CreateResponse,
@@ -18,6 +19,7 @@ from app.schemas.user_profile.sessions import (
     SearchRequest,
     UpdateRequest,
     UpdateResponse,
+    ValidateSessionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -464,6 +466,59 @@ class SessionsRepository:
             message = (
                 "Unexpected error in deleting all sessions for user %s"
                 % user_id
+            )
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def validate_session(
+        self, session_id: UUID
+    ) -> ValidateSessionResponse:
+        """
+        Validates a session by joining sessions with users in a single query.
+        Raises NotFoundError if the session or user is deleted/missing.
+
+        Arguments:
+            session_id: The session ID to validate.
+
+        Returns:
+            ValidateSessionResponse with combined session and user fields.
+        """
+        query = (
+            select(TableModel, UsersModel)
+            .join(UsersModel, TableModel.user_id == UsersModel.id)
+            .where(
+                TableModel.id == session_id,
+                TableModel.is_deleted == False,  # noqa E712
+                UsersModel.is_deleted == False,  # noqa E712
+            )
+        )
+        try:
+            result = await self.session.execute(query)
+            row = result.unique().one_or_none()
+            if not row:
+                raise NotFoundError(
+                    "Session %s not found or user is deleted" % session_id
+                )
+            session, user = row
+            return ValidateSessionResponse(
+                session_id=session.id,
+                expires_at=session.expires_at,
+                last_active_at=session.last_active_at,
+                is_2fa_verified=session.is_2fa_verified,
+                user_id=user.id,
+                email=user.email,
+                role=user.role,
+                estate_id=user.estate_id,
+            )
+        except NotFoundError:
+            raise
+        except SQLAlchemyError as e:
+            message = "Database error while validating session %s" % session_id
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = (
+                "Unexpected error while validating session %s" % session_id
             )
             logger.exception(message)
             raise DatabaseError(message) from e

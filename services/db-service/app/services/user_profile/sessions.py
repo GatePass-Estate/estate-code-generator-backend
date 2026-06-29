@@ -14,6 +14,7 @@ from app.schemas.user_profile.sessions import (
     SearchRequest,
     UpdateRequest,
     UpdateResponse,
+    ValidateSessionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,22 @@ class SessionsService:
         return await self.repository.search(
             request=request, page=page, limit=limit
         )
+
+    async def validate_session(
+        self, session_id: str
+    ) -> ValidateSessionResponse:
+        """
+        Validates a session and returns combined session + user data.
+
+        Arguments:
+            session_id: The session ID to validate.
+
+        Returns:
+            ValidateSessionResponse with session and user fields.
+        """
+        from uuid import UUID
+
+        return await self.repository.validate_session(UUID(session_id))
 
     async def delete_all_for_user(self, user_id: str) -> None:
         """

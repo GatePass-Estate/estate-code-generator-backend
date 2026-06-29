@@ -11,6 +11,9 @@ ENV POETRY_VERSION=2.0.0
 # Set the working directory in the container
 WORKDIR /src/service
 
+# Copy the shared package so path deps resolve during poetry lock
+COPY services/shared /src/shared/
+
 # Copy the pyproject.toml and lock file to the working directory
 COPY services/user_profile_service/pyproject.toml services/user_profile_service/poetry.lock services/user_profile_service/README.md /src/service/
 

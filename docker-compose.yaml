@@ -72,6 +72,7 @@ services:
       ]
     volumes:
       - ./services/code_service/app:/src/service/app
+      - ./services/shared/gatepass_auth:/src/shared/gatepass_auth
     env_file:
       - ./services/code_service/.env.secrets
       - ./services/code_service/.env.localdocker
@@ -97,6 +98,7 @@ services:
       ]
     volumes:
       - ./services/user_profile_service/app:/src/service/app
+      - ./services/shared/gatepass_auth:/src/shared/gatepass_auth
     env_file:
       - ./services/user_profile_service/.env.secrets
       - ./services/user_profile_service/.env.localdocker
@@ -122,6 +124,7 @@ services:
       ]
     volumes:
       - ./services/ai_service/app:/src/service/app
+      - ./services/shared/gatepass_auth:/src/shared/gatepass_auth
     env_file:
       - ./services/ai_service/.env.secrets
       - ./services/ai_service/.env.localdocker

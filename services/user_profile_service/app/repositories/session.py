@@ -74,6 +74,15 @@ class SessionRepository:
         response = await self.client.async_delete(url)
         return response
 
+    async def validate_session(self, session_id: str) -> Optional[dict]:
+        """
+        Validates a session via the db-service JOIN endpoint.
+        Returns combined session + user data, or None if not found.
+        """
+        url = f"{self.sessions_endpoint}/{session_id}/validate"
+        response = await self.client.async_get(url)
+        return response or None
+
     async def search_sessions(
         self,
         user_id: Optional[str] = None,

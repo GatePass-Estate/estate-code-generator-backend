@@ -255,6 +255,9 @@ class GetUserResponse(BaseModel):
     totp_enabled: Optional[bool] = Field(
         False, description="Whether TOTP 2FA is active"
     )
+    last_2fa_verified_at: Optional[datetime] = Field(
+        None, description="When the user last completed a TOTP challenge"
+    )
 
     @field_serializer("id")
     def serialize_id(self, id: UUID4) -> str:

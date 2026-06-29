@@ -16,6 +16,7 @@ from app.schemas.user_profile.sessions import (
     SearchRequest,
     UpdateRequest,
     UpdateResponse,
+    ValidateSessionResponse,
 )
 from app.services.user_profile.sessions import SessionsService as Service
 
@@ -187,7 +188,8 @@ async def delete_all_for_user(
         return {"deleted": True}
     except Exception as e:
         logger.exception(
-            "An unexpected error happened while deleting all sessions for the user"
+            "An unexpected error happened while deleting all "
+            "sessions for the user"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"
@@ -222,7 +224,7 @@ async def search(
         user_id (UUID): Filter by user ID.
         ip_address (str): Filter by IP address.
         is_2fa_verified (bool): Filter by 2FA verification status.
-        last_active_after (datetime): Filter sessions active after this datetime.
+        last_active_after (datetime): Filter sessions active after this time.
         page: The number of pages of results.
         limit: The number of items per page.
 
@@ -238,6 +240,50 @@ async def search(
     except Exception as e:
         logger.exception(
             "An unexpected error happened while searching for matches"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/{id}/validate",
+    response_model=ValidateSessionResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Session or user not found"},
+        200: {"description": "Session is valid"},
+    },
+    description="Validate a session and return combined session + user data",
+)
+async def validate_session(
+    id: UUID4,
+    service: Service = Depends(get_service),
+) -> ValidateSessionResponse:
+    """
+    Validates that a session exists and its user is active,
+    returning combined session and user data in a single DB query.
+
+    Arguments:
+        id: The unique session ID to validate.
+
+    Returns:
+        A ValidateSessionResponse with session and user fields.
+
+    Raises:
+        HTTPException 404: If the session or user is not found / deleted.
+        HTTPException 500: If there is an internal server error.
+    """
+    try:
+        return await service.validate_session(str(id))
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail="Session or user not found"
+        ) from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while validating the session"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"

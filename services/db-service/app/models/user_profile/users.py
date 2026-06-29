@@ -1,6 +1,15 @@
 import logging
 
-from sqlalchemy import Column, String, Enum, Boolean, ForeignKey, Index, text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    String,
+    Enum,
+    Boolean,
+    ForeignKey,
+    Index,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
 from app.schemas.user_profile.users import UserRole, Gender
@@ -75,3 +84,4 @@ class Users(BaseModelDB):
     tos_accepted_version = Column(String, nullable=True)
     totp_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, default=False, nullable=True)
+    last_2fa_verified_at = Column(DateTime(timezone=True), nullable=True)

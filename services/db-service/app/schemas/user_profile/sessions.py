@@ -9,6 +9,7 @@ from app.schemas.base import (
     SharedModel,
     model_config,
 )
+from app.schemas.user_profile.users import UserRole
 
 __all__ = [
     "CreateRequest",
@@ -19,6 +20,7 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+    "ValidateSessionResponse",
 ]
 
 
@@ -128,3 +130,32 @@ class ListResponse(BaseListResponse):
     items: List[GetResponse] = Field(
         ..., description="List of session records"
     )
+
+
+class ValidateSessionResponse(BaseModel):
+    """Combined session + user response for the validate endpoint."""
+
+    session_id: UUID4 = Field(..., description="Session ID")
+    expires_at: datetime = Field(..., description="Session expiry time")
+    last_active_at: datetime = Field(..., description="Last active time")
+    is_2fa_verified: bool = Field(
+        False, description="Whether 2FA was completed"
+    )
+    user_id: UUID4 = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    role: UserRole = Field(..., description="User role")
+    estate_id: Optional[UUID4] = Field(None, description="Estate ID")
+
+    @field_serializer("session_id")
+    def serialize_session_id(self, value: UUID4) -> str:
+        return str(value)
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: Optional[UUID4]) -> Optional[str]:
+        return str(value) if value else None
+
+    model_config = model_config

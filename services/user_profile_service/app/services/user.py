@@ -74,6 +74,25 @@ class UserService:
         self.household_repository = household_repository
         self.admin_repository = admin_repository
 
+    # --- private helpers ---
+
+    def _get_fernet(self) -> Fernet:
+        from app.core.config import settings
+
+        key = settings.TOTP_ENCRYPTION_KEY
+        if not key:
+            raise HTTPException(
+                status_code=500,
+                detail="TOTP encryption key not configured.",
+            )
+        return Fernet(key.encode())
+
+    def _encrypt_secret(self, secret: str) -> str:
+        return self._get_fernet().encrypt(secret.encode()).decode()
+
+    def _decrypt_secret(self, encrypted: str) -> str:
+        return self._get_fernet().decrypt(encrypted.encode()).decode()
+
     async def register_user(
         self, request: RegisterUserRequest
     ) -> tuple[RegisterUserResponse, str]:
@@ -947,33 +966,21 @@ class UserService:
         return await self.admin_repository.update_admin_record(admin_id, data)
 
     # ------------------------------------------------------------------
-    # 2FA helpers
+    # 2FA methods
     # ------------------------------------------------------------------
-
-    def _get_fernet(self) -> Fernet:
-        from app.core.config import settings
-
-        key = settings.TOTP_ENCRYPTION_KEY
-        if not key:
-            raise HTTPException(
-                status_code=500,
-                detail="TOTP encryption key not configured.",
-            )
-        return Fernet(key.encode())
-
-    def _encrypt_secret(self, secret: str) -> str:
-        return self._get_fernet().encrypt(secret.encode()).decode()
-
-    def _decrypt_secret(self, encrypted: str) -> str:
-        return self._get_fernet().decrypt(encrypted.encode()).decode()
 
     async def setup_2fa(self, user_id: str) -> dict:
         """
         Generates a new TOTP secret, encrypts it, saves it to the user
         (totp_enabled stays False), and returns the provisioning URI + secret.
         """
-        user = await self.repository.get_user_by_id(user_id)
-        if not user or user.is_deleted:
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
         secret = pyotp.random_base32()
@@ -997,8 +1004,13 @@ class UserService:
         sets totp_enabled=True, and generates 8 recovery codes.
         Returns the plaintext recovery codes (shown once).
         """
-        user = await self.repository.get_user_by_id(user_id)
-        if not user or user.is_deleted:
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
         if not user.totp_secret:
             raise HTTPException(
@@ -1014,9 +1026,16 @@ class UserService:
         if not totp.verify(code, valid_window=1):
             raise HTTPException(status_code=401, detail="Invalid TOTP code.")
 
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
         url = f"{self.repository.users_endpoint}/{user_id}"
         await self.repository.client.async_patch(
-            url, json_data={"totp_enabled": True}
+            url,
+            json_data={
+                "totp_enabled": True,
+                "last_2fa_verified_at": now.isoformat(),
+            },
         )
 
         # Generate 8 recovery codes
@@ -1041,8 +1060,13 @@ class UserService:
         Verifies the TOTP code, clears totp_secret/totp_enabled, and
         soft-deletes all recovery codes for the user.
         """
-        user = await self.repository.get_user_by_id(user_id)
-        if not user or user.is_deleted:
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
         if not user.totp_enabled:
             raise HTTPException(status_code=400, detail="2FA is not enabled.")
@@ -1063,7 +1087,12 @@ class UserService:
         Verifies a TOTP code for an already-enabled user.
         Returns True if valid, False otherwise. Does not raise on failure.
         """
-        user = await self.repository.get_user_by_id(user_id)
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
         if not user or not user.totp_enabled or not user.totp_secret:
             return False
         plain_secret = self._decrypt_secret(user.totp_secret)
@@ -1084,8 +1113,13 @@ class UserService:
                 status_code=400, detail="Invalid or expired 2FA token."
             )
 
-        user = await self.repository.get_user_by_id(str(user_id))
-        if not user or user.is_deleted:
+        try:
+            user = await self.repository.get_user_by_id(str(user_id))
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
         # Find an unused recovery code that matches
@@ -1134,8 +1168,13 @@ class UserService:
         Verifies TOTP code, soft-deletes existing recovery codes,
         and generates 8 new ones.
         """
-        user = await self.repository.get_user_by_id(user_id)
-        if not user or user.is_deleted:
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
         if not user.totp_enabled:
             raise HTTPException(status_code=400, detail="2FA is not enabled.")

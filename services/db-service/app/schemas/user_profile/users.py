@@ -112,6 +112,10 @@ class UserBase(BaseModel):
     totp_enabled: bool | None = Field(
         default=False, description="Whether TOTP 2FA is active"
     )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
+    )
 
     model_config = model_config
 
@@ -221,6 +225,10 @@ class UpdateRequest(BaseModel):
     )
     totp_enabled: bool | None = Field(
         default=None, description="Whether TOTP 2FA is active"
+    )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
     )
 
     model_config = model_config
