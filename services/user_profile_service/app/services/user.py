@@ -1,6 +1,8 @@
+import logging
 import secrets
 from typing import List, Optional
 
+import httpx
 import pyotp
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
@@ -42,6 +44,32 @@ from app.libs.password_utils import (
     hash_password,
 )
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+
+def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
+    """Log the underlying db-service error; caller still returns 503 to clients."""
+    status_code = None
+    if isinstance(exc, HTTPException):
+        status_code = exc.status_code
+    elif isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+
+    if status_code == 404:
+        logger.error("User not found while fetching user_id=%s", user_id)
+    elif status_code == 500:
+        logger.error(
+            "Internal server error while fetching user_id=%s", user_id
+        )
+    else:
+        logger.error(
+            "Failed to fetch user_id=%s (status_code=%s): %s",
+            user_id,
+            status_code,
+            exc,
+            exc_info=True,
+        )
 
 
 class UserService:
@@ -1006,7 +1034,8 @@ class UserService:
         """
         try:
             user = await self.repository.get_user_by_id(user_id)
-        except Exception:
+        except Exception as exc:
+            _log_user_fetch_exception(user_id, exc)
             raise HTTPException(
                 status_code=503, detail="Service temporarily unavailable."
             )
