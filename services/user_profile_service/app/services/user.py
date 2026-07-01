@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 
 
 def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
-    """Log the underlying db-service error; caller still returns 503 to clients."""
+    """Log the underlying db-service error; caller still returns 503 to
+    clients."""
     status_code = None
     if isinstance(exc, HTTPException):
         status_code = exc.status_code

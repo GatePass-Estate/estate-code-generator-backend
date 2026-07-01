@@ -10,7 +10,7 @@ ENV POETRY_VERSION=2.0.0
 WORKDIR /src/service
 
 # Copy the shared package so path deps resolve during poetry lock
-COPY services/shared /src/shared/
+COPY shared/gatepass_auth /shared/gatepass_auth/
 
 COPY services/ai_service/pyproject.toml services/ai_service/poetry.lock services/ai_service/README.md /src/service/
 
