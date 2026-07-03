@@ -1,4 +1,12 @@
-from typing import Optional
+import logging
+import secrets
+from typing import List, Optional
+
+import httpx
+import pyotp
+from cryptography.fernet import Fernet
+from passlib.context import CryptContext
+
 from app.schemas.user import (
     RegisterUserRequest,
     RegisterUserResponse,
@@ -29,12 +37,40 @@ from app.services.token import (
     generate_password_reset_token,
     decode_password_reset_token,
     decode_tos_pending_token,
+    decode_2fa_pending_token,
 )
 from app.libs.password_utils import (
     generate_random_password,
     hash_password,
 )
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+
+def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
+    """Log the underlying db-service error; caller still returns 503 to
+    clients."""
+    status_code = None
+    if isinstance(exc, HTTPException):
+        status_code = exc.status_code
+    elif isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+
+    if status_code == 404:
+        logger.error("User not found while fetching user_id=%s", user_id)
+    elif status_code == 500:
+        logger.error(
+            "Internal server error while fetching user_id=%s", user_id
+        )
+    else:
+        logger.error(
+            "Failed to fetch user_id=%s (status_code=%s): %s",
+            user_id,
+            status_code,
+            exc,
+            exc_info=True,
+        )
 
 
 class UserService:
@@ -66,6 +102,25 @@ class UserService:
         self.estate_repository = estate_repository
         self.household_repository = household_repository
         self.admin_repository = admin_repository
+
+    # --- private helpers ---
+
+    def _get_fernet(self) -> Fernet:
+        from app.core.config import settings
+
+        key = settings.TOTP_ENCRYPTION_KEY
+        if not key:
+            raise HTTPException(
+                status_code=500,
+                detail="TOTP encryption key not configured.",
+            )
+        return Fernet(key.encode())
+
+    def _encrypt_secret(self, secret: str) -> str:
+        return self._get_fernet().encrypt(secret.encode()).decode()
+
+    def _decrypt_secret(self, encrypted: str) -> str:
+        return self._get_fernet().decrypt(encrypted.encode()).decode()
 
     async def register_user(
         self, request: RegisterUserRequest
@@ -938,6 +993,240 @@ class UserService:
         Updates an admin record.
         """
         return await self.admin_repository.update_admin_record(admin_id, data)
+
+    # ------------------------------------------------------------------
+    # 2FA methods
+    # ------------------------------------------------------------------
+
+    async def setup_2fa(self, user_id: str) -> dict:
+        """
+        Generates a new TOTP secret, encrypts it, saves it to the user
+        (totp_enabled stays False), and returns the provisioning URI + secret.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        secret = pyotp.random_base32()
+        encrypted = self._encrypt_secret(secret)
+
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url, json_data={"totp_secret": encrypted, "totp_enabled": False}
+        )
+
+        provisioning_uri = pyotp.totp.TOTP(secret).provisioning_uri(
+            name=user.email, issuer_name="GatePass"
+        )
+        return {"provisioning_uri": provisioning_uri, "secret": secret}
+
+    async def enable_2fa(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> List[str]:
+        """
+        Verifies the TOTP code against the stored (unconfirmed) secret,
+        sets totp_enabled=True, and generates 8 recovery codes.
+        Returns the plaintext recovery codes (shown once).
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception as exc:
+            _log_user_fetch_exception(user_id, exc)
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_secret:
+            raise HTTPException(
+                status_code=400, detail="2FA setup not initiated."
+            )
+        if user.totp_enabled:
+            raise HTTPException(
+                status_code=400, detail="2FA is already enabled."
+            )
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        totp = pyotp.TOTP(plain_secret)
+        if not totp.verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url,
+            json_data={
+                "totp_enabled": True,
+                "last_2fa_verified_at": now.isoformat(),
+            },
+        )
+
+        # Generate 8 recovery codes
+        recovery_codes = [
+            f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}"
+            for _ in range(8)
+        ]
+
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        for code_plain in recovery_codes:
+            await totp_recovery_repo.create_recovery_code(
+                user_id=user_id,
+                code_hash=bcrypt_ctx.hash(code_plain),
+            )
+
+        return recovery_codes
+
+    async def disable_2fa(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> None:
+        """
+        Verifies the TOTP code, clears totp_secret/totp_enabled, and
+        soft-deletes all recovery codes for the user.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_enabled:
+            raise HTTPException(status_code=400, detail="2FA is not enabled.")
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        if not pyotp.TOTP(plain_secret).verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url,
+            json_data={"totp_enabled": False, "totp_secret": None},
+        )
+        await totp_recovery_repo.delete_all_for_user(user_id)
+
+    async def verify_totp_code(self, user_id: str, code: str) -> bool:
+        """
+        Verifies a TOTP code for an already-enabled user.
+        Returns True if valid, False otherwise. Does not raise on failure.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user or not user.totp_enabled or not user.totp_secret:
+            return False
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        return pyotp.TOTP(plain_secret).verify(code, valid_window=1)
+
+    async def recover_with_code(
+        self, two_fa_token: str, recovery_code: str, totp_recovery_repo
+    ) -> dict:
+        """
+        Authenticates using a one-time recovery code.
+        Marks the code as used and disables 2FA entirely.
+        Returns user dict for token generation.
+        """
+        try:
+            user_id = decode_2fa_pending_token(two_fa_token)
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail="Invalid or expired 2FA token."
+            )
+
+        try:
+            user = await self.repository.get_user_by_id(str(user_id))
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Find an unused recovery code that matches
+        result = await totp_recovery_repo.search_recovery_codes(
+            user_id=str(user_id), is_used=False
+        )
+        codes = result.get("items", [])
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        matched = None
+        for record in codes:
+            if bcrypt_ctx.verify(recovery_code, record["code_hash"]):
+                matched = record
+                break
+
+        if not matched:
+            raise HTTPException(
+                status_code=401, detail="Invalid recovery code."
+            )
+
+        # Mark code as used
+        from datetime import datetime, timezone
+
+        await totp_recovery_repo.mark_code_used(
+            matched["id"],
+            datetime.now(timezone.utc).isoformat(),
+        )
+
+        # Disable 2FA
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url, json_data={"totp_enabled": False, "totp_secret": None}
+        )
+
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "estate_id": str(user.estate_id) if user.estate_id else None,
+            "tos_accepted_version": user.tos_accepted_version,
+        }
+
+    async def regenerate_recovery_codes(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> List[str]:
+        """
+        Verifies TOTP code, soft-deletes existing recovery codes,
+        and generates 8 new ones.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_enabled:
+            raise HTTPException(status_code=400, detail="2FA is not enabled.")
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        if not pyotp.TOTP(plain_secret).verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        await totp_recovery_repo.delete_all_for_user(user_id)
+
+        recovery_codes = [
+            f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}"
+            for _ in range(8)
+        ]
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        for code_plain in recovery_codes:
+            await totp_recovery_repo.create_recovery_code(
+                user_id=user_id,
+                code_hash=bcrypt_ctx.hash(code_plain),
+            )
+
+        return recovery_codes
 
     async def close_account(self, user_id: str) -> DeleteUserResponse:
         """

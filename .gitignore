@@ -184,3 +184,7 @@ gatepass-ingress.yaml
 Note.txt
 infra/DB_Note.txt
 k8s-services-snapshot.csv
+
+# docs
+docs/
+.cursor/

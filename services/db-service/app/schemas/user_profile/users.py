@@ -106,6 +106,16 @@ class UserBase(BaseModel):
     tos_accepted_version: str | None = Field(
         default=None, description="TOS version the user has accepted"
     )
+    totp_secret: str | None = Field(
+        default=None, description="Fernet-encrypted TOTP secret"
+    )
+    totp_enabled: bool | None = Field(
+        default=False, description="Whether TOTP 2FA is active"
+    )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
+    )
 
     model_config = model_config
 
@@ -209,6 +219,16 @@ class UpdateRequest(BaseModel):
     )
     tos_accepted_version: str | None = Field(
         default=None, description="TOS version the user has accepted"
+    )
+    totp_secret: str | None = Field(
+        default=None, description="Fernet-encrypted TOTP secret"
+    )
+    totp_enabled: bool | None = Field(
+        default=None, description="Whether TOTP 2FA is active"
+    )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
     )
 
     model_config = model_config
