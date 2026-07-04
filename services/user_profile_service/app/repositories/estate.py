@@ -161,6 +161,7 @@ class EstateRepository:
             country=response.get("country"),
             postal_code=response.get("postal_code"),
             primary_admin_id=response.get("primary_admin_id"),
+            estate_type=response.get("estate_type"),
             created_at=response["created_at"],
             updated_at=response["updated_at"],
             is_deleted=response["is_deleted"],

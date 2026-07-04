@@ -34,6 +34,13 @@ class Settings(BaseSettings):
         os.getenv("TWO_FA_FORCE_REAUTH_DAYS", 60)
     )
 
+    # Notification service
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    FRONTEND_BASE_URL: str = os.getenv(
+        "FRONTEND_BASE_URL", "https://app.gatepassng.com"
+    )
+
     # Email / SMTP configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")

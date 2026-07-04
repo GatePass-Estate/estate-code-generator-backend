@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from app.libs.notify import fire_notify
 
 from app.schemas.request import (
     CreateEditRequestRequest,
@@ -29,6 +32,7 @@ router = APIRouter()
 @router.post("/edit", response_model=CreateEditRequestResponse)
 async def create_edit_request(
     request: CreateEditRequestRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -38,12 +42,39 @@ async def create_edit_request(
     Admins: Auto-approves and applies change immediately.
     """
     user_id = current_user["id"]
+    user_role = current_user["role"]
 
     repository = RequestRepository(ahttp_client)
     user_repository = UserRepository(ahttp_client)
     service = RequestService(repository, user_repository)
 
-    return await service.create_edit_request(request, user_id)
+    result = await service.create_edit_request(request, user_id)
+
+    # Notify estate admins when a resident files a pending request
+    if user_role == "resident":
+        estate_id = current_user.get("estate_id")
+        if estate_id:
+            background_tasks.add_task(
+                fire_notify,
+                {
+                    "type": "EDIT_REQUEST_PENDING",
+                    "title": "New edit request",
+                    "body": "A resident has submitted a profile edit request.",
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["admin", "primary_admin"],
+                    },
+                    "metadata": {
+                        "request_id": str(result.id),
+                        "request_type": request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else str(request.request_type),
+                        "requester_name": user_id,
+                    },
+                },
+            )
+
+    return result
 
 
 @router.get("/edit/me", response_model=ListEditRequestResponse)
@@ -243,6 +274,7 @@ async def delete_pending_request(
 async def update_request_status(
     request_id: str,
     request: UpdateRequestStatusRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -267,6 +299,40 @@ async def update_request_status(
     user_repository = UserRepository(ahttp_client)
     service = RequestService(repository, user_repository)
 
-    return await service.update_request_status(
+    # Fetch request data first to get the resident's ID for notification
+    edit_request = await repository.get_request_by_id(request_id)
+
+    result = await service.update_request_status(
         request_id, request, reviewer_id, reviewer_role
     )
+
+    if edit_request:
+        resident_id = str(edit_request.resident_id)
+        review_status = (
+            request.status.value
+            if hasattr(request.status, "value")
+            else str(request.status)
+        )
+        request_type = (
+            edit_request.request_type.value
+            if hasattr(edit_request.request_type, "value")
+            else str(edit_request.request_type)
+        )
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "EDIT_REQUEST_REVIEWED",
+                "title": "Edit request reviewed",
+                "body": (
+                    f"Your profile edit request has been {review_status}."
+                ),
+                "recipient_user_ids": [resident_id],
+                "metadata": {
+                    "request_id": request_id,
+                    "request_type": request_type,
+                    "review_status": review_status,
+                },
+            },
+        )
+
+    return result

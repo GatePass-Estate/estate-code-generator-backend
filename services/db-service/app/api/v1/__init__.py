@@ -40,6 +40,9 @@ from app.api.v1.endpoints.user_profile.role_permission import (
 from app.api.v1.endpoints.user_profile.sessions import (
     router as sessions_router,
 )
+from app.api.v1.endpoints.user_profile.notifications import (
+    router as notifications_router,
+)
 from app.api.v1.endpoints.user_profile.totp_recovery_codes import (
     router as totprecoverycodes_router,
 )
@@ -141,4 +144,10 @@ api_router.include_router(
     totprecoverycodes_router,
     prefix="/userprofile/totprecoverycodes",
     tags=["TotpRecoveryCodes"],
+)
+
+api_router.include_router(
+    notifications_router,
+    prefix="/notifications",
+    tags=["Notifications"],
 )

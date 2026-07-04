@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
-from app.schemas.user import Role
-from app.libs.http_handler import get_http_handler, AsyncHttpHandler
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify
 from app.libs.role_permissions import check_permission
+from app.schemas.user import Role
 from app.repositories.user import UserRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.household import HouseholdRepository
@@ -17,6 +19,7 @@ router = APIRouter()
 @router.post("/promote")
 async def promote_user_to_admin(
     user_id: str,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
@@ -118,10 +121,22 @@ async def promote_user_to_admin(
         }
     )
 
+    estate_id = str(user_to_promote.estate_id)
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "ROLE_PROMOTED",
+            "title": "Your role has been updated",
+            "body": "You have been promoted to admin.",
+            "recipient_user_ids": [user_id],
+            "metadata": {"new_role": "admin", "estate_id": estate_id},
+        },
+    )
+
     return {
         "user_id": user_id,
         "role": "admin",
-        "estate_id": str(user_to_promote.estate_id),
+        "estate_id": estate_id,
         "message": "User successfully promoted to admin.",
     }
 
@@ -129,6 +144,7 @@ async def promote_user_to_admin(
 @router.post("/demote")
 async def demote_admin_to_resident(
     user_id: str,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
@@ -227,9 +243,21 @@ async def demote_admin_to_resident(
     admin_record = await admin_service.get_admin_from_user_id(user_id)
     await admin_repository.delete_admin_record(admin_record["id"])
 
+    estate_id = str(user_to_demote.estate_id)
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "ROLE_DEMOTED",
+            "title": "Your role has been updated",
+            "body": "Your admin role has been removed.",
+            "recipient_user_ids": [user_id],
+            "metadata": {"new_role": "resident", "estate_id": estate_id},
+        },
+    )
+
     return {
         "user_id": user_id,
         "role": "resident",
-        "estate_id": str(user_to_demote.estate_id),
+        "estate_id": estate_id,
         "message": "Admin successfully demoted to resident.",
     }

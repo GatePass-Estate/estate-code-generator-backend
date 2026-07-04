@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -5,6 +6,7 @@ import jwt
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
 from gatepass_auth import get_current_user  # noqa: F401
@@ -106,6 +108,17 @@ class AuthService:
                 is_2fa_verified=True,
             )
         else:
+            # Check whether this IP has been seen before for non-2FA users
+            familiar_cutoff = datetime.now(timezone.utc) - timedelta(
+                days=settings.TWO_FA_FAMILIAR_IP_DAYS
+            )
+            familiar = await self.session_repo.search_sessions(
+                user_id=str(user["id"]),
+                ip_address=ip,
+                last_active_after=familiar_cutoff,
+            )
+            is_new_device = not familiar.get("items")
+
             session = await self.session_repo.create_session(
                 user_id=str(user["id"]),
                 ip_address=ip,
@@ -113,6 +126,26 @@ class AuthService:
                 expires_at=session_expires_at(),
                 is_2fa_verified=False,
             )
+
+            if is_new_device:
+                asyncio.create_task(
+                    fire_notify(
+                        {
+                            "type": "LOGIN_NEW_DEVICE",
+                            "title": "New device login",
+                            "body": (
+                                "Your account was accessed from a "
+                                "new device or location."
+                            ),
+                            "recipient_user_ids": [str(user["id"])],
+                            "metadata": {
+                                "ip_address": ip or "",
+                                "device_name": device,
+                                "session_id": session.get("id", ""),
+                            },
+                        }
+                    )
+                )
 
         from app.schemas.auth import LoginResponse
 
@@ -127,7 +160,10 @@ class AuthService:
 
         token = generate_access_token(user, session["id"])
         return LoginResponse(
-            success=True, role=user["role"], access_token=token
+            success=True,
+            role=user["role"],
+            access_token=token,
+            session_id=session["id"],
         )
 
     async def verify_2fa(
@@ -191,7 +227,10 @@ class AuthService:
 
         token = generate_access_token(user_dict, session["id"])
         return LoginResponse(
-            success=True, role=user_dict["role"], access_token=token
+            success=True,
+            role=user_dict["role"],
+            access_token=token,
+            session_id=session["id"],
         )
 
     async def recover_2fa(
@@ -235,7 +274,10 @@ class AuthService:
 
         token = generate_access_token(user_dict, session["id"])
         return LoginResponse(
-            success=True, role=user_dict["role"], access_token=token
+            success=True,
+            role=user_dict["role"],
+            access_token=token,
+            session_id=session["id"],
         )
 
     async def accept_tos(
@@ -263,6 +305,7 @@ class AuthService:
             role=user["role"],
             access_token=token,
             requires_tos_acceptance=False,
+            session_id=session["id"],
         )
 
     # ------------------------------------------------------------------

@@ -824,7 +824,7 @@ class UserService:
             )
 
         token = generate_email_token(str(user.id))
-        return user.email, user.first_name, token
+        return str(user.id), token
 
     async def forgot_password(
         self, email: str, estate_id: Optional[str] = None
@@ -856,7 +856,7 @@ class UserService:
             return None
 
         token = generate_password_reset_token(str(user.id))
-        return user.email, user.first_name, token
+        return str(user.id), token
 
     async def verify_password_reset_token(
         self, token: str

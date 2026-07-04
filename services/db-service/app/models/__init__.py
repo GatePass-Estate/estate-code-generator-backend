@@ -15,6 +15,11 @@ from app.models.user_profile.household import Household
 from app.models.user_profile.requests import Requests
 from app.models.user_profile.resident_departure_log import ResidentDepartureLog
 from app.models.user_profile.role_permission import RolePermission
+from app.models.user_profile.notifications import (
+    DeviceTokens,
+    NotificationPreferences,
+    Notifications,
+)
 from app.models.user_profile.sessions import Sessions
 from app.models.user_profile.totp_recovery_codes import TotpRecoveryCodes
 
@@ -39,4 +44,7 @@ __all__ = [
     "Requests",
     "Sessions",
     "TotpRecoveryCodes",
+    "Notifications",
+    "DeviceTokens",
+    "NotificationPreferences",
 ]

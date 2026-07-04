@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "user-profile-service"
+name = "notification-service"
 version = "0.1.0"
 description = ""
 authors = ["Chibueze Louis <chibuezelouis@gmail.com>"]
@@ -12,24 +12,18 @@ gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
 fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = {extras = ["email"], version = "^2.11.4"}
-asyncpg = "^0.30.0"
-databases = "^0.9.0"
 pydantic-settings = "^2.6.1"
-load-dotenv = "^0.1.0"
-pyjwt = "^2.9.0"
 httpx = "^0.28.1"
-protobuf = "^5.29.1"
-passlib = {extras = ["bcrypt"], version = "^1.7.4"}
-bcrypt = "<4.0.0"
-pyotp = "^2.10.0"
-cryptography = "^49.0.0"
+pyjwt = "^2.9.0"
+firebase-admin = "^6.5.0"
+fastapi-mail = "^1.6.5"
+load-dotenv = "^0.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
 pytest-asyncio = "^0.24.0"
 pytest-cov = "^6.0.0"
 pytest-mock = "^3.14.0"
-pytest-dependency = "^0.6.0"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"

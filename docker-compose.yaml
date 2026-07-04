@@ -52,11 +52,38 @@ services:
     ports:
       - "9031:9031"
 
+  notification-service:
+    container_name: notification-service
+    depends_on:
+      - db-service
+    build:
+      context: .
+      dockerfile: services/notification_service/Dockerfile
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9035",
+        "--reload",
+      ]
+    volumes:
+      - ./services/notification_service/app:/src/service/app
+      - ./shared/gatepass_auth:/shared/gatepass_auth
+    env_file:
+      - ./services/notification_service/.env.secrets
+      - ./services/notification_service/.env.localdocker
+    ports:
+      - "9035:9035"
+
   code-service:
     container_name: code-service
     depends_on:
       - cache-service
       - db-service
+      - notification-service
     build:
       context: .
       dockerfile: services/code_service/Dockerfile
@@ -83,6 +110,7 @@ services:
     container_name: user-profile-service
     depends_on:
       - db-service
+      - notification-service
     build:
       context: .
       dockerfile: services/user_profile_service/Dockerfile
