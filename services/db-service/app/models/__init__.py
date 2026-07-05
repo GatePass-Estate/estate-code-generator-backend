@@ -17,6 +17,7 @@ from app.models.user_profile.resident_departure_log import ResidentDepartureLog
 from app.models.user_profile.role_permission import RolePermission
 from app.models.user_profile.sessions import Sessions
 from app.models.user_profile.totp_recovery_codes import TotpRecoveryCodes
+from app.models.user_profile.user_documents import UserDocuments
 
 # User Profile Service Models
 from app.models.user_profile.users import Users
@@ -39,4 +40,5 @@ __all__ = [
     "Requests",
     "Sessions",
     "TotpRecoveryCodes",
+    "UserDocuments",
 ]

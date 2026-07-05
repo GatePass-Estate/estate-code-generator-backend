@@ -40,3 +40,11 @@ class RolePermission(BaseModelDB):
     can_remove_admin = Column(Boolean, default=False)
     can_transfer_admin = Column(Boolean, default=False)
     can_add_household_member = Column(Boolean, default=False)
+    can_view_other_user_documents = Column(Boolean, default=False)
+    can_view_other_user_documents_in_other_estate = Column(
+        Boolean, default=False
+    )
+    can_download_other_user_documents = Column(Boolean, default=False)
+    can_download_other_user_documents_in_other_estate = Column(
+        Boolean, default=False
+    )
