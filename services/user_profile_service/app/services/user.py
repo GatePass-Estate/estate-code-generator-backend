@@ -1283,4 +1283,16 @@ class UserService:
             except HTTPException:
                 pass
 
+        try:
+            from app.repositories.user_documents import UserDocumentsRepository
+
+            docs_repo = UserDocumentsRepository(self.repository.client)
+            await docs_repo.delete_all_for_user(user_id)
+        except HTTPException:
+            pass
+        except Exception:
+            logger.exception(
+                "Failed to delete user documents for user %s", user_id
+            )
+
         return await self.repository.delete_user(user_id)

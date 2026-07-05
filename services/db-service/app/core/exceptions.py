@@ -14,3 +14,9 @@ class ValidationError(Exception):
     """Exception raised when a validation error occurs."""
 
     pass
+
+
+class DocumentValidationError(Exception):
+    """Raised when an uploaded document fails validation."""
+
+    pass

@@ -43,6 +43,9 @@ from app.api.v1.endpoints.user_profile.sessions import (
 from app.api.v1.endpoints.user_profile.totp_recovery_codes import (
     router as totprecoverycodes_router,
 )
+from app.api.v1.endpoints.user_profile.user_documents import (
+    router as userdocuments_router,
+)
 from app.api.v1.endpoints.user_profile.users import router as users_router
 
 api_router = APIRouter()
@@ -141,4 +144,10 @@ api_router.include_router(
     totprecoverycodes_router,
     prefix="/userprofile/totprecoverycodes",
     tags=["TotpRecoveryCodes"],
+)
+
+api_router.include_router(
+    userdocuments_router,
+    prefix="/userprofile/userdocuments",
+    tags=["UserDocuments"],
 )
