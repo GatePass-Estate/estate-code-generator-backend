@@ -1,3 +1,5 @@
+"""HTTP client for db-service user document endpoints."""
+
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -16,10 +18,13 @@ _STREAM_TIMEOUT_SECONDS = 60.0
 
 @dataclass
 class DocumentStream:
+    """Open streaming response from db-service plus its HTTP client."""
+
     response: httpx.Response
     client: httpx.AsyncClient
 
     async def close(self) -> None:
+        """Close the streaming response and underlying HTTP client."""
         await self.response.aclose()
         await self.client.aclose()
 
@@ -28,6 +33,7 @@ class UserDocumentsRepository:
     """HTTP client to db-service user document endpoints."""
 
     def __init__(self, http_client: AsyncHttpHandler) -> None:
+        """Configure the db-service user documents base URL."""
         self.client = http_client
         self.base_url = settings.DB_SERVICE_URL
         self.endpoint = f"{self.base_url}api/v1/userprofile/userdocuments"
@@ -42,6 +48,7 @@ class UserDocumentsRepository:
         estate_id: str,
         document_type: str,
     ) -> dict[str, Any]:
+        """Multipart upload to db-service and return the JSON response."""
         files = {
             "file": (
                 filename or "upload",
@@ -85,6 +92,7 @@ class UserDocumentsRepository:
     async def get_active_by_user_and_type(
         self, user_id: str, document_type: str
     ) -> dict[str, Any] | None:
+        """Fetch the active document metadata row for a user and type."""
         params = urlencode(
             {
                 "user_id": user_id,
@@ -106,6 +114,7 @@ class UserDocumentsRepository:
     async def search_by_user(
         self, user_id: str, page: int = 1, limit: int = 20
     ) -> dict[str, Any]:
+        """Search document metadata rows for a user."""
         params = urlencode({"user_id": user_id, "page": page, "limit": limit})
         url = f"{self.endpoint}/search?{params}"
         response = await self.client.async_get(url)
@@ -119,6 +128,7 @@ class UserDocumentsRepository:
     async def stream_from_db_service(
         self, user_id: str, document_type: str
     ) -> DocumentStream:
+        """Open a streaming GET to db-service for document bytes."""
         url = f"{self.endpoint}/{user_id}/{document_type}/stream"
         http_client = httpx.AsyncClient(timeout=_STREAM_TIMEOUT_SECONDS)
         try:
@@ -148,6 +158,7 @@ class UserDocumentsRepository:
             ) from e
 
     async def delete_all_for_user(self, user_id: str) -> dict[str, Any] | None:
+        """Delete all documents for a user via db-service."""
         url = f"{self.endpoint}/user/{user_id}"
         response = await self.client.async_delete(url)
         return response

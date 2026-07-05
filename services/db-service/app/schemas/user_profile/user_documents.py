@@ -34,6 +34,8 @@ class DocumentType(StrEnum):
 
 
 class UserDocumentBase(BaseModel):
+    """Shared metadata fields for a user document record."""
+
     user_id: UUID4 = Field(..., description="Document owner user ID")
     estate_id: UUID4 = Field(..., description="Estate ID (denormalized)")
     document_type: DocumentType = Field(..., description="Document type")
@@ -59,6 +61,8 @@ class CreateRequest(UserDocumentBase):
 
 
 class CreateResponse(BaseModel):
+    """Response model after creating a user document metadata row."""
+
     id: UUID4 = Field(..., description="Unique identifier")
     created_at: datetime = Field(..., description="Creation timestamp")
 
@@ -70,6 +74,8 @@ class CreateResponse(BaseModel):
 
 
 class UpdateRequest(BaseModel):
+    """Partial update payload for user document metadata."""
+
     gcs_object_path: str | None = None
     content_type: str | None = None
     file_size_bytes: int | None = None
@@ -79,10 +85,14 @@ class UpdateRequest(BaseModel):
 
 
 class UpdateResponse(CreateResponse):
+    """Response model after updating a user document metadata row."""
+
     updated_at: datetime = Field(..., description="Last updated timestamp")
 
 
 class DeleteResponse(BaseModel):
+    """Soft-delete confirmation for a user document row."""
+
     is_deleted: bool = Field(default=True)
     deleted_at: datetime = Field(..., description="UTC timestamp of deletion")
     model_config = model_config
@@ -93,6 +103,8 @@ class GetResponse(SharedModel, UserDocumentBase):
 
 
 class SearchRequest(BaseSearchRequest):
+    """Search filters for listing user document metadata."""
+
     user_id: UUID4 | None = None
     estate_id: UUID4 | None = None
     document_type: DocumentType | None = None
@@ -100,12 +112,16 @@ class SearchRequest(BaseSearchRequest):
 
 
 class ListResponse(BaseListResponse):
+    """Paginated list of user document metadata records."""
+
     items: List[GetResponse] = Field(
         ..., description="List of user document records"
     )
 
 
 class UploadResponse(BaseModel):
+    """Response returned after a successful multipart upload."""
+
     document_type: DocumentType
     content_type: str
     file_size_bytes: int
@@ -120,6 +136,8 @@ class UploadResponse(BaseModel):
 
 
 class DeleteAllForUserResponse(BaseModel):
+    """Summary of account-closure document cleanup for one user."""
+
     deleted_count: int = Field(
         ..., description="Number of document rows soft-deleted"
     )

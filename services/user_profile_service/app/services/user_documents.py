@@ -1,3 +1,5 @@
+"""BFF service for user documents: RBAC in UPS, storage in db-service."""
+
 import logging
 from typing import Any, Literal
 
@@ -33,13 +35,16 @@ class UserDocumentsService:
         repository: UserDocumentsRepository,
         user_repository: UserRepository,
     ) -> None:
+        """Wire HTTP repositories for documents and user lookup."""
         self.repository = repository
         self.user_repository = user_repository
 
     async def _get_permissions(self, role: str) -> dict[str, Any]:
+        """Load RBAC flags for the requester's role."""
         return await self.user_repository.get_role_permissions(role)
 
     async def _resolve_target_user(self, target_user_id: str):
+        """Fetch the target user or raise 404 when missing or deleted."""
         target_user = await self.user_repository.get_user_by_id(target_user_id)
         if target_user is None or target_user.is_deleted:
             raise HTTPException(
@@ -48,9 +53,11 @@ class UserDocumentsService:
         return target_user
 
     def _view_url(self, owner_id: str, document_type: str) -> str:
+        """Build the UPS view URL for a document."""
         return f"{_DOCUMENTS_BASE}/{owner_id}/{document_type}/view"
 
     def _download_url(self, owner_id: str, document_type: str) -> str:
+        """Build the UPS download URL for a document."""
         return f"{_DOCUMENTS_BASE}/{owner_id}/{document_type}/download"
 
     async def upload(
@@ -59,6 +66,7 @@ class UserDocumentsService:
         file: UploadFile,
         document_type: str,
     ) -> UploadDocumentResponse:
+        """Validate and upload a document for the authenticated user."""
         if not can_upload(requester):
             raise HTTPException(
                 status_code=403, detail="Not allowed to upload"
@@ -107,6 +115,7 @@ class UserDocumentsService:
         requester: dict[str, Any],
         target_user_id: str,
     ) -> UserDocumentsMetadataResponse:
+        """Return document metadata and URLs when the requester may view."""
         target_user = await self._resolve_target_user(target_user_id)
         permissions = await self._get_permissions(requester["role"])
 
@@ -137,6 +146,7 @@ class UserDocumentsService:
         *,
         disposition: Literal["inline", "attachment"],
     ) -> dict[str, Any]:
+        """Stream a document from db-service after RBAC and metadata checks."""
         target_user = await self._resolve_target_user(target_user_id)
         permissions = await self._get_permissions(requester["role"])
 
@@ -182,4 +192,5 @@ class UserDocumentsService:
         }
 
     async def delete_all_for_user(self, user_id: str) -> None:
+        """Delete all documents for a user (account closure hook)."""
         await self.repository.delete_all_for_user(user_id)

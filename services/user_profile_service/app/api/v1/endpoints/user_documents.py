@@ -1,3 +1,5 @@
+"""JWT-protected API for user document upload, metadata, and streaming."""
+
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -21,6 +23,7 @@ router = APIRouter()
 def get_documents_service(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ) -> UserDocumentsService:
+    """Return a UserDocumentsService wired to db-service and user repos."""
     return UserDocumentsService(
         repository=UserDocumentsRepository(ahttp_client),
         user_repository=UserRepository(ahttp_client),
@@ -34,6 +37,7 @@ async def upload_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UploadDocumentResponse:
+    """Upload a document for the authenticated user."""
     return await service.upload(current_user, file, document_type)
 
 
@@ -42,6 +46,7 @@ async def get_my_documents(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UserDocumentsMetadataResponse:
+    """Return document metadata for the authenticated user."""
     return await service.get_metadata(current_user, str(current_user["id"]))
 
 
@@ -51,6 +56,7 @@ async def view_my_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ):
+    """Stream the authenticated user's document inline in the browser."""
     result = await service.stream_document(
         requester=current_user,
         target_user_id=str(current_user["id"]),
@@ -73,6 +79,7 @@ async def download_my_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ):
+    """Download the authenticated user's document as an attachment."""
     result = await service.stream_document(
         requester=current_user,
         target_user_id=str(current_user["id"]),
@@ -97,6 +104,7 @@ async def get_user_documents(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UserDocumentsMetadataResponse:
+    """Return document metadata for another user when RBAC allows."""
     return await service.get_metadata(current_user, user_id)
 
 
@@ -107,6 +115,7 @@ async def view_user_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ):
+    """Stream another user's document inline when RBAC allows."""
     result = await service.stream_document(
         requester=current_user,
         target_user_id=user_id,
@@ -130,6 +139,7 @@ async def download_user_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ):
+    """Download another user's document when RBAC allows."""
     result = await service.stream_document(
         requester=current_user,
         target_user_id=user_id,

@@ -6,12 +6,14 @@ from typing import Any, Mapping
 
 
 def _user_id(user: Any) -> str:
+    """Normalize a JWT dict or ORM user to a string user ID."""
     if isinstance(user, Mapping):
         return str(user["id"])
     return str(user.id)
 
 
 def _estate_id(user: Any) -> str | None:
+    """Normalize a JWT dict or ORM user to a string estate ID."""
     if isinstance(user, Mapping):
         value = user.get("estate_id")
     else:
@@ -31,6 +33,7 @@ def can_view(
     target_user: Any,
     permissions: Mapping[str, bool],
 ) -> bool:
+    """Return whether the requester may view the target user's documents."""
     if _user_id(requester) != _user_id(target_user):
         if not permissions.get("can_view_other_user_documents", False):
             return False
@@ -47,6 +50,7 @@ def can_download(
     target_user: Any,
     permissions: Mapping[str, bool],
 ) -> bool:
+    """Return whether the requester may download the target user's documents."""
     if _user_id(requester) != _user_id(target_user):
         if not permissions.get("can_download_other_user_documents", False):
             return False

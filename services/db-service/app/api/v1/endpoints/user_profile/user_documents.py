@@ -1,3 +1,5 @@
+"""API endpoints for user document metadata and GCS operations."""
+
 import datetime
 import logging
 
@@ -43,6 +45,7 @@ router = APIRouter()
 def get_service(
     db_session: AsyncSession = Depends(get_db_session),
 ) -> Service:
+    """Return a UserDocumentsService bound to the request DB session."""
     return Service(db_session=db_session)
 
 
@@ -58,6 +61,7 @@ async def upload_document(
     file: UploadFile = File(...),
     service: Service = Depends(get_service),
 ) -> UploadResponse:
+    """Multipart upload: validate, write to GCS, and upsert metadata."""
     try:
         return await service.upload(
             user_id=user_id,
@@ -89,6 +93,7 @@ async def delete_all_for_user(
     user_id: UUID4,
     service: Service = Depends(get_service),
 ) -> DeleteAllForUserResponse:
+    """Delete all GCS objects and soft-delete document rows for a user."""
     try:
         return await service.delete_all_for_user(user_id=user_id)
     except Exception as e:
@@ -107,6 +112,7 @@ async def stream_document(
     document_type: DocumentType,
     service: Service = Depends(get_service),
 ):
+    """Stream the active document bytes from GCS (internal UPS use)."""
     try:
         doc, signed_url = await service.stream_document(
             user_id=user_id, document_type=document_type
@@ -142,6 +148,7 @@ async def create(
     request: CreateRequest,
     service: Service = Depends(get_service),
 ) -> CreateResponse:
+    """Create a user document metadata record."""
     try:
         return await service.create(request=request)
     except Exception as e:
@@ -157,6 +164,7 @@ async def update(
     request: UpdateRequest,
     service: Service = Depends(get_service),
 ) -> UpdateResponse:
+    """Update an existing user document metadata record."""
     try:
         return await service.update(id=id, request=request)
     except NotFoundError as e:
@@ -173,6 +181,7 @@ async def delete(
     id: UUID4,
     service: Service = Depends(get_service),
 ) -> DeleteResponse:
+    """Soft-delete a user document metadata record by ID."""
     try:
         return await service.delete(id=id)
     except NotFoundError as e:
@@ -196,6 +205,7 @@ async def search(
     limit: int = 10,
     service: Service = Depends(get_service),
 ) -> ListResponse:
+    """Search user document metadata with optional filters."""
     try:
         request = SearchRequest(**vars())
         return await service.search(request=request, page=page, limit=limit)
@@ -211,6 +221,7 @@ async def get(
     id: UUID4,
     service: Service = Depends(get_service),
 ) -> GetResponse:
+    """Fetch a single user document metadata record by ID."""
     try:
         return await service.get(id=id)
     except NotFoundError as e:
@@ -228,6 +239,7 @@ async def list_all(
     limit: int | None = 20,
     service: Service = Depends(get_service),
 ) -> ListResponse:
+    """List all active user document metadata records."""
     try:
         return await service.list(page=page, limit=limit)
     except Exception as e:

@@ -1,3 +1,5 @@
+"""Repository for core.user_documents table access."""
+
 import logging
 from datetime import datetime, timezone
 from typing import List
@@ -30,6 +32,7 @@ class UserDocumentsRepository:
     """Repository for core.user_documents."""
 
     def __init__(self, session: AsyncSession) -> None:
+        """Bind the repository to an async SQLAlchemy session."""
         self.session = session
 
     async def _getitem(self, session: AsyncSession, **kwargs) -> TableModel:
@@ -99,6 +102,7 @@ class UserDocumentsRepository:
             raise DatabaseError("Database error in retrieving records") from e
 
     async def create(self, request: CreateRequest) -> CreateResponse:
+        """Insert a new user document metadata row."""
         record = await self._setitem(
             session=self.session,
             request=TableModel(**request.model_dump(exclude_unset=True)),
@@ -106,6 +110,7 @@ class UserDocumentsRepository:
         return CreateResponse.model_validate(record)
 
     async def delete(self, id: UUID4) -> DeleteResponse:
+        """Soft-delete a user document row by primary key."""
         record = await self._getitem(session=self.session, id=id)
         record.is_deleted = True
         record.deleted_at = datetime.now(tz=timezone.utc)
@@ -113,18 +118,21 @@ class UserDocumentsRepository:
         return DeleteResponse.model_validate(record)
 
     async def get(self, id: UUID4) -> GetResponse:
+        """Fetch an active user document row by primary key."""
         record = await self._getitem(session=self.session, id=id)
         return GetResponse.model_validate(record, from_attributes=True)
 
     async def update(
         self, id: UUID4, request: UpdateRequest
     ) -> UpdateResponse:
+        """Update fields on an active user document row."""
         record = await self._getitem(session=self.session, id=id)
         record.update(**request.model_dump(exclude_unset=True))
         record = await self._setitem(session=self.session, request=record)
         return UpdateResponse.model_validate(record)
 
     async def list(self, page: int = 1, limit: int = 20) -> ListResponse:
+        """List active user document rows with pagination."""
         query = select(TableModel).where(TableModel.is_deleted == False)  # noqa: E712
         return await self._list(
             query=query,
@@ -136,6 +144,7 @@ class UserDocumentsRepository:
     async def search(
         self, request: SearchRequest, page: int = 1, limit: int = 20
     ) -> ListResponse:
+        """Search active user document rows using optional filters."""
         query = select(TableModel).where(TableModel.is_deleted == False)  # noqa: E712
         for key, _ in request.model_fields.items():
             if getattr(request, key) is None:
@@ -163,6 +172,7 @@ class UserDocumentsRepository:
     async def get_active_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
+        """Return the active document for a user and type, if present."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
@@ -177,6 +187,7 @@ class UserDocumentsRepository:
     async def soft_delete_active_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
+        """Soft-delete the active document for a user and type, if present."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
@@ -194,6 +205,7 @@ class UserDocumentsRepository:
     async def list_active_by_user_id(
         self, user_id: UUID4
     ) -> List[GetResponse]:
+        """List all active document metadata rows for a user."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.is_deleted == False,  # noqa: E712
@@ -206,6 +218,7 @@ class UserDocumentsRepository:
         ]
 
     async def list_gcs_paths_by_user_id(self, user_id: UUID4) -> List[str]:
+        """Return all GCS object paths ever stored for a user."""
         query = select(TableModel.gcs_object_path).where(
             TableModel.user_id == user_id
         )
@@ -215,6 +228,7 @@ class UserDocumentsRepository:
     async def soft_delete_all_active_for_user(
         self, user_id: UUID4
     ) -> List[GetResponse]:
+        """Soft-delete every active document row for a user."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.is_deleted == False,  # noqa: E712
@@ -245,6 +259,7 @@ class UserDocumentsRepository:
         original_filename: str | None,
         uploaded_by: UUID4,
     ) -> GetResponse:
+        """Insert metadata for a newly uploaded GCS object."""
         record = await self._setitem(
             session=self.session,
             request=TableModel(
