@@ -38,5 +38,22 @@ class Settings(BaseSettings):
             f"{info.data['DB_PORT']}/{info.data['POSTGRES_DB']}"
         )
 
+    # GCS user documents (profile picture, ID card)
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    )
+    GCS_DOCUMENTS_BUCKET: str = os.getenv(
+        "GCS_DOCUMENTS_BUCKET", "gatepass-user-documents-dev"
+    )
+    GCS_SIGNED_URL_EXPIRY_SECONDS: int = int(
+        os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "300")
+    )
+    GCS_PROFILE_PICTURE_MAX_BYTES: int = int(
+        os.getenv("GCS_PROFILE_PICTURE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
+    GCS_ID_CARD_MAX_BYTES: int = int(
+        os.getenv("GCS_ID_CARD_MAX_BYTES", str(10 * 1024 * 1024))
+    )
+
 
 settings = Settings()
