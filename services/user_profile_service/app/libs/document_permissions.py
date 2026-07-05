@@ -11,10 +11,14 @@ def _user_id(user: Any) -> str:
     return str(user.id)
 
 
-def _estate_id(user: Any):
+def _estate_id(user: Any) -> str | None:
     if isinstance(user, Mapping):
-        return user.get("estate_id")
-    return getattr(user, "estate_id", None)
+        value = user.get("estate_id")
+    else:
+        value = getattr(user, "estate_id", None)
+    if value is None:
+        return None
+    return str(value)
 
 
 def can_upload(requester: Any) -> bool:

@@ -89,8 +89,8 @@ def upgrade() -> None:
         op.execute(
             sa.text(
                 f"UPDATE core.role_permission SET {set_clause} "
-                f"WHERE role_name = :role_name"
-            ).bindparams(role_name=role_name)
+                f"WHERE role_name = '{role_name}'::core.userrole"
+            )
         )
 
 

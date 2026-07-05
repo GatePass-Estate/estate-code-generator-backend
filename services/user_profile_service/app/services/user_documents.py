@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException, UploadFile
 
+from app.libs.document_filenames import stream_filename
 from app.libs.document_permissions import can_download, can_upload, can_view
 from app.libs.document_validation import (
     DocumentType,
@@ -39,7 +40,12 @@ class UserDocumentsService:
         return await self.user_repository.get_role_permissions(role)
 
     async def _resolve_target_user(self, target_user_id: str):
-        return await self.user_repository.get_user_by_id(target_user_id)
+        target_user = await self.user_repository.get_user_by_id(target_user_id)
+        if target_user is None or target_user.is_deleted:
+            raise HTTPException(
+                status_code=404, detail="Target User not found"
+            )
+        return target_user
 
     def _view_url(self, owner_id: str, document_type: str) -> str:
         return f"{_DOCUMENTS_BASE}/{owner_id}/{document_type}/view"
@@ -144,14 +150,21 @@ class UserDocumentsService:
                 status_code=403, detail="Not allowed to download"
             )
 
+        doc_meta = await self.repository.get_active_by_user_and_type(
+            target_user_id, document_type
+        )
+        if not doc_meta:
+            raise HTTPException(status_code=404, detail="Document not found")
+
         stream = await self.repository.stream_from_db_service(
             target_user_id, document_type
         )
         db_resp = stream.response
-        filename = f"{document_type}.jpg"
-        content_disposition = db_resp.headers.get("content-disposition", "")
-        if "filename=" in content_disposition:
-            filename = content_disposition.split("filename=", 1)[-1].strip('"')
+        filename = stream_filename(
+            content_type=doc_meta.get("content_type")
+            or db_resp.headers.get("content-type", "application/octet-stream"),
+            original_filename=doc_meta.get("original_filename"),
+        )
 
         async def pipe():
             try:

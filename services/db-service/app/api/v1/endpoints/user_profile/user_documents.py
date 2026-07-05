@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import DocumentValidationError, NotFoundError
 from app.db.session import get_db_session
 from app.libs import gcs_storage
+from app.libs.document_filenames import stream_filename
 from app.schemas.user_profile.user_documents import (
     CreateRequest,
     CreateResponse,
@@ -110,7 +111,10 @@ async def stream_document(
         doc, signed_url = await service.stream_document(
             user_id=user_id, document_type=document_type
         )
-        filename = doc.gcs_object_path.rsplit("/", 1)[-1]
+        filename = stream_filename(
+            content_type=doc.content_type,
+            original_filename=doc.original_filename,
+        )
         return StreamingResponse(
             gcs_storage.stream_object(signed_url),
             media_type=doc.content_type,

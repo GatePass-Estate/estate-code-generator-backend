@@ -102,16 +102,26 @@ class UserDocumentsService:
             content_type,
         )
 
-        record = await self.repository.create_upload_record(
-            user_id=user_id,
-            estate_id=estate_id,
-            document_type=document_type,
-            gcs_object_path=object_path,
-            content_type=content_type,
-            file_size_bytes=len(content),
-            original_filename=file.filename,
-            uploaded_by=uploaded_by,
-        )
+        try:
+            record = await self.repository.create_upload_record(
+                user_id=user_id,
+                estate_id=estate_id,
+                document_type=document_type,
+                gcs_object_path=object_path,
+                content_type=content_type,
+                file_size_bytes=len(content),
+                original_filename=file.filename,
+                uploaded_by=uploaded_by,
+            )
+        except Exception:
+            try:
+                await gcs_storage.delete_object(object_path)
+            except Exception:
+                logger.exception(
+                    "Failed to roll back GCS object after DB error: %s",
+                    object_path,
+                )
+            raise
 
         signed_url_cache.invalidate(str(user_id), document_type.value)
 

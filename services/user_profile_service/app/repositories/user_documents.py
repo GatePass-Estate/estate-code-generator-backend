@@ -82,6 +82,27 @@ class UserDocumentsRepository:
                     detail="Document service unavailable",
                 ) from e
 
+    async def get_active_by_user_and_type(
+        self, user_id: str, document_type: str
+    ) -> dict[str, Any] | None:
+        params = urlencode(
+            {
+                "user_id": user_id,
+                "document_type": document_type,
+                "page": 1,
+                "limit": 1,
+            }
+        )
+        url = f"{self.endpoint}/search?{params}"
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to fetch user document metadata",
+            )
+        items = response.get("items", [])
+        return items[0] if items else None
+
     async def search_by_user(
         self, user_id: str, page: int = 1, limit: int = 20
     ) -> dict[str, Any]:

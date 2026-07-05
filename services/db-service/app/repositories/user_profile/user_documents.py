@@ -7,6 +7,7 @@ from pydantic import UUID4
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import object_session
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import UserDocuments as TableModel
@@ -52,7 +53,7 @@ class UserDocumentsRepository:
         self, session: AsyncSession, request: TableModel
     ) -> TableModel:
         try:
-            if request.id is None:
+            if object_session(request) is None:
                 session.add(request)
             await session.flush()
             await session.refresh(request)

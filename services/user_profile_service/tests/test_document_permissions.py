@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
 from app.libs.document_permissions import can_download, can_upload, can_view
@@ -100,3 +102,15 @@ def test_can_download_matrix(requester, target, permissions, expected):
 
 def test_can_upload_always_true():
     assert can_upload(_user("u1")) is True
+
+
+def test_can_view_same_user_jwt_dict_vs_pydantic_user_model():
+    estate_id_str = "6eb0c18d-5505-4601-a211-1584b6a5bc31"
+    user_id_str = "ea544461-05f0-43f0-b207-066d5f128a07"
+
+    class _TargetUser:
+        id = UUID(user_id_str)
+        estate_id = UUID(estate_id_str)
+
+    requester = {"id": user_id_str, "estate_id": estate_id_str}
+    assert can_view(requester, _TargetUser(), _permissions()) is True
