@@ -175,7 +175,8 @@ class NotificationsRepository:
             raise DatabaseError(message) from e
 
     async def mark_all_read(self, user_id: UUID4) -> int:
-        """Mark all unread notifications for a user as read. Returns count updated."""
+        """Mark all unread notifications for a user as read.
+        Returns count updated."""
         try:
             result = await self.session.execute(
                 update(NotificationsModel)
@@ -216,6 +217,26 @@ class NotificationsRepository:
             logger.exception(message)
             raise DatabaseError(message) from e
 
+    async def purge_old_notifications(self, older_than_days: int) -> int:
+        """Hard-delete notification rows older than the given number of days,
+        regardless of is_deleted status. Returns count deleted."""
+        from sqlalchemy import delete as sa_delete
+
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(
+            days=older_than_days
+        )
+        try:
+            result = await self.session.execute(
+                sa_delete(NotificationsModel).where(
+                    NotificationsModel.created_at < cutoff
+                )
+            )
+            return result.rowcount
+        except SQLAlchemyError as e:
+            message = "Database error purging old notifications"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
     async def delete_all_notifications(self, user_id: UUID4) -> int:
         """Soft-delete all notifications for a user. Returns count deleted."""
         try:
@@ -241,7 +262,8 @@ class NotificationsRepository:
     async def register_device_token(
         self, request: RegisterDeviceTokenRequest
     ) -> RegisterDeviceTokenResponse:
-        """Upsert a device token (insert or reactivate + update session on conflict)."""
+        """Upsert a device token (insert or reactivate + update session
+        on conflict)."""
         try:
             stmt = (
                 pg_insert(DeviceTokensModel)
@@ -271,14 +293,17 @@ class NotificationsRepository:
     async def get_device_tokens_by_user(
         self, user_id: UUID4, active_only: bool = True
     ) -> ListDeviceTokensResponse:
-        """Return device tokens for a user. Filters to active-only by default."""
+        """Return device tokens for a user.
+        Filters to active-only by default."""
         try:
             conditions = [
                 DeviceTokensModel.user_id == user_id,
                 DeviceTokensModel.is_deleted == False,  # noqa E712
             ]
             if active_only:
-                conditions.append(DeviceTokensModel.is_active == True)  # noqa E712
+                conditions.append(  # noqa E712
+                    DeviceTokensModel.is_active == True  # noqa E712
+                )
             records = (
                 (
                     await self.session.execute(
@@ -303,7 +328,8 @@ class NotificationsRepository:
             raise DatabaseError(message) from e
 
     async def remove_device_token_by_token(self, token: str) -> int:
-        """Hard-delete a device token row by FCM token value. Returns count deleted."""
+        """Hard-delete a device token row by FCM token value.
+        Returns count deleted."""
         try:
             record = await self.session.scalar(
                 select(DeviceTokensModel).where(
@@ -323,7 +349,8 @@ class NotificationsRepository:
     async def deactivate_device_tokens_by_session(
         self, session_id: UUID4
     ) -> int:
-        """Soft-deactivate device tokens for a session (logout). Returns count."""
+        """Soft-deactivate device tokens for a session (logout).
+        Returns count."""
         try:
             result = await self.session.execute(
                 select(DeviceTokensModel).where(
@@ -343,7 +370,8 @@ class NotificationsRepository:
             raise DatabaseError(message) from e
 
     async def remove_device_tokens_by_session(self, session_id: UUID4) -> int:
-        """Hard-delete all device tokens associated with a session. Returns count."""
+        """Hard-delete all device tokens associated with a session.
+        Returns count."""
         try:
             records = (
                 (

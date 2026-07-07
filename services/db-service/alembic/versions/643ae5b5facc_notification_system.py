@@ -49,7 +49,6 @@ notificationtype = postgresql.ENUM(
 deviceplatform = postgresql.ENUM(
     "IOS",
     "ANDROID",
-    "WEB",
     name="deviceplatform",
     schema="core",
     create_type=False,

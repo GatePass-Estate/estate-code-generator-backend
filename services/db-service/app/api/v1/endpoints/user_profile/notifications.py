@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import DatabaseError, NotFoundError
 from app.db.session import get_db_session
 from app.schemas.user_profile.notifications import (
     CreateNotificationRequest,
@@ -49,8 +49,21 @@ async def create_notification(
 ) -> CreateNotificationResponse:
     try:
         return await service.create_notification(request=request)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error creating notification for user_id=%s type=%s",
+            request.user_id,
+            request.type,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to create notification"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error creating notification")
+        logger.exception(
+            "Unexpected error creating notification for user_id=%s type=%s",
+            request.user_id,
+            request.type,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -68,8 +81,17 @@ async def create_notifications_bulk(
 ) -> List[CreateNotificationResponse]:
     try:
         return await service.create_notifications_bulk(requests=requests)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error bulk-creating %d notifications", len(requests)
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to bulk-create notifications"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error bulk-creating notifications")
+        logger.exception(
+            "Unexpected error bulk-creating %d notifications", len(requests)
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -97,8 +119,17 @@ async def list_notifications(
             page=page,
             limit=limit,
         )
+    except DatabaseError as e:
+        logger.exception(
+            "Database error listing notifications for user_id=%s", user_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to list notifications"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error listing notifications")
+        logger.exception(
+            "Unexpected error listing notifications for user_id=%s", user_id
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -119,8 +150,19 @@ async def unread_count(
         return await service.unread_count(
             user_id=user_id, max_age_days=max_age_days
         )
+    except DatabaseError as e:
+        logger.exception(
+            "Database error counting unread notifications for user_id=%s",
+            user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to count unread notifications"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error counting unread notifications")
+        logger.exception(
+            "Unexpected error counting unread notifications for user_id=%s",
+            user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -143,10 +185,25 @@ async def mark_read(
         )
     except NotFoundError as e:
         raise HTTPException(
-            status_code=404, detail="Notification not found"
+            status_code=404,
+            detail=f"Notification {notification_id} "
+            f"not found for user {user_id}",
+        ) from e
+    except DatabaseError as e:
+        logger.exception(
+            "Database error marking notification_id=%s read for user_id=%s",
+            notification_id,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to mark notification as read"
         ) from e
     except Exception as e:
-        logger.exception("Unexpected error marking notification read")
+        logger.exception(
+            "Unexpected error marking notification_id=%s read for user_id=%s",
+            notification_id,
+            user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -165,8 +222,19 @@ async def mark_all_read(
     try:
         count = await service.mark_all_read(user_id=user_id)
         return {"updated": count}
+    except DatabaseError as e:
+        logger.exception(
+            "Database error marking all notifications read for user_id=%s",
+            user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to mark all notifications as read"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error marking all notifications read")
+        logger.exception(
+            "Unexpected error marking all notifications read for user_id=%s",
+            user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -189,13 +257,28 @@ async def delete_notification(
         )
         if count == 0:
             raise HTTPException(
-                status_code=404, detail="Notification not found"
+                status_code=404,
+                detail=f"Notification {notification_id} "
+                f"not found for user {user_id}",
             )
         return DeleteNotificationResponse(deleted=count)
     except HTTPException:
         raise
+    except DatabaseError as e:
+        logger.exception(
+            "Database error deleting notification_id=%s for user_id=%s",
+            notification_id,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to delete notification"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error deleting notification")
+        logger.exception(
+            "Unexpected error deleting notification_id=%s for user_id=%s",
+            notification_id,
+            user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -214,14 +297,24 @@ async def delete_all_notifications(
     try:
         count = await service.delete_all_notifications(user_id=user_id)
         return DeleteAllNotificationsResponse(deleted=count)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error deleting all notifications for user_id=%s", user_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to delete notifications"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error deleting all notifications")
+        logger.exception(
+            "Unexpected error deleting all notifications for user_id=%s",
+            user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
 
 
-# ── Device Tokens ──────────────────────────────────────────────────────────────
+# ── Device Tokens ────────────────────────────────────────────────────────────
 
 
 @router.post(
@@ -236,8 +329,19 @@ async def register_device_token(
 ) -> RegisterDeviceTokenResponse:
     try:
         return await service.register_device_token(request=request)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error registering device token for user_id=%s",
+            request.user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to register device token"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error registering device token")
+        logger.exception(
+            "Unexpected error registering device token for user_id=%s",
+            request.user_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -247,7 +351,8 @@ async def register_device_token(
     "/device-tokens/by-user/{user_id}",
     response_model=ListDeviceTokensResponse,
     status_code=status.HTTP_200_OK,
-    description="Get device tokens for a user. Pass active_only=false to include deactivated tokens.",
+    description="Get device tokens for a user. Pass active_only=false"
+    "to include deactivated tokens.",
 )
 async def get_device_tokens_by_user(
     user_id: UUID4,
@@ -258,8 +363,17 @@ async def get_device_tokens_by_user(
         return await service.get_device_tokens_by_user(
             user_id=user_id, active_only=active_only
         )
+    except DatabaseError as e:
+        logger.exception(
+            "Database error fetching device tokens for user_id=%s", user_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch device tokens"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error fetching device tokens")
+        logger.exception(
+            "Unexpected error fetching device tokens for user_id=%s", user_id
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -277,9 +391,20 @@ async def remove_device_token_by_token(
 ) -> dict:
     try:
         count = await service.remove_device_token_by_token(token=token)
+        if count == 0:
+            raise HTTPException(
+                status_code=404, detail="Device token not found"
+            )
         return {"deleted": count}
+    except HTTPException:
+        raise
+    except DatabaseError as e:
+        logger.exception("Database error removing device token=%s", token)
+        raise HTTPException(
+            status_code=500, detail="Failed to remove device token"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error removing device token")
+        logger.exception("Unexpected error removing device token=%s", token)
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -300,9 +425,18 @@ async def deactivate_device_tokens_by_session(
             session_id=session_id
         )
         return {"deactivated": count}
+    except DatabaseError as e:
+        logger.exception(
+            "Database error deactivating device tokens for session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to deactivate device tokens"
+        ) from e
     except Exception as e:
         logger.exception(
-            "Unexpected error deactivating device tokens by session"
+            "Unexpected error deactivating device tokens for session_id=%s",
+            session_id,
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"
@@ -324,8 +458,19 @@ async def remove_device_tokens_by_session(
             session_id=session_id
         )
         return {"deleted": count}
+    except DatabaseError as e:
+        logger.exception(
+            "Database error removing device tokens for session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to remove device tokens"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error removing device tokens by session")
+        logger.exception(
+            "Unexpected error removing device tokens for session_id=%s",
+            session_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -344,14 +489,59 @@ async def remove_device_tokens_by_user(
     try:
         count = await service.remove_device_tokens_by_user(user_id=user_id)
         return {"deleted": count}
+    except DatabaseError as e:
+        logger.exception(
+            "Database error removing device tokens for user_id=%s", user_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to remove device tokens"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error removing device tokens by user")
+        logger.exception(
+            "Unexpected error removing device tokens for user_id=%s", user_id
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
 
 
-# ── Notification Preferences ───────────────────────────────────────────────────
+# ── Maintenance ───────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/purge",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    description="Hard-delete all notification rows older than the given days",
+)
+async def purge_old_notifications(
+    older_than_days: int,
+    service: Service = Depends(get_service),
+) -> dict:
+    try:
+        count = await service.purge_old_notifications(
+            older_than_days=older_than_days
+        )
+        return {"deleted": count}
+    except DatabaseError as e:
+        logger.exception(
+            "Database error purging notifications older than %d days",
+            older_than_days,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to purge old notifications"
+        ) from e
+    except Exception as e:
+        logger.exception(
+            "Unexpected error purging notifications older than %d days",
+            older_than_days,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+# ── Notification Preferences ─────────────────────────────────────────────────
 
 
 @router.put(
@@ -366,8 +556,21 @@ async def upsert_preference(
 ) -> GetPreferenceResponse:
     try:
         return await service.upsert_preference(request=request)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error upserting preference for user_id=%s type=%s",
+            request.user_id,
+            request.notification_type,
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to update notification preference"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error upserting notification preference")
+        logger.exception(
+            "Unexpected error upserting preference for user_id=%s type=%s",
+            request.user_id,
+            request.notification_type,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -385,8 +588,17 @@ async def get_preferences_by_user(
 ) -> ListPreferencesResponse:
     try:
         return await service.get_preferences_by_user(user_id=user_id)
+    except DatabaseError as e:
+        logger.exception(
+            "Database error fetching preferences for user_id=%s", user_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch notification preferences"
+        ) from e
     except Exception as e:
-        logger.exception("Unexpected error fetching notification preferences")
+        logger.exception(
+            "Unexpected error fetching preferences for user_id=%s", user_id
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e

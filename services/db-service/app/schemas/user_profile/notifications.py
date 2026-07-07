@@ -54,7 +54,6 @@ class NotificationType(str, Enum):
 class DevicePlatform(str, Enum):
     IOS = "IOS"
     ANDROID = "ANDROID"
-    WEB = "WEB"
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────

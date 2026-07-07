@@ -87,6 +87,11 @@ class NotificationsService:
     async def delete_all_notifications(self, user_id: UUID4) -> int:
         return await self.repository.delete_all_notifications(user_id=user_id)
 
+    async def purge_old_notifications(self, older_than_days: int) -> int:
+        return await self.repository.purge_old_notifications(
+            older_than_days=older_than_days
+        )
+
     # ── Device Tokens ──────────────────────────────────────────────────────
 
     async def register_device_token(

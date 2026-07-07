@@ -27,6 +27,11 @@ class Settings(BaseSettings):
         os.getenv("NOTIFICATION_MAX_AGE_DAYS", 90)
     )
 
+    # Minimum age (days) allowed when calling the purge endpoint
+    NOTIFICATION_PURGE_MIN_AGE_DAYS: int = int(
+        os.getenv("NOTIFICATION_PURGE_MIN_AGE_DAYS", 90)
+    )
+
     FRONTEND_BASE_URL: str = os.getenv(
         "FRONTEND_BASE_URL", "https://app.gatepassng.com"
     )

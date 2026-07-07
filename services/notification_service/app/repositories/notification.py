@@ -102,3 +102,9 @@ class NotificationRepository:
         return await self.client.async_delete(
             url=f"{self.notifications_endpoint}/by-user/{user_id}",
         )
+
+    async def purge_old(self, older_than_days: int) -> Optional[Dict]:
+        return await self.client.async_post(
+            url=f"{self.notifications_endpoint}/purge",
+            params={"older_than_days": older_than_days},
+        )

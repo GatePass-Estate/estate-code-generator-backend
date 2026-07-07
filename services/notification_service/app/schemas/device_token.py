@@ -11,7 +11,6 @@ model_config = ConfigDict(from_attributes=True, extra="ignore")
 class DevicePlatform(str, Enum):
     IOS = "IOS"
     ANDROID = "ANDROID"
-    WEB = "WEB"
 
 
 class RegisterDeviceTokenRequest(BaseModel):

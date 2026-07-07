@@ -33,12 +33,17 @@ class AsyncHttpHandler:
         url: str,
         data: dict = None,
         json_data: dict = None,
+        params: dict = None,
         headers: dict = None,
     ):
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
-                    url, data=data, json=json_data, headers=headers
+                    url,
+                    data=data,
+                    json=json_data,
+                    params=params,
+                    headers=headers,
                 )
                 response.raise_for_status()
                 return response.json()
