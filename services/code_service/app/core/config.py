@@ -26,5 +26,9 @@ class Settings(BaseSettings):
         os.getenv("RESIDENT_CODE_EXPIRY_DAYS", 30)
     )
 
+    # Notification service
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+
 
 settings = Settings()

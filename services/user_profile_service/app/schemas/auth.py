@@ -123,6 +123,10 @@ class LoginResponse(BaseModel):
         default=None,
         description="Short-lived 2FA-pending token (when requires_2fa=True)",
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session ID — pass this when registering an FCM device token",
+    )
 
     model_config = model_config
 

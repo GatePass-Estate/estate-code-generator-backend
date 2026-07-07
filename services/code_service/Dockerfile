@@ -13,6 +13,7 @@ WORKDIR /src/service
 
 # Copy the shared package so path deps resolve during poetry lock
 COPY shared/gatepass_auth /shared/gatepass_auth/
+COPY shared/gatepass_notify /shared/gatepass_notify/
 
 # Copy the pyproject.toml and lock file to the working directory
 COPY services/code_service/pyproject.toml services/code_service/poetry.lock services/code_service/README.md /src/service/
