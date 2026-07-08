@@ -33,7 +33,9 @@ from app.schemas.household import (
 from app.schemas.email import (
     EmailTokenResponse,
 )
-from app.libs.http_handler import get_http_handler, AsyncHttpHandler
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.core.config import settings
+from app.libs.notify import fire_notify
 from app.libs.role_permissions import check_permission
 from app.repositories.user import UserRepository
 from app.repositories.guest import GuestRepository
@@ -43,12 +45,6 @@ from app.repositories.admin_management import AdminRepository
 from app.services.user import UserService
 from app.services.guest import GuestService
 from app.services.auth import get_current_user
-from app.services.email import (
-    send_verification_email,
-    send_welcome_email,
-    send_password_reset_confirmation_email,
-    send_account_closure_email,
-)
 
 router = APIRouter()
 
@@ -96,9 +92,21 @@ async def register_user(
 
     user, token = await service.register_user(request)
 
-    # Trigger background email
+    from urllib.parse import urlencode
+
+    verification_url = (
+        f"{settings.FRONTEND_BASE_URL}/activate?{urlencode({'token': token})}"
+    )
     background_tasks.add_task(
-        send_verification_email, user.email, user.first_name, token
+        fire_notify,
+        {
+            "type": "EMAIL_VERIFICATION",
+            "title": "Verify your email address",
+            "body": "Please verify your email address "
+            "to activate your account.",
+            "recipient_user_ids": [str(user.id)],
+            "metadata": {"verification_url": verification_url},
+        },
     )
 
     # Return response model
@@ -119,10 +127,15 @@ async def close_account(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    user = await service.get_user(current_user["id"])
     result = await service.close_account(current_user["id"])
     background_tasks.add_task(
-        send_account_closure_email, user.email, user.first_name
+        fire_notify,
+        {
+            "type": "ACCOUNT_CLOSED",
+            "title": "Your account has been closed",
+            "body": "Your GatePass account has been closed.",
+            "recipient_user_ids": [current_user["id"]],
+        },
     )
     return result
 
@@ -410,10 +423,24 @@ async def reset_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    user = await service.get_user(str(payload.user_id))
     result = await service.reset_password(payload)
     background_tasks.add_task(
-        send_password_reset_confirmation_email, user.email, user.first_name
+        fire_notify,
+        {
+            "type": "PASSWORD_RESET_CONFIRMED",
+            "title": "Password reset successfully",
+            "body": "Your GatePass password has been reset.",
+            "recipient_user_ids": [str(payload.user_id)],
+        },
+    )
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "PASSWORD_CHANGED",
+            "title": "Password changed",
+            "body": "Your account password has been changed.",
+            "recipient_user_ids": [str(payload.user_id)],
+        },
     )
     return result
 
@@ -431,15 +458,23 @@ async def set_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    user = await service.get_user(str(payload.user_id))
     result = await service.set_password_and_activate(payload)
-    background_tasks.add_task(send_welcome_email, user.email, user.first_name)
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "WELCOME",
+            "title": "Welcome to GatePass",
+            "body": "Your account has been activated. Welcome to GatePass!",
+            "recipient_user_ids": [str(payload.user_id)],
+        },
+    )
     return result
 
 
 @router.post("/password/update", response_model=SetPasswordResponse)
 async def update_password(
     payload: UpdatePasswordRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -455,12 +490,29 @@ async def update_password(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.update_password(payload)
+    result = await service.update_password(payload)
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "PASSWORD_CHANGED",
+            "title": "Password changed",
+            "body": "Your account password has been changed.",
+            "recipient_user_ids": [str(payload.user_id)],
+        },
+    )
+    return result
+
+
+_ESTATE_TYPE_GROUP_LABEL = {
+    "housing": "household",
+    "corporate": "department",
+}
 
 
 @router.post("/household/update", response_model=UpdateHouseholdResponse)
 async def update_household(
     payload: UpdateHouseholdRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
 ):
@@ -479,7 +531,28 @@ async def update_household(
     service = UserService(
         repository, estate_repository, household_repository, admin_repository
     )
-    return await service.update_user_household(payload)
+    result = await service.update_user_household(payload)
+
+    try:
+        user = await service.get_user(str(payload.user_id))
+        estate = await estate_repository.get_estate_by_id(str(user.estate_id))
+        group_label = _ESTATE_TYPE_GROUP_LABEL.get(
+            estate.estate_type.value if estate.estate_type else "", "household"
+        )
+    except Exception:
+        group_label = "household"
+
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "HOUSEHOLD_TRANSFERRED",
+            "title": f"{group_label.capitalize()} updated",
+            "body": f"You have been moved to a new {group_label}.",
+            "recipient_user_ids": [str(payload.user_id)],
+            "metadata": {"group_label": group_label},
+        },
+    )
+    return result
 
 
 @router.post("/guest/register", response_model=RegisterGuestResponse)
@@ -653,11 +726,24 @@ async def resend_verification_email(
                 detail="You are not authorized to perform this action.",
             )
 
-    email, first_name, token = await service.regenerate_verification_token(
+    from urllib.parse import urlencode
+
+    regenerated_user_id, token = await service.regenerate_verification_token(
         user_id
     )
+    verification_url = (
+        f"{settings.FRONTEND_BASE_URL}/activate?{urlencode({'token': token})}"
+    )
     background_tasks.add_task(
-        send_verification_email, email, first_name, token
+        fire_notify,
+        {
+            "type": "EMAIL_VERIFICATION",
+            "title": "Verify your email address",
+            "body": "Please verify your email address"
+            " to activate your account.",
+            "recipient_user_ids": [regenerated_user_id],
+            "metadata": {"verification_url": verification_url},
+        },
     )
 
     return SetPasswordResponse(

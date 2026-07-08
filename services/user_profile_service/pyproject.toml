@@ -9,6 +9,7 @@ packages = [{include = "app"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+gatepass-notify = {path = "../../shared/gatepass_notify", develop = true}
 fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = {extras = ["email"], version = "^2.11.4"}
@@ -21,7 +22,6 @@ httpx = "^0.28.1"
 protobuf = "^5.29.1"
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 bcrypt = "<4.0.0"
-fastapi-mail = "^1.6.5"
 pyotp = "^2.10.0"
 cryptography = "^49.0.0"
 python-multipart = "^0.0.32"

@@ -28,6 +28,9 @@ from app.api.v1.endpoints.user_profile.guests import (
 from app.api.v1.endpoints.user_profile.household import (
     router as household_router,
 )
+from app.api.v1.endpoints.user_profile.notifications import (
+    router as notifications_router,
+)
 from app.api.v1.endpoints.user_profile.requests import (
     router as requests_router,
 )
@@ -150,4 +153,10 @@ api_router.include_router(
     userdocuments_router,
     prefix="/userprofile/userdocuments",
     tags=["UserDocuments"],
+)
+
+api_router.include_router(
+    notifications_router,
+    prefix="/notifications",
+    tags=["Notifications"],
 )

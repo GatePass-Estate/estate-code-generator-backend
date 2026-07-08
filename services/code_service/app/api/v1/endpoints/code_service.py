@@ -1,11 +1,13 @@
 import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError, ScheduleError
 from app.libs.auth import get_current_user, get_user_details
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify
 from app.libs.role_permissions import check_permission, check_status
 from app.schemas.code_service import (
     CreateRequestResident,
@@ -128,6 +130,7 @@ async def generate(
 )
 async def validate(
     code: str,
+    background_tasks: BackgroundTasks,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
 ) -> GetResponseResident | GetResponseVisitor:
@@ -165,7 +168,7 @@ async def validate(
         )
 
     try:
-        return await service.validate(code=code, user_details=user_details)
+        result = await service.validate(code=code, user_details=user_details)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
@@ -173,6 +176,43 @@ async def validate(
         raise HTTPException(
             status_code=500, detail="Internal server error!"
         ) from e
+
+    now = datetime.now(timezone.utc).isoformat()
+    resident_id = str(result.user_id)
+
+    if isinstance(result, GetResponseVisitor) and result.is_valid:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "GUEST_CODE_USED",
+                "title": "Visitor arrived",
+                "body": (
+                    f"{result.visitor_fullname} has arrived at your estate."
+                ),
+                "recipient_user_ids": [resident_id],
+                "metadata": {
+                    "visitor_name": result.visitor_fullname,
+                    "code_id": result.hashed_code,
+                    "visit_time": now,
+                },
+            },
+        )
+    elif isinstance(result, GetResponseResident) and result.is_valid:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "RESIDENT_CODE_USED",
+                "title": "Access code used",
+                "body": "Your resident access code was scanned.",
+                "recipient_user_ids": [resident_id],
+                "metadata": {
+                    "code_id": code,
+                    "access_time": now,
+                },
+            },
+        )
+
+    return result
 
 
 @router.get(
