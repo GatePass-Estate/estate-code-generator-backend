@@ -8,6 +8,7 @@ packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+gatepass-docs = {path = "../../shared/gatepass_docs", develop = true}
 fastapi = "^0.115.4"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = "^2.9.2"
@@ -21,6 +22,9 @@ pyjwt = "^2.9.0"
 httpx = "^0.27.2"
 protobuf = "^5.29.1"
 psycopg2-binary = "^2.9.10"
+google-cloud-storage = "^3.12.0"
+cachetools = "^7.1.4"
+python-multipart = "^0.0.32"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -31,6 +35,7 @@ pytest-dependency = "^0.6.0"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = [".", "../../shared/gatepass_docs"]
 
 [build-system]
 requires = ["poetry-core"]

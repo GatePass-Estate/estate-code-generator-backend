@@ -36,6 +36,7 @@ class RequestType(str, Enum):
     EMAIL_CHANGE = "email_change"
     GENDER_CHANGE = "gender_change"
     VACATE_RESIDENCE = "vacate_residence"
+    ID_CHANGE = "id_change"
 
 
 class Status(str, Enum):

@@ -1,3 +1,6 @@
+from gatepass_docs import DocumentValidationError  # noqa: F401
+
+
 class NotFoundError(Exception):
     """Exception raised when a resource is not found."""
 

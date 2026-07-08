@@ -9,6 +9,7 @@ packages = [{include = "app"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+gatepass-docs = {path = "../../shared/gatepass_docs", develop = true}
 gatepass-notify = {path = "../../shared/gatepass_notify", develop = true}
 fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
@@ -24,6 +25,7 @@ passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 bcrypt = "<4.0.0"
 pyotp = "^2.10.0"
 cryptography = "^49.0.0"
+python-multipart = "^0.0.32"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -34,6 +36,7 @@ pytest-dependency = "^0.6.0"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = [".", "../../shared/gatepass_docs"]
 
 [build-system]
 requires = ["poetry-core"]
