@@ -138,7 +138,13 @@ class SearchRequest(BaseSearchRequest):
     estate_id: UUID4 | None = None
     document_type: DocumentType | None = None
     uploaded_by: UUID4 | None = None
-    document_status: DocumentStatus | None = None
+    document_status: list[DocumentStatus] | None = Field(
+        default=None,
+        description=(
+            "Match any of the given statuses (OR). Repeat the query parameter "
+            "to supply multiple values."
+        ),
+    )
 
 
 class ListResponse(BaseListResponse):

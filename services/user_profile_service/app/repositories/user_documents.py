@@ -118,19 +118,28 @@ class UserDocumentsRepository:
         self,
         user_id: str,
         *,
-        document_status: str | None = None,
+        document_type: str | None = None,
+        document_status: list[str] | None = None,
         page: int = 1,
         limit: int = 20,
     ) -> dict[str, Any]:
-        """Search document metadata rows for a user."""
-        query: dict[str, Any] = {
-            "user_id": user_id,
-            "page": page,
-            "limit": limit,
-        }
-        if document_status is not None:
-            query["document_status"] = document_status
-        params = urlencode(query)
+        """
+        Search document metadata rows for a user via db-service.
+
+        ``document_status`` may contain multiple values; each is sent as a
+        repeated query parameter.
+        """
+        query_pairs: list[tuple[str, str | int]] = [
+            ("user_id", user_id),
+            ("page", page),
+            ("limit", limit),
+        ]
+        if document_type is not None:
+            query_pairs.append(("document_type", document_type))
+        if document_status:
+            for status in document_status:
+                query_pairs.append(("document_status", status))
+        params = urlencode(query_pairs)
         url = f"{self.endpoint}/search?{params}"
         response = await self.client.async_get(url)
         if response is None:

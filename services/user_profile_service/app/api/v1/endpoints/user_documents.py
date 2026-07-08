@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -10,6 +10,8 @@ from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
 from app.schemas.user_documents import (
     ApproveDocumentResponse,
+    DocumentStatus,
+    DocumentType,
     UploadDocumentResponse,
     UserDocumentsMetadataResponse,
 )
@@ -44,11 +46,23 @@ async def upload_document(
 
 @router.get("/me", response_model=UserDocumentsMetadataResponse)
 async def get_my_documents(
+    document_type: DocumentType | None = Query(
+        default=None,
+        description="Filter results to a single document type",
+    ),
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UserDocumentsMetadataResponse:
-    """Return document metadata for the authenticated user."""
-    return await service.get_metadata(current_user, str(current_user["id"]))
+    """
+    Return document metadata for the authenticated user.
+
+    Optionally filter by ``document_type`` (``profile_picture`` or ``id_card``).
+    """
+    return await service.get_metadata(
+        current_user,
+        str(current_user["id"]),
+        document_type=document_type.value if document_type else None,
+    )
 
 
 @router.get("/me/{document_type}/view")
@@ -108,7 +122,12 @@ async def approve_pending_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> ApproveDocumentResponse:
-    """Promote a pending document to active after admin approval."""
+    """
+    Promote a pending document to active after admin approval.
+
+    Moves the file from temp GCS storage and archives any prior active
+    document of the same type.
+    """
     return await service.approve_document(current_user, document_id)
 
 
@@ -118,7 +137,7 @@ async def view_pending_document(
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ):
-    """Stream a pending document for owner or admin review."""
+    """Stream a pending document inline for owner or admin review."""
     result = await service.stream_pending_document(
         requester=current_user,
         document_id=document_id,
@@ -137,11 +156,32 @@ async def view_pending_document(
 @router.get("/{user_id}", response_model=UserDocumentsMetadataResponse)
 async def get_user_documents(
     user_id: str,
+    document_type: DocumentType | None = Query(
+        default=None,
+        description="Filter results to a single document type",
+    ),
+    document_status: list[DocumentStatus] | None = Query(
+        default=None,
+        description=(
+            "Filter by one or more document statuses "
+            "(repeat the parameter; non-owners default to active)"
+        ),
+    ),
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UserDocumentsMetadataResponse:
-    """Return document metadata for another user when RBAC allows."""
-    return await service.get_metadata(current_user, user_id)
+    """
+    Return document metadata for another user when RBAC allows.
+
+    Optionally filter by ``document_type`` and/or one or more
+    ``document_status`` values (repeat the query parameter).
+    """
+    return await service.get_metadata(
+        current_user,
+        user_id,
+        document_type=document_type.value if document_type else None,
+        document_status=document_status,
+    )
 
 
 @router.get("/{user_id}/{document_type}/view")

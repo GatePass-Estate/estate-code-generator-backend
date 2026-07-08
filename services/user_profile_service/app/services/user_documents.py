@@ -25,6 +25,11 @@ from app.schemas.user_documents import (
     UserDocumentsMetadataResponse,
 )
 
+_ADMIN_ROLES = frozenset({"admin", "primary_admin", "root"})
+_RESTRICTED_DOCUMENT_STATUSES = frozenset(
+    {DocumentStatus.PENDING, DocumentStatus.ARCHIVED}
+)
+
 logger = logging.getLogger(__name__)
 
 _DOCUMENTS_BASE = "/api/v1/users/documents"
@@ -129,8 +134,18 @@ class UserDocumentsService:
         self,
         requester: dict[str, Any],
         target_user_id: str,
+        *,
+        document_type: str | None = None,
+        document_status: list[DocumentStatus] | None = None,
     ) -> UserDocumentsMetadataResponse:
-        """Return document metadata and URLs when the requester may view."""
+        """
+        Return document metadata and URLs when the requester may view.
+
+        Optional ``document_type`` narrows results to one type. Optional
+        ``document_status`` accepts multiple values; non-owners default to
+        active only and cannot request pending/archived without admin role.
+        Archived rows are omitted when no status filter is provided.
+        """
         target_user = await self._resolve_target_user(target_user_id)
         permissions = await self._get_permissions(requester["role"])
 
@@ -138,19 +153,34 @@ class UserDocumentsService:
             raise HTTPException(status_code=403, detail="Not allowed to view")
 
         is_owner = str(requester["id"]) == target_user_id
-        if is_owner:
-            search_result = await self.repository.search_by_user(
-                target_user_id
-            )
-        else:
-            search_result = await self.repository.search_by_user(
-                target_user_id, document_status="active"
-            )
+        effective_statuses = document_status
+        if not is_owner:
+            if not document_status:
+                effective_statuses = [DocumentStatus.ACTIVE]
+            elif _RESTRICTED_DOCUMENT_STATUSES.intersection(document_status):
+                if requester.get("role") not in _ADMIN_ROLES:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Not allowed to filter by this document status",
+                    )
+
+        search_result = await self.repository.search_by_user(
+            target_user_id,
+            document_type=document_type,
+            document_status=(
+                [status.value for status in effective_statuses]
+                if effective_statuses
+                else None
+            ),
+        )
 
         documents: list[DocumentMetadataItem] = []
         for item in search_result.get("items", []):
             raw_status = item.get("document_status")
-            if raw_status == DocumentStatus.ARCHIVED.value:
+            if (
+                not document_status
+                and raw_status == DocumentStatus.ARCHIVED.value
+            ):
                 continue
             doc_type = item["document_type"]
             owner_id = str(item["user_id"])
@@ -189,7 +219,12 @@ class UserDocumentsService:
         requester: dict[str, Any],
         document_id: str,
     ) -> ApproveDocumentResponse:
-        """Approve a pending document after admin review."""
+        """
+        Approve a pending document after admin review.
+
+        Delegates to db-service to move the object from temp storage, archive
+        any prior active document, and mark the row active.
+        """
         if requester["role"] not in ("admin", "primary_admin", "root"):
             raise HTTPException(
                 status_code=403,
@@ -232,7 +267,12 @@ class UserDocumentsService:
         *,
         disposition: Literal["inline", "attachment"],
     ) -> dict[str, Any]:
-        """Stream a pending document by row ID for owner or admin review."""
+        """
+        Stream a pending document by row ID for owner or admin review.
+
+        Uses the stored original filename when building the Content-Disposition
+        header.
+        """
         doc_meta = await self.repository.get_by_id(document_id)
         if doc_meta.get("document_status") != DocumentStatus.PENDING.value:
             raise HTTPException(
@@ -284,6 +324,7 @@ class UserDocumentsService:
             content_type=response.headers.get(
                 "content-type", "application/octet-stream"
             ),
+            original_filename=doc_meta.get("original_filename"),
         )
 
         async def pipe():

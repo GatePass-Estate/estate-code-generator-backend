@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -97,7 +98,7 @@ async def approve_document(
     document_id: UUID4,
     service: Service = Depends(get_service),
 ) -> ApproveResponse:
-    """Promote a pending document from temp storage to active."""
+    """Promote a pending document from temp GCS storage to active."""
     try:
         return await service.approve(document_id=document_id)
     except NotFoundError as e:
@@ -259,14 +260,19 @@ async def search(
     estate_id: UUID4 | None = None,
     document_type: DocumentType | None = None,
     uploaded_by: UUID4 | None = None,
-    document_status: DocumentStatus | None = None,
+    document_status: list[DocumentStatus] | None = Query(default=None),
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
     service: Service = Depends(get_service),
 ) -> ListResponse:
-    """Search user document metadata with optional filters."""
+    """
+    Search user document metadata with optional filters.
+
+    Repeat ``document_status`` to match multiple statuses (OR), e.g.
+    ``?document_status=pending&document_status=active``.
+    """
     try:
         request = SearchRequest(**vars())
         return await service.search(request=request, page=page, limit=limit)

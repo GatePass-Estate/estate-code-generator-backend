@@ -72,7 +72,12 @@ async def move_object(
     *,
     client: storage.Client | None = None,
 ) -> None:
-    """Copy a GCS object to a new path and delete the source."""
+    """
+    Copy a GCS object to a new path and delete the source.
+
+    Requires ``storage.objects.create`` and ``storage.objects.delete`` on the
+    bucket for the service account.
+    """
     await copy_object(source_path, destination_path, client=client)
     await delete_object(source_path, client=client)
 

@@ -56,6 +56,7 @@ class UserDocumentsRepository:
     async def _setitem(
         self, session: AsyncSession, request: TableModel
     ) -> TableModel:
+        """Persist a row, flush, and refresh so server defaults are loaded."""
         try:
             if object_session(request) is None:
                 session.add(request)
@@ -66,6 +67,16 @@ class UserDocumentsRepository:
             raise DatabaseError(
                 "Database error in creating/updating a record"
             ) from e
+
+    async def _to_get_response(self, record: TableModel) -> GetResponse:
+        """
+        Build a GetResponse after a write.
+
+        Refreshes the ORM instance first so async SQLAlchemy can read
+        server-managed columns such as updated_at without lazy-load errors.
+        """
+        await self.session.refresh(record)
+        return GetResponse.model_validate(record, from_attributes=True)
 
     async def _list(
         self,
@@ -111,15 +122,16 @@ class UserDocumentsRepository:
         return CreateResponse.model_validate(record)
 
     async def delete(self, id: UUID4) -> DeleteResponse:
-        """Soft-delete a user document row by primary key."""
+        """Soft-delete a user document row and return refreshed timestamps."""
         record = await self._getitem(session=self.session, id=id)
         record.is_deleted = True
         record.deleted_at = datetime.now(tz=timezone.utc)
         await self.session.flush()
+        await self.session.refresh(record)
         return DeleteResponse.model_validate(record)
 
     async def get(self, id: UUID4) -> GetResponse:
-        """Fetch an active user document row by primary key."""
+        """Fetch a non-deleted user document row by primary key."""
         record = await self._getitem(session=self.session, id=id)
         return GetResponse.model_validate(record, from_attributes=True)
 
@@ -133,7 +145,7 @@ class UserDocumentsRepository:
         return UpdateResponse.model_validate(record)
 
     async def list(self, page: int = 1, limit: int = 20) -> ListResponse:
-        """List active user document rows with pagination."""
+        """List non-deleted user document rows with pagination."""
         query = select(TableModel).where(TableModel.is_deleted == False)  # noqa: E712
         return await self._list(
             query=query,
@@ -145,7 +157,12 @@ class UserDocumentsRepository:
     async def search(
         self, request: SearchRequest, page: int = 1, limit: int = 20
     ) -> ListResponse:
-        """Search active user document rows using optional filters."""
+        """
+        Search non-deleted user document rows with optional filters.
+
+        ``document_status`` may contain one or more values; multiple values
+        are combined with OR (``IN``).
+        """
         query = select(TableModel).where(TableModel.is_deleted == False)  # noqa: E712
         for key, _ in request.model_fields.items():
             if getattr(request, key) is None:
@@ -158,6 +175,18 @@ class UserDocumentsRepository:
                 elif key == "to_date":
                     query = query.where(
                         TableModel.created_at <= request.to_date
+                    )
+            elif key == "document_status":
+                statuses = getattr(request, key)
+                if not statuses:
+                    continue
+                if len(statuses) == 1:
+                    query = query.where(
+                        TableModel.document_status == statuses[0]
+                    )
+                else:
+                    query = query.where(
+                        TableModel.document_status.in_(statuses)
                     )
             elif hasattr(TableModel, key):
                 query = query.where(
@@ -208,7 +237,11 @@ class UserDocumentsRepository:
         *,
         document_status: DocumentStatus | None = None,
     ) -> GetResponse:
-        """Fetch an active document row by primary key, optionally filtered by status."""
+        """
+        Fetch a non-deleted document row by primary key.
+
+        When ``document_status`` is provided, the row must match that status.
+        """
         query = select(TableModel).where(
             TableModel.id == document_id,
             TableModel.is_deleted == False,  # noqa: E712
@@ -224,7 +257,11 @@ class UserDocumentsRepository:
     async def archive_active_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
-        """Mark the active document as archived for a user and type, if present."""
+        """
+        Mark the active document as archived for a user and type, if present.
+
+        Returns the updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
@@ -237,12 +274,16 @@ class UserDocumentsRepository:
             return None
         record.document_status = DocumentStatus.ARCHIVED
         await self.session.flush()
-        return GetResponse.model_validate(record, from_attributes=True)
+        return await self._to_get_response(record)
 
     async def restore_archived_to_active(
         self, document_id: UUID4
     ) -> GetResponse | None:
-        """Restore a previously archived document back to active status."""
+        """
+        Restore a previously archived document back to active status.
+
+        Returns the updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.id == document_id,
             TableModel.document_status == DocumentStatus.ARCHIVED,
@@ -254,12 +295,16 @@ class UserDocumentsRepository:
             return None
         record.document_status = DocumentStatus.ACTIVE
         await self.session.flush()
-        return GetResponse.model_validate(record, from_attributes=True)
+        return await self._to_get_response(record)
 
     async def soft_delete_pending_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
-        """Soft-delete a pending document for a user and type, if present."""
+        """
+        Soft-delete a pending document for a user and type, if present.
+
+        Returns the updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
@@ -273,12 +318,16 @@ class UserDocumentsRepository:
         record.is_deleted = True
         record.deleted_at = datetime.now(tz=timezone.utc)
         await self.session.flush()
-        return GetResponse.model_validate(record, from_attributes=True)
+        return await self._to_get_response(record)
 
     async def soft_delete_active_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
-        """Soft-delete the active document for a user and type, if present."""
+        """
+        Soft-delete the active document for a user and type, if present.
+
+        Returns the updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
@@ -292,7 +341,7 @@ class UserDocumentsRepository:
         record.is_deleted = True
         record.deleted_at = datetime.now(tz=timezone.utc)
         await self.session.flush()
-        return GetResponse.model_validate(record, from_attributes=True)
+        return await self._to_get_response(record)
 
     async def list_visible_by_user_id(
         self, user_id: UUID4
@@ -339,7 +388,11 @@ class UserDocumentsRepository:
     async def soft_delete_all_active_for_user(
         self, user_id: UUID4
     ) -> List[GetResponse]:
-        """Soft-delete every active or pending document row for a user."""
+        """
+        Soft-delete every active or pending document row for a user.
+
+        Returns each updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_status.in_(
@@ -354,11 +407,10 @@ class UserDocumentsRepository:
         for record in records:
             record.is_deleted = True
             record.deleted_at = now
-            deleted.append(
-                GetResponse.model_validate(record, from_attributes=True)
-            )
         if records:
             await self.session.flush()
+            for record in records:
+                deleted.append(await self._to_get_response(record))
         return deleted
 
     async def create_upload_record(
@@ -398,7 +450,11 @@ class UserDocumentsRepository:
         *,
         gcs_object_path: str,
     ) -> GetResponse:
-        """Update a pending row to active with its final GCS path."""
+        """
+        Promote a pending row to active and set its final GCS object path.
+
+        Returns the updated row with refreshed server timestamps.
+        """
         query = select(TableModel).where(
             TableModel.id == document_id,
             TableModel.document_status == DocumentStatus.PENDING,
@@ -411,4 +467,4 @@ class UserDocumentsRepository:
         record.gcs_object_path = gcs_object_path
         record.document_status = DocumentStatus.ACTIVE
         await self.session.flush()
-        return GetResponse.model_validate(record, from_attributes=True)
+        return await self._to_get_response(record)

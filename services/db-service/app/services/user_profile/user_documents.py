@@ -5,7 +5,9 @@ from io import BytesIO
 from uuid import uuid4
 
 from fastapi import UploadFile
-from gatepass_docs import requires_admin_approval  # pyright: ignore[reportMissingImports]
+from gatepass_docs import (
+    requires_admin_approval,  # pyright: ignore[reportMissingImports]
+)
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,13 +66,17 @@ class UserDocumentsService:
         return await self.repository.update(id=id, request=request)
 
     async def list(self, page: int = 1, limit: int = 20) -> ListResponse:
-        """List active user document metadata rows with pagination."""
+        """List non-deleted user document metadata rows with pagination."""
         return await self.repository.list(page=page, limit=limit)
 
     async def search(
         self, request: SearchRequest, page: int = 1, limit: int = 20
     ) -> ListResponse:
-        """Search active user document metadata rows with filters."""
+        """
+        Search non-deleted user document metadata rows with filters.
+
+        ``document_status`` supports one or more values (OR semantics).
+        """
         return await self.repository.search(
             request=request, page=page, limit=limit
         )
@@ -184,9 +190,11 @@ class UserDocumentsService:
 
     async def approve(self, document_id: UUID4) -> ApproveResponse:
         """
-        Promote a pending document from temp storage to the main folder.
+        Promote a pending document from temp GCS storage to the main folder.
 
-        Archives any previously active document of the same type for the user.
+        Archives any previously active document of the same type for the user,
+        moves the object in GCS (copy + delete), then marks the pending row
+        active with the final object path.
         """
         pending = await self.repository.get_by_id(
             document_id, document_status=DocumentStatus.PENDING
