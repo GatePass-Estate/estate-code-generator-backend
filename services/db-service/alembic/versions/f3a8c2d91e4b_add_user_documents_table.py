@@ -1,7 +1,7 @@
 """Add user_documents table for GCS-backed profile picture and ID card metadata.
 
 Revision ID: f3a8c2d91e4b
-Revises: 85957ce6ec4a
+Revises: 643ae5b5facc
 Create Date: 2026-07-05 12:00:00.000000
 
 """
@@ -15,7 +15,7 @@ from sqlalchemy.sql import func
 
 # revision identifiers, used by Alembic.
 revision: str = "f3a8c2d91e4b"
-down_revision: Union[str, None] = "85957ce6ec4a"
+down_revision: Union[str, None] = "643ae5b5facc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
