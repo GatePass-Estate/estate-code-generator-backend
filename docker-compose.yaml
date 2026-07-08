@@ -127,6 +127,7 @@ services:
     volumes:
       - ./services/user_profile_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
+      - ./shared/gatepass_docs:/shared/gatepass_docs
     env_file:
       - ./services/user_profile_service/.env.secrets
       - ./services/user_profile_service/.env.localdocker
@@ -179,6 +180,7 @@ services:
     volumes:
       - ./services/db-service/app:/src/service/app
       - ./services/db-service/alembic:/src/service/alembic
+      - ./shared/gatepass_docs:/shared/gatepass_docs
       - ./services/db-service/secrets:/var/secrets/gcs:ro
     env_file:
       - ./services/db-service/.env.secrets

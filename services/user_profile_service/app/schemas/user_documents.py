@@ -8,9 +8,11 @@ model_config = ConfigDict(from_attributes=True, extra="ignore")
 
 __all__ = [
     "DocumentType",
+    "DocumentStatus",
     "DocumentMetadataItem",
     "UserDocumentsMetadataResponse",
     "UploadDocumentResponse",
+    "ApproveDocumentResponse",
 ]
 
 
@@ -21,12 +23,25 @@ class DocumentType(StrEnum):
     ID_CARD = "id_card"
 
 
+class DocumentStatus(StrEnum):
+    """Lifecycle status for profile_picture and id_card documents."""
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
 class DocumentMetadataItem(BaseModel):
     """Metadata and client-facing URLs for one user document."""
 
     document_type: DocumentType
     content_type: str
-    view_url: str
+    document_status: DocumentStatus | None = None
+    document_id: str | None = Field(
+        default=None,
+        description="Document row ID (present for pending uploads)",
+    )
+    view_url: str | None = None
     download_url: str | None = Field(
         default=None,
         description="Present only when the requester may download this document",
@@ -47,5 +62,20 @@ class UploadDocumentResponse(BaseModel):
     document_type: DocumentType
     content_type: str
     file_size_bytes: int
-    view_url: str
+    document_id: str
+    document_status: DocumentStatus | None = None
+    view_url: str | None = Field(
+        default=None,
+        description="Present only when the document is immediately active",
+    )
+    model_config = model_config
+
+
+class ApproveDocumentResponse(BaseModel):
+    """Response returned after an admin approves a pending document."""
+
+    document_id: str
+    document_type: DocumentType
+    document_status: DocumentStatus
+    archived_document_id: str | None = None
     model_config = model_config

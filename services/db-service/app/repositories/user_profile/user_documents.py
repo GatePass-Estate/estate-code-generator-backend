@@ -17,6 +17,7 @@ from app.schemas.user_profile.user_documents import (
     CreateRequest,
     CreateResponse,
     DeleteResponse,
+    DocumentStatus,
     DocumentType,
     GetResponse,
     ListResponse,
@@ -176,6 +177,7 @@ class UserDocumentsRepository:
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.ACTIVE,
             TableModel.is_deleted == False,  # noqa: E712
         )
         result = await self.session.execute(query)
@@ -184,13 +186,84 @@ class UserDocumentsRepository:
             return None
         return GetResponse.model_validate(record, from_attributes=True)
 
-    async def soft_delete_active_by_user_and_type(
+    async def get_pending_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
-        """Soft-delete the active document for a user and type, if present."""
+        """Return the pending document for a user and type, if present."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
             TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.PENDING,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def get_by_id(
+        self,
+        document_id: UUID4,
+        *,
+        document_status: DocumentStatus | None = None,
+    ) -> GetResponse:
+        """Fetch an active document row by primary key, optionally filtered by status."""
+        query = select(TableModel).where(
+            TableModel.id == document_id,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        if document_status is not None:
+            query = query.where(TableModel.document_status == document_status)
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise NotFoundError("Record with ID %s not found" % document_id)
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def archive_active_by_user_and_type(
+        self, user_id: UUID4, document_type: DocumentType
+    ) -> GetResponse | None:
+        """Mark the active document as archived for a user and type, if present."""
+        query = select(TableModel).where(
+            TableModel.user_id == user_id,
+            TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.ACTIVE,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.document_status = DocumentStatus.ARCHIVED
+        await self.session.flush()
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def restore_archived_to_active(
+        self, document_id: UUID4
+    ) -> GetResponse | None:
+        """Restore a previously archived document back to active status."""
+        query = select(TableModel).where(
+            TableModel.id == document_id,
+            TableModel.document_status == DocumentStatus.ARCHIVED,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.document_status = DocumentStatus.ACTIVE
+        await self.session.flush()
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def soft_delete_pending_by_user_and_type(
+        self, user_id: UUID4, document_type: DocumentType
+    ) -> GetResponse | None:
+        """Soft-delete a pending document for a user and type, if present."""
+        query = select(TableModel).where(
+            TableModel.user_id == user_id,
+            TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.PENDING,
             TableModel.is_deleted == False,  # noqa: E712
         )
         result = await self.session.execute(query)
@@ -202,12 +275,50 @@ class UserDocumentsRepository:
         await self.session.flush()
         return GetResponse.model_validate(record, from_attributes=True)
 
+    async def soft_delete_active_by_user_and_type(
+        self, user_id: UUID4, document_type: DocumentType
+    ) -> GetResponse | None:
+        """Soft-delete the active document for a user and type, if present."""
+        query = select(TableModel).where(
+            TableModel.user_id == user_id,
+            TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.ACTIVE,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.is_deleted = True
+        record.deleted_at = datetime.now(tz=timezone.utc)
+        await self.session.flush()
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def list_visible_by_user_id(
+        self, user_id: UUID4
+    ) -> List[GetResponse]:
+        """List active and pending document rows for a user."""
+        query = select(TableModel).where(
+            TableModel.user_id == user_id,
+            TableModel.document_status.in_(
+                (DocumentStatus.ACTIVE, DocumentStatus.PENDING)
+            ),
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        records = result.scalars().all()
+        return [
+            GetResponse.model_validate(record, from_attributes=True)
+            for record in records
+        ]
+
     async def list_active_by_user_id(
         self, user_id: UUID4
     ) -> List[GetResponse]:
-        """List all active document metadata rows for a user."""
+        """List active document metadata rows for a user."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
+            TableModel.document_status == DocumentStatus.ACTIVE,
             TableModel.is_deleted == False,  # noqa: E712
         )
         result = await self.session.execute(query)
@@ -228,9 +339,12 @@ class UserDocumentsRepository:
     async def soft_delete_all_active_for_user(
         self, user_id: UUID4
     ) -> List[GetResponse]:
-        """Soft-delete every active document row for a user."""
+        """Soft-delete every active or pending document row for a user."""
         query = select(TableModel).where(
             TableModel.user_id == user_id,
+            TableModel.document_status.in_(
+                (DocumentStatus.ACTIVE, DocumentStatus.PENDING)
+            ),
             TableModel.is_deleted == False,  # noqa: E712
         )
         result = await self.session.execute(query)
@@ -258,6 +372,7 @@ class UserDocumentsRepository:
         file_size_bytes: int,
         original_filename: str | None,
         uploaded_by: UUID4,
+        document_status: DocumentStatus | None,
     ) -> GetResponse:
         """Insert metadata for a newly uploaded GCS object."""
         record = await self._setitem(
@@ -272,6 +387,28 @@ class UserDocumentsRepository:
                 file_size_bytes=file_size_bytes,
                 original_filename=original_filename,
                 uploaded_by=uploaded_by,
+                document_status=document_status,
             ),
         )
+        return GetResponse.model_validate(record, from_attributes=True)
+
+    async def promote_pending_to_active(
+        self,
+        document_id: UUID4,
+        *,
+        gcs_object_path: str,
+    ) -> GetResponse:
+        """Update a pending row to active with its final GCS path."""
+        query = select(TableModel).where(
+            TableModel.id == document_id,
+            TableModel.document_status == DocumentStatus.PENDING,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise NotFoundError("Pending document %s not found" % document_id)
+        record.gcs_object_path = gcs_object_path
+        record.document_status = DocumentStatus.ACTIVE
+        await self.session.flush()
         return GetResponse.model_validate(record, from_attributes=True)

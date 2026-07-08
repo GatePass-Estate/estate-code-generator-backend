@@ -46,6 +46,37 @@ async def upload_object(
     await asyncio.to_thread(_upload)
 
 
+async def copy_object(
+    source_path: str,
+    destination_path: str,
+    *,
+    client: storage.Client | None = None,
+) -> None:
+    """Copy a GCS object to a new path within the same bucket."""
+
+    def _copy() -> None:
+        gcs_client = _get_client(client)
+        bucket = gcs_client.bucket(settings.GCS_DOCUMENTS_BUCKET)
+        bucket.copy_blob(
+            bucket.blob(source_path),
+            bucket,
+            destination_path,
+        )
+
+    await asyncio.to_thread(_copy)
+
+
+async def move_object(
+    source_path: str,
+    destination_path: str,
+    *,
+    client: storage.Client | None = None,
+) -> None:
+    """Copy a GCS object to a new path and delete the source."""
+    await copy_object(source_path, destination_path, client=client)
+    await delete_object(source_path, client=client)
+
+
 async def delete_object(
     object_path: str,
     *,

@@ -53,7 +53,9 @@ def validate_file_size(document_type: DocumentType, size: int) -> None:
 
 
 def validate_magic_bytes(content_type: str, data: bytes) -> None:
-    """Raise DocumentValidationError when file magic bytes do not match MIME."""
+    """
+    Raise DocumentValidationError when file magic bytes do not match MIME.
+    """
     if content_type == "image/jpeg" and not data.startswith(_JPEG_MAGIC):
         raise DocumentValidationError("File is not a valid JPEG image")
     if content_type == "application/pdf" and not data.startswith(_PDF_MAGIC):
@@ -67,10 +69,14 @@ def build_object_path(
     document_type: DocumentType,
     document_id: str,
     content_type: str,
+    pending: bool = False,
 ) -> str:
-    """Build the stable GCS object key for a new upload."""
+    """Build the GCS object key for a new upload (main or temp folder)."""
     extension = _EXTENSION_BY_CONTENT_TYPE[content_type]
-    return (
-        f"estates/{estate_id}/users/{user_id}/"
-        f"{document_type.value}_{document_id}.{extension}"
+    folder = "temp" if pending else ""
+    prefix = (
+        f"estates/{estate_id}/users/{user_id}/temp/"
+        if folder
+        else f"estates/{estate_id}/users/{user_id}/"
     )
+    return f"{prefix}{document_type.value}_{document_id}.{extension}"

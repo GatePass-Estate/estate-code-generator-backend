@@ -13,6 +13,7 @@ from app.schemas.base import (
 
 __all__ = [
     "DocumentType",
+    "DocumentStatus",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -22,6 +23,7 @@ __all__ = [
     "SearchRequest",
     "ListResponse",
     "UploadResponse",
+    "ApproveResponse",
     "DeleteAllForUserResponse",
 ]
 
@@ -31,6 +33,28 @@ class DocumentType(StrEnum):
 
     PROFILE_PICTURE = "profile_picture"
     ID_CARD = "id_card"
+
+
+class DocumentStatus(StrEnum):
+    """Lifecycle status for profile_picture and id_card documents."""
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+_DOCUMENT_STATUS_TYPES = frozenset(
+    {DocumentType.PROFILE_PICTURE, DocumentType.ID_CARD}
+)
+
+
+def default_document_status(
+    document_type: DocumentType,
+) -> DocumentStatus | None:
+    """Return the default status for types that use the status column."""
+    if document_type in _DOCUMENT_STATUS_TYPES:
+        return DocumentStatus.ACTIVE
+    return None
 
 
 class UserDocumentBase(BaseModel):
@@ -48,6 +72,10 @@ class UserDocumentBase(BaseModel):
         default=None, description="Original upload filename"
     )
     uploaded_by: UUID4 = Field(..., description="Uploader user ID")
+    document_status: DocumentStatus | None = Field(
+        default=None,
+        description="Lifecycle status (profile_picture and id_card only)",
+    )
 
     @field_serializer("user_id", "estate_id", "uploaded_by")
     def serialize_uuids(self, value: UUID4) -> str:
@@ -80,6 +108,7 @@ class UpdateRequest(BaseModel):
     content_type: str | None = None
     file_size_bytes: int | None = None
     original_filename: str | None = None
+    document_status: DocumentStatus | None = None
 
     model_config = model_config
 
@@ -109,6 +138,7 @@ class SearchRequest(BaseSearchRequest):
     estate_id: UUID4 | None = None
     document_type: DocumentType | None = None
     uploaded_by: UUID4 | None = None
+    document_status: DocumentStatus | None = None
 
 
 class ListResponse(BaseListResponse):
@@ -127,9 +157,28 @@ class UploadResponse(BaseModel):
     file_size_bytes: int
     gcs_object_path: str
     id: UUID4
+    document_status: DocumentStatus | None = None
 
     @field_serializer("id")
     def serialize_id(self, value: UUID4) -> str:
+        return str(value)
+
+    model_config = model_config
+
+
+class ApproveResponse(BaseModel):
+    """Response returned after promoting a pending document to active."""
+
+    id: UUID4
+    document_type: DocumentType
+    document_status: DocumentStatus
+    gcs_object_path: str
+    archived_document_id: UUID4 | None = None
+
+    @field_serializer("id", "archived_document_id")
+    def serialize_ids(self, value: UUID4 | None) -> str | None:
+        if value is None:
+            return None
         return str(value)
 
     model_config = model_config

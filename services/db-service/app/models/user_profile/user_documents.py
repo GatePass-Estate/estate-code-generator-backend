@@ -12,7 +12,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
-from app.schemas.user_profile.user_documents import DocumentType
+from app.schemas.user_profile.user_documents import (
+    DocumentStatus,
+    DocumentType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +32,26 @@ class UserDocuments(BaseModelDB):
     __tablename__ = "user_documents"
     __table_args__ = (
         Index(
-            "uq_core_user_documents_user_id_document_type_active",
+            "uq_core_user_documents_user_type_status_active",
             "user_id",
             "document_type",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text(
+                "is_deleted = false "
+                "AND document_status = 'active' "
+                "AND document_type IN ('profile_picture', 'id_card')"
+            ),
+        ),
+        Index(
+            "uq_core_user_documents_user_type_status_pending",
+            "user_id",
+            "document_type",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false "
+                "AND document_status = 'pending' "
+                "AND document_type IN ('profile_picture', 'id_card')"
+            ),
         ),
         {"schema": "core"},
     )
@@ -68,4 +86,14 @@ class UserDocuments(BaseModelDB):
         UUID(as_uuid=True),
         ForeignKey("core.users.id"),
         nullable=False,
+    )
+    document_status = Column(
+        Enum(
+            DocumentStatus,
+            name="documentstatus",
+            schema="core",
+            create_type=False,
+            values_callable=lambda obj: [m.value for m in obj],
+        ),
+        nullable=True,
     )

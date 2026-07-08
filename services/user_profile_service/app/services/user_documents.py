@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Literal
 
+import httpx
 from fastapi import HTTPException, UploadFile
 
 from app.libs.document_filenames import stream_filename
@@ -17,7 +18,9 @@ from app.libs.document_validation import (
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
 from app.schemas.user_documents import (
+    ApproveDocumentResponse,
     DocumentMetadataItem,
+    DocumentStatus,
     UploadDocumentResponse,
     UserDocumentsMetadataResponse,
 )
@@ -101,13 +104,25 @@ class UserDocumentsService:
             user_id=str(requester["id"]),
             estate_id=str(requester["estate_id"]),
             document_type=doc_type.value,
+            uploader_role=requester["role"],
         )
+
+        document_status = result.get("document_status")
+        status_enum = (
+            DocumentStatus(document_status) if document_status else None
+        )
+        document_id = str(result["id"])
+        view_url = None
+        if status_enum != DocumentStatus.PENDING:
+            view_url = self._view_url(str(requester["id"]), doc_type.value)
 
         return UploadDocumentResponse(
             document_type=DocumentType(result["document_type"]),
             content_type=result["content_type"],
             file_size_bytes=result["file_size_bytes"],
-            view_url=self._view_url(str(requester["id"]), doc_type.value),
+            document_id=document_id,
+            document_status=status_enum,
+            view_url=view_url,
         )
 
     async def get_metadata(
@@ -122,21 +137,170 @@ class UserDocumentsService:
         if not can_view(requester, target_user, permissions):
             raise HTTPException(status_code=403, detail="Not allowed to view")
 
-        search_result = await self.repository.search_by_user(target_user_id)
+        is_owner = str(requester["id"]) == target_user_id
+        if is_owner:
+            search_result = await self.repository.search_by_user(
+                target_user_id
+            )
+        else:
+            search_result = await self.repository.search_by_user(
+                target_user_id, document_status="active"
+            )
+
         documents: list[DocumentMetadataItem] = []
         for item in search_result.get("items", []):
+            raw_status = item.get("document_status")
+            if raw_status == DocumentStatus.ARCHIVED.value:
+                continue
             doc_type = item["document_type"]
             owner_id = str(item["user_id"])
+            raw_status = item.get("document_status")
+            status_enum = (
+                DocumentStatus(raw_status) if raw_status is not None else None
+            )
+            document_id = str(item["id"])
+            view_url = None
+            download_url = None
+            if status_enum != DocumentStatus.PENDING:
+                view_url = self._view_url(owner_id, doc_type)
+                if can_download(requester, target_user, permissions):
+                    download_url = self._download_url(owner_id, doc_type)
+            elif is_owner or requester["role"] in (
+                "admin",
+                "primary_admin",
+                "root",
+            ):
+                view_url = f"{_DOCUMENTS_BASE}/pending/{document_id}/view"
+
             entry = DocumentMetadataItem(
                 document_type=DocumentType(doc_type),
                 content_type=item["content_type"],
-                view_url=self._view_url(owner_id, doc_type),
+                document_status=status_enum,
+                document_id=document_id,
+                view_url=view_url,
+                download_url=download_url,
             )
-            if can_download(requester, target_user, permissions):
-                entry.download_url = self._download_url(owner_id, doc_type)
             documents.append(entry)
 
         return UserDocumentsMetadataResponse(documents=documents)
+
+    async def approve_document(
+        self,
+        requester: dict[str, Any],
+        document_id: str,
+    ) -> ApproveDocumentResponse:
+        """Approve a pending document after admin review."""
+        if requester["role"] not in ("admin", "primary_admin", "root"):
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can approve documents",
+            )
+
+        doc_meta = await self.repository.get_by_id(document_id)
+        if doc_meta.get("document_status") != DocumentStatus.PENDING.value:
+            raise HTTPException(
+                status_code=400,
+                detail="Only pending documents can be approved",
+            )
+
+        if requester["role"] != "root":
+            target_user = await self._resolve_target_user(
+                str(doc_meta["user_id"])
+            )
+            if str(target_user.estate_id) != str(requester.get("estate_id")):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Cannot approve documents from other estates",
+                )
+
+        result = await self.repository.approve(document_id)
+        archived_id = result.get("archived_document_id")
+
+        return ApproveDocumentResponse(
+            document_id=str(result["id"]),
+            document_type=DocumentType(result["document_type"]),
+            document_status=DocumentStatus(result["document_status"]),
+            archived_document_id=(
+                str(archived_id) if archived_id is not None else None
+            ),
+        )
+
+    async def stream_pending_document(
+        self,
+        requester: dict[str, Any],
+        document_id: str,
+        *,
+        disposition: Literal["inline", "attachment"],
+    ) -> dict[str, Any]:
+        """Stream a pending document by row ID for owner or admin review."""
+        doc_meta = await self.repository.get_by_id(document_id)
+        if doc_meta.get("document_status") != DocumentStatus.PENDING.value:
+            raise HTTPException(
+                status_code=404, detail="Pending document not found"
+            )
+
+        owner_id = str(doc_meta["user_id"])
+        is_owner = str(requester["id"]) == owner_id
+        is_admin = requester["role"] in ("admin", "primary_admin", "root")
+
+        if not is_owner and not is_admin:
+            raise HTTPException(status_code=403, detail="Not allowed to view")
+
+        if is_admin and not is_owner and requester["role"] != "root":
+            target_user = await self._resolve_target_user(owner_id)
+            if str(target_user.estate_id) != str(requester.get("estate_id")):
+                raise HTTPException(
+                    status_code=403, detail="Not allowed to view"
+                )
+
+        url = f"{self.repository.endpoint}/by-id/{document_id}/stream"
+        http_client = httpx.AsyncClient(timeout=60.0)
+        try:
+            response = await http_client.send(
+                http_client.build_request("GET", url),
+                stream=True,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            await http_client.aclose()
+            detail = e.response.text
+            try:
+                detail = e.response.json().get("detail", detail)
+            except ValueError:
+                pass
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=detail,
+            ) from e
+        except httpx.RequestError as e:
+            await http_client.aclose()
+            logger.exception("Pending stream request failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Document service unavailable",
+            ) from e
+
+        filename = stream_filename(
+            content_type=response.headers.get(
+                "content-type", "application/octet-stream"
+            ),
+        )
+
+        async def pipe():
+            try:
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    yield chunk
+            finally:
+                await response.aclose()
+                await http_client.aclose()
+
+        return {
+            "media_type": response.headers.get(
+                "content-type", "application/octet-stream"
+            ),
+            "filename": filename,
+            "body": pipe(),
+        }
 
     async def stream_document(
         self,

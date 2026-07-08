@@ -5,6 +5,7 @@ from io import BytesIO
 from uuid import uuid4
 
 from fastapi import UploadFile
+from gatepass_docs import requires_admin_approval  # pyright: ignore[reportMissingImports]
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +21,12 @@ from app.repositories.user_profile.user_documents import (
     UserDocumentsRepository as Repository,
 )
 from app.schemas.user_profile.user_documents import (
+    ApproveResponse,
     CreateRequest,
     CreateResponse,
     DeleteAllForUserResponse,
     DeleteResponse,
+    DocumentStatus,
     DocumentType,
     GetResponse,
     ListResponse,
@@ -31,6 +34,7 @@ from app.schemas.user_profile.user_documents import (
     UpdateRequest,
     UpdateResponse,
     UploadResponse,
+    default_document_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,20 +90,47 @@ class UserDocumentsService:
         estate_id: UUID4,
         document_type: DocumentType,
         uploaded_by: UUID4,
+        uploader_role: str,
         file: UploadFile,
     ) -> UploadResponse:
         """
-        Validate upload, soft-delete prior active row, write to GCS, and
-        persist metadata. Rolls back the GCS object if the DB insert fails.
+        Validate upload, write to GCS (temp or main), and persist metadata.
+
+        ID card uploads from residents/security/guests are staged as pending in
+        the temp folder. Other uploads are activated immediately.
         """
         content = await file.read()
         content_type = validate_content_type(document_type, file.content_type)
         validate_file_size(document_type, len(content))
         validate_magic_bytes(content_type, content)
 
-        await self.repository.soft_delete_active_by_user_and_type(
-            user_id=user_id, document_type=document_type
+        pending = requires_admin_approval(document_type, uploader_role)
+        document_status = (
+            DocumentStatus.PENDING
+            if pending
+            else default_document_status(document_type)
         )
+
+        if pending:
+            prior_pending = (
+                await self.repository.soft_delete_pending_by_user_and_type(
+                    user_id=user_id, document_type=document_type
+                )
+            )
+            if prior_pending:
+                try:
+                    await gcs_storage.delete_object(
+                        prior_pending.gcs_object_path
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to delete superseded pending GCS object: %s",
+                        prior_pending.gcs_object_path,
+                    )
+        else:
+            await self.repository.archive_active_by_user_and_type(
+                user_id=user_id, document_type=document_type
+            )
 
         document_id = str(uuid4())
         object_path = build_object_path(
@@ -108,6 +139,7 @@ class UserDocumentsService:
             document_type=document_type,
             document_id=document_id,
             content_type=content_type,
+            pending=pending,
         )
 
         await gcs_storage.upload_object(
@@ -126,6 +158,7 @@ class UserDocumentsService:
                 file_size_bytes=len(content),
                 original_filename=file.filename,
                 uploaded_by=uploaded_by,
+                document_status=document_status,
             )
         except Exception:
             try:
@@ -137,7 +170,8 @@ class UserDocumentsService:
                 )
             raise
 
-        signed_url_cache.invalidate(str(user_id), document_type.value)
+        if not pending:
+            signed_url_cache.invalidate(str(user_id), document_type.value)
 
         return UploadResponse(
             document_type=document_type,
@@ -145,6 +179,72 @@ class UserDocumentsService:
             file_size_bytes=len(content),
             gcs_object_path=object_path,
             id=record.id,
+            document_status=document_status,
+        )
+
+    async def approve(self, document_id: UUID4) -> ApproveResponse:
+        """
+        Promote a pending document from temp storage to the main folder.
+
+        Archives any previously active document of the same type for the user.
+        """
+        pending = await self.repository.get_by_id(
+            document_id, document_status=DocumentStatus.PENDING
+        )
+
+        main_path = build_object_path(
+            estate_id=str(pending.estate_id),
+            user_id=str(pending.user_id),
+            document_type=pending.document_type,
+            document_id=str(pending.id),
+            content_type=pending.content_type,
+            pending=False,
+        )
+        original_temp_path = pending.gcs_object_path
+
+        await gcs_storage.move_object(original_temp_path, main_path)
+
+        archived = await self.repository.archive_active_by_user_and_type(
+            user_id=pending.user_id,
+            document_type=pending.document_type,
+        )
+
+        try:
+            active = await self.repository.promote_pending_to_active(
+                document_id,
+                gcs_object_path=main_path,
+            )
+        except Exception:
+            if archived is not None:
+                try:
+                    await self.repository.restore_archived_to_active(
+                        archived.id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to restore archived document %s after "
+                        "promote failure",
+                        archived.id,
+                    )
+            try:
+                await gcs_storage.move_object(main_path, original_temp_path)
+            except Exception:
+                logger.exception(
+                    "Failed to roll back GCS object to temp path: %s",
+                    original_temp_path,
+                )
+            raise
+
+        signed_url_cache.invalidate(
+            str(pending.user_id), pending.document_type.value
+        )
+
+        return ApproveResponse(
+            id=active.id,
+            document_type=active.document_type,
+            document_status=DocumentStatus.ACTIVE,
+            gcs_object_path=main_path,
+            archived_document_id=archived.id if archived else None,
         )
 
     async def delete_all_for_user(
@@ -181,6 +281,23 @@ class UserDocumentsService:
         signed_url = signed_url_cache.get_or_sign(
             str(user_id),
             document_type.value,
+            doc.gcs_object_path,
+        )
+        return doc, signed_url
+
+    async def stream_document_by_id(
+        self, document_id: UUID4
+    ) -> tuple[GetResponse, str]:
+        """Return document metadata and a signed URL for a specific row."""
+        doc = await self.repository.get_by_id(document_id)
+        if doc.document_status not in (
+            DocumentStatus.ACTIVE,
+            DocumentStatus.PENDING,
+        ):
+            raise NotFoundError("Document not found")
+        signed_url = signed_url_cache.get_or_sign(
+            str(doc.user_id),
+            f"{doc.document_type.value}:{doc.id}",
             doc.gcs_object_path,
         )
         return doc, signed_url

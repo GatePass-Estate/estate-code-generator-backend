@@ -9,6 +9,7 @@ from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
 from app.schemas.user_documents import (
+    ApproveDocumentResponse,
     UploadDocumentResponse,
     UserDocumentsMetadataResponse,
 )
@@ -93,6 +94,41 @@ async def download_my_document(
             "Content-Disposition": (
                 f'attachment; filename="{result["filename"]}"'
             ),
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.post(
+    "/pending/{document_id}/approve",
+    response_model=ApproveDocumentResponse,
+)
+async def approve_pending_document(
+    document_id: str,
+    current_user: dict = Depends(get_current_user),
+    service: UserDocumentsService = Depends(get_documents_service),
+) -> ApproveDocumentResponse:
+    """Promote a pending document to active after admin approval."""
+    return await service.approve_document(current_user, document_id)
+
+
+@router.get("/pending/{document_id}/view")
+async def view_pending_document(
+    document_id: str,
+    current_user: dict = Depends(get_current_user),
+    service: UserDocumentsService = Depends(get_documents_service),
+):
+    """Stream a pending document for owner or admin review."""
+    result = await service.stream_pending_document(
+        requester=current_user,
+        document_id=document_id,
+        disposition="inline",
+    )
+    return StreamingResponse(
+        result["body"],
+        media_type=result["media_type"],
+        headers={
+            "Content-Disposition": f'inline; filename="{result["filename"]}"',
             "Cache-Control": "private, no-store",
         },
     )

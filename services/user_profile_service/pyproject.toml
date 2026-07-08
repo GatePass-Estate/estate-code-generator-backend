@@ -9,6 +9,7 @@ packages = [{include = "app"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+gatepass-docs = {path = "../../shared/gatepass_docs", develop = true}
 gatepass-notify = {path = "../../shared/gatepass_notify", develop = true}
 fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}

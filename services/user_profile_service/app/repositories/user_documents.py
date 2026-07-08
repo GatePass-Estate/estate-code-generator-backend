@@ -47,6 +47,7 @@ class UserDocumentsRepository:
         user_id: str,
         estate_id: str,
         document_type: str,
+        uploader_role: str,
     ) -> dict[str, Any]:
         """Multipart upload to db-service and return the JSON response."""
         files = {
@@ -60,6 +61,7 @@ class UserDocumentsRepository:
             "user_id": user_id,
             "estate_id": estate_id,
             "document_type": document_type,
+            "uploader_role": uploader_role,
         }
         async with httpx.AsyncClient(
             timeout=_STREAM_TIMEOUT_SECONDS
@@ -97,6 +99,7 @@ class UserDocumentsRepository:
             {
                 "user_id": user_id,
                 "document_type": document_type,
+                "document_status": "active",
                 "page": 1,
                 "limit": 1,
             }
@@ -112,10 +115,22 @@ class UserDocumentsRepository:
         return items[0] if items else None
 
     async def search_by_user(
-        self, user_id: str, page: int = 1, limit: int = 20
+        self,
+        user_id: str,
+        *,
+        document_status: str | None = None,
+        page: int = 1,
+        limit: int = 20,
     ) -> dict[str, Any]:
         """Search document metadata rows for a user."""
-        params = urlencode({"user_id": user_id, "page": page, "limit": limit})
+        query: dict[str, Any] = {
+            "user_id": user_id,
+            "page": page,
+            "limit": limit,
+        }
+        if document_status is not None:
+            query["document_status"] = document_status
+        params = urlencode(query)
         url = f"{self.endpoint}/search?{params}"
         response = await self.client.async_get(url)
         if response is None:
@@ -124,6 +139,44 @@ class UserDocumentsRepository:
                 detail="Failed to fetch user documents metadata",
             )
         return response
+
+    async def get_by_id(self, document_id: str) -> dict[str, Any]:
+        """Fetch a document metadata row by ID."""
+        url = f"{self.endpoint}/{document_id}"
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found",
+            )
+        return response
+
+    async def approve(self, document_id: str) -> dict[str, Any]:
+        """Promote a pending document to active via db-service."""
+        url = f"{self.endpoint}/{document_id}/approve"
+        async with httpx.AsyncClient(
+            timeout=_STREAM_TIMEOUT_SECONDS
+        ) as http_client:
+            try:
+                response = await http_client.post(url)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                detail = e.response.text
+                try:
+                    detail = e.response.json().get("detail", detail)
+                except ValueError:
+                    pass
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=detail,
+                ) from e
+            except httpx.RequestError as e:
+                logger.exception("Approve request failed")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Document service unavailable",
+                ) from e
 
     async def stream_from_db_service(
         self, user_id: str, document_type: str

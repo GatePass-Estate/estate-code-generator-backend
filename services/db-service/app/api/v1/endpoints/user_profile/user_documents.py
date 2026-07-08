@@ -21,10 +21,12 @@ from app.db.session import get_db_session
 from app.libs import gcs_storage
 from app.libs.document_filenames import stream_filename
 from app.schemas.user_profile.user_documents import (
+    ApproveResponse,
     CreateRequest,
     CreateResponse,
     DeleteAllForUserResponse,
     DeleteResponse,
+    DocumentStatus,
     DocumentType,
     GetResponse,
     ListResponse,
@@ -58,6 +60,7 @@ async def upload_document(
     user_id: UUID4 = Form(...),
     estate_id: UUID4 = Form(...),
     document_type: DocumentType = Form(...),
+    uploader_role: str = Form(...),
     file: UploadFile = File(...),
     service: Service = Depends(get_service),
 ) -> UploadResponse:
@@ -68,6 +71,7 @@ async def upload_document(
             estate_id=estate_id,
             document_type=document_type,
             uploaded_by=user_id,
+            uploader_role=uploader_role,
             file=file,
         )
     except DocumentValidationError as e:
@@ -79,6 +83,62 @@ async def upload_document(
         raise HTTPException(status_code=status_code, detail=str(e)) from e
     except Exception as e:
         logger.exception("Upload failed")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post(
+    "/{document_id}/approve",
+    response_model=ApproveResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def approve_document(
+    document_id: UUID4,
+    service: Service = Depends(get_service),
+) -> ApproveResponse:
+    """Promote a pending document from temp storage to active."""
+    try:
+        return await service.approve(document_id=document_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Approve document failed for %s", document_id)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/by-id/{document_id}/stream",
+    status_code=status.HTTP_200_OK,
+)
+async def stream_document_by_id(
+    document_id: UUID4,
+    service: Service = Depends(get_service),
+):
+    """Stream a specific document row (active or pending) by ID."""
+    try:
+        doc, signed_url = await service.stream_document_by_id(
+            document_id=document_id
+        )
+        filename = stream_filename(
+            content_type=doc.content_type,
+            original_filename=doc.original_filename,
+        )
+        return StreamingResponse(
+            gcs_storage.stream_object(signed_url),
+            media_type=doc.content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+            },
+        )
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail="Document not found"
+        ) from e
+    except Exception as e:
+        logger.exception("Stream by id failed")
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -199,6 +259,7 @@ async def search(
     estate_id: UUID4 | None = None,
     document_type: DocumentType | None = None,
     uploaded_by: UUID4 | None = None,
+    document_status: DocumentStatus | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,

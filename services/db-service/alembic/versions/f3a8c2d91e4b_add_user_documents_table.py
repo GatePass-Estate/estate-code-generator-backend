@@ -27,10 +27,20 @@ _documenttype_enum = postgresql.ENUM(
     create_type=False,
 )
 
+_documentstatus_enum = postgresql.ENUM(
+    "pending",
+    "active",
+    "archived",
+    name="documentstatus",
+    schema="core",
+    create_type=False,
+)
+
 
 def upgrade() -> None:
-    """Create documenttype enum and core.user_documents table."""
+    """Create documenttype/documentstatus enums and core.user_documents table."""
     _documenttype_enum.create(op.get_bind(), checkfirst=True)
+    _documentstatus_enum.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "user_documents",
@@ -67,6 +77,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("document_type", _documenttype_enum, nullable=False),
+        sa.Column("document_status", _documentstatus_enum, nullable=True),
         sa.Column("gcs_object_path", sa.String(), nullable=False),
         sa.Column("content_type", sa.String(), nullable=False),
         sa.Column("file_size_bytes", sa.BigInteger(), nullable=True),
@@ -85,12 +96,28 @@ def upgrade() -> None:
         schema="core",
     )
     op.create_index(
-        "uq_core_user_documents_user_id_document_type_active",
+        "uq_core_user_documents_user_type_status_active",
         "user_documents",
         ["user_id", "document_type"],
         unique=True,
         schema="core",
-        postgresql_where=sa.text("is_deleted = false"),
+        postgresql_where=sa.text(
+            "is_deleted = false "
+            "AND document_status = 'active' "
+            "AND document_type IN ('profile_picture', 'id_card')"
+        ),
+    )
+    op.create_index(
+        "uq_core_user_documents_user_type_status_pending",
+        "user_documents",
+        ["user_id", "document_type"],
+        unique=True,
+        schema="core",
+        postgresql_where=sa.text(
+            "is_deleted = false "
+            "AND document_status = 'pending' "
+            "AND document_type IN ('profile_picture', 'id_card')"
+        ),
     )
     op.create_index(
         "ix_core_user_documents_user_id",
@@ -107,9 +134,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop core.user_documents and documenttype enum."""
+    """Drop core.user_documents and documenttype/documentstatus enums."""
     op.drop_index(
-        "uq_core_user_documents_user_id_document_type_active",
+        "uq_core_user_documents_user_type_status_pending",
+        table_name="user_documents",
+        schema="core",
+    )
+    op.drop_index(
+        "uq_core_user_documents_user_type_status_active",
         table_name="user_documents",
         schema="core",
     )
@@ -124,4 +156,5 @@ def downgrade() -> None:
         schema="core",
     )
     op.drop_table("user_documents", schema="core")
+    _documentstatus_enum.drop(op.get_bind(), checkfirst=True)
     _documenttype_enum.drop(op.get_bind(), checkfirst=True)
