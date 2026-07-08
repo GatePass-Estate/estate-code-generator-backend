@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-from app.core.config import settings
+from gatepass_docs import (
+    extension_for_content_type,
+    validate_content_type as shared_validate_content_type,
+    validate_magic_bytes,
+)
+
 from app.core.exceptions import DocumentValidationError
+from app.core.config import settings
 from app.schemas.user_profile.user_documents import DocumentType
 
-_JPEG_MAGIC = b"\xff\xd8\xff"
-_PDF_MAGIC = b"%PDF"
-
-_ALLOWED_CONTENT_TYPES: dict[DocumentType, set[str]] = {
-    DocumentType.PROFILE_PICTURE: {"image/jpeg"},
-    DocumentType.ID_CARD: {"image/jpeg", "application/pdf"},
-}
-
-_EXTENSION_BY_CONTENT_TYPE = {
-    "image/jpeg": "jpg",
-    "application/pdf": "pdf",
-}
+__all__ = [
+    "DocumentType",
+    "DocumentValidationError",
+    "build_object_path",
+    "max_bytes_for_type",
+    "validate_content_type",
+    "validate_file_size",
+    "validate_magic_bytes",
+]
 
 
 def max_bytes_for_type(document_type: DocumentType) -> int:
@@ -31,14 +34,7 @@ def validate_content_type(
     document_type: DocumentType, content_type: str | None
 ) -> str:
     """Validate and return the MIME type allowed for the document type."""
-    if not content_type:
-        raise DocumentValidationError("Content type is required")
-    allowed = _ALLOWED_CONTENT_TYPES[document_type]
-    if content_type not in allowed:
-        raise DocumentValidationError(
-            f"Unsupported content type '{content_type}' for {document_type}"
-        )
-    return content_type
+    return shared_validate_content_type(document_type, content_type)
 
 
 def validate_file_size(document_type: DocumentType, size: int) -> None:
@@ -52,16 +48,6 @@ def validate_file_size(document_type: DocumentType, size: int) -> None:
         )
 
 
-def validate_magic_bytes(content_type: str, data: bytes) -> None:
-    """
-    Raise DocumentValidationError when file magic bytes do not match MIME.
-    """
-    if content_type == "image/jpeg" and not data.startswith(_JPEG_MAGIC):
-        raise DocumentValidationError("File is not a valid JPEG image")
-    if content_type == "application/pdf" and not data.startswith(_PDF_MAGIC):
-        raise DocumentValidationError("File is not a valid PDF document")
-
-
 def build_object_path(
     *,
     estate_id: str,
@@ -72,11 +58,10 @@ def build_object_path(
     pending: bool = False,
 ) -> str:
     """Build the GCS object key for a new upload (main or temp folder)."""
-    extension = _EXTENSION_BY_CONTENT_TYPE[content_type]
-    folder = "temp" if pending else ""
+    extension = extension_for_content_type(content_type)
     prefix = (
         f"estates/{estate_id}/users/{user_id}/temp/"
-        if folder
+        if pending
         else f"estates/{estate_id}/users/{user_id}/"
     )
     return f"{prefix}{document_type.value}_{document_id}.{extension}"

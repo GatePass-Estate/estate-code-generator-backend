@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-_EXTENSION_BY_CONTENT_TYPE = {
-    "image/jpeg": "jpg",
-    "application/pdf": "pdf",
-}
+from gatepass_docs import extension_for_content_type, is_image_content_type
 
 
 def stream_filename(
@@ -19,7 +16,7 @@ def stream_filename(
         if safe_name:
             return safe_name
 
-    extension = _EXTENSION_BY_CONTENT_TYPE.get(content_type, "bin")
-    if content_type == "image/jpeg":
+    extension = extension_for_content_type(content_type)
+    if is_image_content_type(content_type):
         return f"photo.{extension}"
     return f"document.{extension}"

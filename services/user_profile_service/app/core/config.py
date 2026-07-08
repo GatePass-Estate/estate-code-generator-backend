@@ -51,5 +51,13 @@ class Settings(BaseSettings):
     MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
     MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
 
+    # GCS user documents (profile picture, ID card)
+    GCS_PROFILE_PICTURE_MAX_BYTES: int = int(
+        os.getenv("GCS_PROFILE_PICTURE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
+    GCS_ID_CARD_MAX_BYTES: int = int(
+        os.getenv("GCS_ID_CARD_MAX_BYTES", str(10 * 1024 * 1024))
+    )
+
 
 settings = Settings()

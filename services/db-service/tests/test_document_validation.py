@@ -1,9 +1,7 @@
 """Tests for document path building and approval gating."""
 
-from app.libs.document_validation import (
-    build_object_path,
-    requires_admin_approval,
-)
+from app.libs.document_validation import build_object_path
+from gatepass_docs import requires_admin_approval
 from app.schemas.user_profile.user_documents import DocumentType
 
 
@@ -13,10 +11,10 @@ def test_build_object_path_main_folder():
         user_id="u1",
         document_type=DocumentType.PROFILE_PICTURE,
         document_id="doc-1",
-        content_type="image/jpeg",
+        content_type="image/png",
         pending=False,
     )
-    assert path == "estates/e1/users/u1/profile_picture_doc-1.jpg"
+    assert path == "estates/e1/users/u1/profile_picture_doc-1.png"
 
 
 def test_build_object_path_temp_folder():

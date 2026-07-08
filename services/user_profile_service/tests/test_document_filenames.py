@@ -30,6 +30,20 @@ def test_jpeg_fallback_is_photo():
     )
 
 
+def test_png_fallback_is_photo():
+    assert (
+        stream_filename(content_type="image/png", original_filename=None)
+        == "photo.png"
+    )
+
+
+def test_heic_fallback_is_photo():
+    assert (
+        stream_filename(content_type="image/heic", original_filename=None)
+        == "photo.heic"
+    )
+
+
 def test_pdf_fallback_is_document():
     assert (
         stream_filename(content_type="application/pdf", original_filename=None)
