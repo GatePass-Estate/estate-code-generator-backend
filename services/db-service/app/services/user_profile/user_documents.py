@@ -103,7 +103,9 @@ class UserDocumentsService:
         Validate upload, write to GCS (temp or main), and persist metadata.
 
         ID card uploads from residents/security/guests are staged as pending in
-        the temp folder. Other uploads are activated immediately.
+        the temp folder; any prior pending doc of the same type is archived
+        (its temp object is left in place). Other uploads are activated
+        immediately, archiving any prior active doc of the same type.
         """
         content = await file.read()
         content_type = validate_content_type(document_type, file.content_type)
@@ -119,20 +121,15 @@ class UserDocumentsService:
 
         if pending:
             prior_pending = (
-                await self.repository.soft_delete_pending_by_user_and_type(
+                await self.repository.archive_pending_by_user_and_type(
                     user_id=user_id, document_type=document_type
                 )
             )
             if prior_pending:
-                try:
-                    await gcs_storage.delete_object(
-                        prior_pending.gcs_object_path
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to delete superseded pending GCS object: %s",
-                        prior_pending.gcs_object_path,
-                    )
+                logger.info(
+                    "Archived superseded pending document %s in temp storage",
+                    prior_pending.id,
+                )
         else:
             await self.repository.archive_active_by_user_and_type(
                 user_id=user_id, document_type=document_type
@@ -254,6 +251,15 @@ class UserDocumentsService:
             gcs_object_path=main_path,
             archived_document_id=archived.id if archived else None,
         )
+
+    async def archive_pending(self, document_id: UUID4) -> GetResponse:
+        """
+        Archive a pending document row without moving or deleting its GCS object.
+        """
+        archived = await self.repository.archive_pending_by_id(document_id)
+        if archived is None:
+            raise NotFoundError("Pending document %s not found" % document_id)
+        return archived
 
     async def delete_all_for_user(
         self, user_id: UUID4

@@ -15,10 +15,12 @@ from app.libs.document_validation import (
     validate_file_size,
     validate_magic_bytes,
 )
+from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
+from app.schemas.request import RequestType
+from app.services.request import RequestService
 from app.schemas.user_documents import (
-    ApproveDocumentResponse,
     DocumentMetadataItem,
     DocumentStatus,
     UploadDocumentResponse,
@@ -42,10 +44,12 @@ class UserDocumentsService:
         self,
         repository: UserDocumentsRepository,
         user_repository: UserRepository,
+        request_repository: RequestRepository | None = None,
     ) -> None:
-        """Wire HTTP repositories for documents and user lookup."""
+        """Wire HTTP repositories for documents, users, and edit requests."""
         self.repository = repository
         self.user_repository = user_repository
+        self.request_repository = request_repository
 
     async def _get_permissions(self, role: str) -> dict[str, Any]:
         """Load RBAC flags for the requester's role."""
@@ -118,8 +122,28 @@ class UserDocumentsService:
         )
         document_id = str(result["id"])
         view_url = None
+        edit_request_id = None
         if status_enum != DocumentStatus.PENDING:
             view_url = self._view_url(str(requester["id"]), doc_type.value)
+        elif (
+            doc_type == DocumentType.ID_CARD
+            and requester.get("role") not in _ADMIN_ROLES
+            and self.request_repository is not None
+        ):
+            request_service = RequestService(
+                self.request_repository,
+                self.user_repository,
+                self.repository,
+            )
+            existing = await request_service.check_pending_request(
+                str(requester["id"]), RequestType.ID_CHANGE
+            )
+            if existing is None:
+                edit_request_id = await self._create_id_change_request(
+                    requester, document_id
+                )
+            else:
+                edit_request_id = str(existing.id)
 
         return UploadDocumentResponse(
             document_type=DocumentType(result["document_type"]),
@@ -128,7 +152,24 @@ class UserDocumentsService:
             document_id=document_id,
             document_status=status_enum,
             view_url=view_url,
+            edit_request_id=edit_request_id,
         )
+
+    async def _create_id_change_request(
+        self, requester: dict[str, Any], pending_document_id: str
+    ) -> str:
+        """File a pending ID change request for a staged ID card upload."""
+        request_service = RequestService(
+            self.request_repository,
+            self.user_repository,
+            self.repository,
+        )
+        created = await request_service.create_id_change_request(
+            user_id=str(requester["id"]),
+            estate_id=str(requester["estate_id"]),
+            pending_document_id=pending_document_id,
+        )
+        return str(created.id)
 
     async def get_metadata(
         self,
@@ -213,52 +254,6 @@ class UserDocumentsService:
             documents.append(entry)
 
         return UserDocumentsMetadataResponse(documents=documents)
-
-    async def approve_document(
-        self,
-        requester: dict[str, Any],
-        document_id: str,
-    ) -> ApproveDocumentResponse:
-        """
-        Approve a pending document after admin review.
-
-        Delegates to db-service to move the object from temp storage, archive
-        any prior active document, and mark the row active.
-        """
-        if requester["role"] not in ("admin", "primary_admin", "root"):
-            raise HTTPException(
-                status_code=403,
-                detail="Only admins can approve documents",
-            )
-
-        doc_meta = await self.repository.get_by_id(document_id)
-        if doc_meta.get("document_status") != DocumentStatus.PENDING.value:
-            raise HTTPException(
-                status_code=400,
-                detail="Only pending documents can be approved",
-            )
-
-        if requester["role"] != "root":
-            target_user = await self._resolve_target_user(
-                str(doc_meta["user_id"])
-            )
-            if str(target_user.estate_id) != str(requester.get("estate_id")):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Cannot approve documents from other estates",
-                )
-
-        result = await self.repository.approve(document_id)
-        archived_id = result.get("archived_document_id")
-
-        return ApproveDocumentResponse(
-            document_id=str(result["id"]),
-            document_type=DocumentType(result["document_type"]),
-            document_status=DocumentStatus(result["document_status"]),
-            archived_document_id=(
-                str(archived_id) if archived_id is not None else None
-            ),
-        )
 
     async def stream_pending_document(
         self,

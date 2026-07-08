@@ -297,29 +297,6 @@ class UserDocumentsRepository:
         await self.session.flush()
         return await self._to_get_response(record)
 
-    async def soft_delete_pending_by_user_and_type(
-        self, user_id: UUID4, document_type: DocumentType
-    ) -> GetResponse | None:
-        """
-        Soft-delete a pending document for a user and type, if present.
-
-        Returns the updated row with refreshed server timestamps.
-        """
-        query = select(TableModel).where(
-            TableModel.user_id == user_id,
-            TableModel.document_type == document_type,
-            TableModel.document_status == DocumentStatus.PENDING,
-            TableModel.is_deleted == False,  # noqa: E712
-        )
-        result = await self.session.execute(query)
-        record = result.scalar_one_or_none()
-        if record is None:
-            return None
-        record.is_deleted = True
-        record.deleted_at = datetime.now(tz=timezone.utc)
-        await self.session.flush()
-        return await self._to_get_response(record)
-
     async def soft_delete_active_by_user_and_type(
         self, user_id: UUID4, document_type: DocumentType
     ) -> GetResponse | None:
@@ -340,6 +317,49 @@ class UserDocumentsRepository:
             return None
         record.is_deleted = True
         record.deleted_at = datetime.now(tz=timezone.utc)
+        await self.session.flush()
+        return await self._to_get_response(record)
+
+    async def archive_pending_by_id(
+        self, document_id: UUID4
+    ) -> GetResponse | None:
+        """
+        Mark a pending document row as archived by primary key.
+
+        The GCS object is left in place (typically under ``temp/``).
+        """
+        query = select(TableModel).where(
+            TableModel.id == document_id,
+            TableModel.document_status == DocumentStatus.PENDING,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.document_status = DocumentStatus.ARCHIVED
+        await self.session.flush()
+        return await self._to_get_response(record)
+
+    async def archive_pending_by_user_and_type(
+        self, user_id: UUID4, document_type: DocumentType
+    ) -> GetResponse | None:
+        """
+        Mark the pending document as archived for a user and type, if present.
+
+        The GCS object is left in place (typically under ``temp/``).
+        """
+        query = select(TableModel).where(
+            TableModel.user_id == user_id,
+            TableModel.document_type == document_type,
+            TableModel.document_status == DocumentStatus.PENDING,
+            TableModel.is_deleted == False,  # noqa: E712
+        )
+        result = await self.session.execute(query)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.document_status = DocumentStatus.ARCHIVED
         await self.session.flush()
         return await self._to_get_response(record)
 

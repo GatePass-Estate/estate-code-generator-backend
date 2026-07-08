@@ -23,18 +23,30 @@ from app.libs.http_handler import get_http_handler, AsyncHttpHandler
 from app.libs.role_permissions import check_permission
 from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
+from app.repositories.user_documents import UserDocumentsRepository
 from app.services.request import RequestService
 from app.services.auth import get_current_user
 
 router = APIRouter()
 
 
+def get_request_service(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> RequestService:
+    """Return RequestService wired to db-service repositories."""
+    return RequestService(
+        RequestRepository(ahttp_client),
+        UserRepository(ahttp_client),
+        UserDocumentsRepository(ahttp_client),
+    )
+
+
 @router.post("/edit", response_model=CreateEditRequestResponse)
 async def create_edit_request(
     request: CreateEditRequestRequest,
     background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Create a new edit request to change user profile details.
@@ -43,10 +55,6 @@ async def create_edit_request(
     """
     user_id = current_user["id"]
     user_role = current_user["role"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     result = await service.create_edit_request(request, user_id)
 
@@ -83,17 +91,13 @@ async def get_my_requests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Get all edit requests for the current user with pagination.
     """
     user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.list_my_requests(user_id, page, limit)
 
@@ -101,8 +105,8 @@ async def get_my_requests(
 @router.get("/edit/{request_id}", response_model=GetEditRequestResponse)
 async def get_request(
     request_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Get details of a specific edit request by ID.
@@ -111,10 +115,6 @@ async def get_request(
     """
     user_id = current_user["id"]
     user_role = current_user["role"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.get_request(request_id, user_id, user_role)
 
@@ -140,8 +140,8 @@ async def search_requests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Search and list edit requests with optional filters and pagination.
@@ -188,10 +188,6 @@ async def search_requests(
         limit=limit,
     )
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
     return await service.search_requests(search_request, user_id, user_role)
 
 
@@ -200,18 +196,14 @@ async def check_pending_request(
     request_type: RequestType = Query(
         ..., description="Type of field to check for pending request"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Check if the current user has a pending request for a specific field type.
     This helps the frontend prevent duplicate requests and show appropriate UI.
     """
     user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     pending_request = await service.check_pending_request(
         user_id, request_type
@@ -229,8 +221,8 @@ async def check_pending_request(
 async def update_pending_request(
     request_id: str,
     request: UpdatePendingRequestRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Update the new_value of a pending request.
@@ -238,10 +230,6 @@ async def update_pending_request(
     Request must still be in PENDING status.
     """
     user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.update_pending_request(request_id, request, user_id)
 
@@ -251,8 +239,8 @@ async def update_pending_request(
 )
 async def delete_pending_request(
     request_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Cancel (delete) a pending request.
@@ -260,10 +248,6 @@ async def delete_pending_request(
     Request must still be in PENDING status.
     """
     user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.delete_pending_request(request_id, user_id)
 
@@ -277,6 +261,7 @@ async def update_request_status(
     background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Approve or reject a pending edit request.
@@ -295,12 +280,7 @@ async def update_request_status(
             detail="You are not authorized to review requests.",
         )
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
-    # Fetch request data first to get the resident's ID for notification
-    edit_request = await repository.get_request_by_id(request_id)
+    edit_request = await service.repository.get_request_by_id(request_id)
 
     result = await service.update_request_status(
         request_id, request, reviewer_id, reviewer_role

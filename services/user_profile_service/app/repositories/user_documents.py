@@ -187,6 +187,33 @@ class UserDocumentsRepository:
                     detail="Document service unavailable",
                 ) from e
 
+    async def archive_pending(self, document_id: str) -> dict[str, Any]:
+        """Archive a pending document row via db-service."""
+        url = f"{self.endpoint}/{document_id}/archive-pending"
+        async with httpx.AsyncClient(
+            timeout=_STREAM_TIMEOUT_SECONDS
+        ) as http_client:
+            try:
+                response = await http_client.post(url)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                detail = e.response.text
+                try:
+                    detail = e.response.json().get("detail", detail)
+                except ValueError:
+                    pass
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=detail,
+                ) from e
+            except httpx.RequestError as e:
+                logger.exception("Archive pending request failed")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Document service unavailable",
+                ) from e
+
     async def stream_from_db_service(
         self, user_id: str, document_type: str
     ) -> DocumentStream:

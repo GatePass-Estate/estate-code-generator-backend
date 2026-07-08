@@ -12,7 +12,6 @@ __all__ = [
     "DocumentMetadataItem",
     "UserDocumentsMetadataResponse",
     "UploadDocumentResponse",
-    "ApproveDocumentResponse",
 ]
 
 
@@ -68,14 +67,8 @@ class UploadDocumentResponse(BaseModel):
         default=None,
         description="Present only when the document is immediately active",
     )
-    model_config = model_config
-
-
-class ApproveDocumentResponse(BaseModel):
-    """Response returned after an admin approves a pending document."""
-
-    document_id: str
-    document_type: DocumentType
-    document_status: DocumentStatus
-    archived_document_id: str | None = None
+    edit_request_id: str | None = Field(
+        default=None,
+        description="Pending edit request ID when an ID card awaits approval",
+    )
     model_config = model_config

@@ -2,14 +2,23 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify
+from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
 from app.schemas.user_documents import (
-    ApproveDocumentResponse,
     DocumentStatus,
     DocumentType,
     UploadDocumentResponse,
@@ -30,18 +39,50 @@ def get_documents_service(
     return UserDocumentsService(
         repository=UserDocumentsRepository(ahttp_client),
         user_repository=UserRepository(ahttp_client),
+        request_repository=RequestRepository(ahttp_client),
     )
+
+
+_ID_CHANGE_NOTIFY_ROLES = frozenset({"resident", "security", "guest"})
 
 
 @router.post("/upload", response_model=UploadDocumentResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     document_type: str = Form(...),
     current_user: dict = Depends(get_current_user),
     service: UserDocumentsService = Depends(get_documents_service),
 ) -> UploadDocumentResponse:
     """Upload a document for the authenticated user."""
-    return await service.upload(current_user, file, document_type)
+    result = await service.upload(current_user, file, document_type)
+
+    if (
+        result.edit_request_id
+        and current_user.get("role") in _ID_CHANGE_NOTIFY_ROLES
+    ):
+        estate_id = current_user.get("estate_id")
+        if estate_id:
+            background_tasks.add_task(
+                fire_notify,
+                {
+                    "type": "EDIT_REQUEST_PENDING",
+                    "title": "New ID change request",
+                    "body": "A user has submitted an ID card change request.",
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["admin", "primary_admin"],
+                    },
+                    "metadata": {
+                        "request_id": result.edit_request_id,
+                        "request_type": "id_change",
+                        "requester_name": str(current_user["id"]),
+                        "pending_document_id": result.document_id,
+                    },
+                },
+            )
+
+    return result
 
 
 @router.get("/me", response_model=UserDocumentsMetadataResponse)
@@ -111,24 +152,6 @@ async def download_my_document(
             "Cache-Control": "private, no-store",
         },
     )
-
-
-@router.post(
-    "/pending/{document_id}/approve",
-    response_model=ApproveDocumentResponse,
-)
-async def approve_pending_document(
-    document_id: str,
-    current_user: dict = Depends(get_current_user),
-    service: UserDocumentsService = Depends(get_documents_service),
-) -> ApproveDocumentResponse:
-    """
-    Promote a pending document to active after admin approval.
-
-    Moves the file from temp GCS storage and archives any prior active
-    document of the same type.
-    """
-    return await service.approve_document(current_user, document_id)
 
 
 @router.get("/pending/{document_id}/view")

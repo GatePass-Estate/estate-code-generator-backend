@@ -110,6 +110,27 @@ async def approve_document(
         ) from e
 
 
+@router.post(
+    "/{document_id}/archive-pending",
+    response_model=GetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def archive_pending_document(
+    document_id: UUID4,
+    service: Service = Depends(get_service),
+) -> GetResponse:
+    """Archive a pending document row; the temp GCS object is not moved."""
+    try:
+        return await service.archive_pending(document_id=document_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Archive pending document failed for %s", document_id)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
 @router.get(
     "/by-id/{document_id}/stream",
     status_code=status.HTTP_200_OK,

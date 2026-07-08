@@ -16,6 +16,7 @@ from app.schemas.request import (
 )
 from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
+from app.repositories.user_documents import UserDocumentsRepository
 
 
 class RequestService:
@@ -35,9 +36,11 @@ class RequestService:
         self,
         repository: RequestRepository,
         user_repository: UserRepository,
+        documents_repository: UserDocumentsRepository | None = None,
     ):
         self.repository = repository
         self.user_repository = user_repository
+        self.documents_repository = documents_repository
 
     async def create_edit_request(
         self, request: CreateEditRequestRequest, user_id: str
@@ -61,6 +64,14 @@ class RequestService:
         user = await self.user_repository.get_user_by_id(user_id)
         if not user or user.is_deleted or not user.status:
             raise HTTPException(status_code=404, detail="User not found")
+
+        if request.request_type == RequestType.ID_CHANGE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "ID changes are submitted by uploading an ID card document"
+                ),
+            )
 
         request_type_value = request.request_type.value
         old_value = self._get_current_value(user, request.request_type)
@@ -118,6 +129,60 @@ class RequestService:
         )
 
         return edit_request
+
+    async def create_id_change_request(
+        self,
+        user_id: str,
+        estate_id: str,
+        pending_document_id: str,
+    ) -> CreateEditRequestResponse:
+        """
+        Create a pending ID change request for a newly uploaded pending ID card.
+
+        ``old_value`` is the active ID document row ID, or empty on first upload.
+        ``new_value`` is the pending document row ID awaiting admin approval.
+        """
+        if self.documents_repository is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Document repository not configured",
+            )
+
+        await self._validate_id_change_document(
+            pending_document_id, user_id, require_pending=True
+        )
+
+        existing_pending = await self.repository.get_pending_request_by_type(
+            resident_id=user_id,
+            request_type=RequestType.ID_CHANGE.value,
+        )
+        if existing_pending:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "You already have a pending ID change request",
+                    "existing_request_id": str(existing_pending.id),
+                    "existing_request_created_at": (
+                        existing_pending.created_at.isoformat()
+                    ),
+                    "existing_new_value": existing_pending.new_value,
+                },
+            )
+
+        active = await self.documents_repository.get_active_by_user_and_type(
+            user_id, "id_card"
+        )
+        old_value = str(active["id"]) if active else ""
+
+        return await self.repository.create_request(
+            resident_id=user_id,
+            estate_id=estate_id,
+            request_type=RequestType.ID_CHANGE.value,
+            old_value=old_value,
+            new_value=pending_document_id,
+            status=RequestStatus.PENDING.value,
+            reviewed_by=None,
+        )
 
     async def get_request(
         self, request_id: str, user_id: str, user_role: str
@@ -244,21 +309,31 @@ class RequestService:
                 detail="Cannot review requests from other estates",
             )
 
-        # Update the request status
+        # On approval, apply the side effect (ID document promotion or profile
+        # change) BEFORE flipping the request status. If it fails, the request
+        # stays pending and the error propagates, keeping the two in sync.
+        if status_request.status == RequestStatus.APPROVED:
+            request_type = RequestType(edit_request.request_type)
+            if request_type == RequestType.ID_CHANGE:
+                await self._approve_id_change_document(
+                    reviewer_id=reviewer_id,
+                    reviewer_role=reviewer_role,
+                    pending_document_id=edit_request.new_value or "",
+                    resident_id=str(edit_request.resident_id),
+                )
+            else:
+                await self._apply_profile_change(
+                    str(edit_request.resident_id),
+                    request_type,
+                    edit_request.new_value,
+                )
+
+        # Update the request status only after the side effect succeeded.
         updated_request = await self.repository.update_request_status(
             request_id=request_id,
             status=status_request.status,
             reviewed_by=reviewer_id,
         )
-
-        # If approved, apply the change to user profile
-        if status_request.status == RequestStatus.APPROVED:
-            request_type = RequestType(edit_request.request_type)
-            await self._apply_profile_change(
-                str(edit_request.resident_id),
-                request_type,
-                edit_request.new_value,
-            )
 
         return updated_request
 
@@ -348,6 +423,15 @@ class RequestService:
             request_type, update_data.new_value, user_id
         )
 
+        if request_type == RequestType.ID_CHANGE:
+            await self._validate_id_change_document(
+                update_data.new_value, user_id, require_pending=True
+            )
+            if edit_request.new_value:
+                await self._archive_id_change_pending(
+                    edit_request.new_value, user_id
+                )
+
         # Update the request
         return await self.repository.update_pending_request_value(
             request_id=request_id, new_value=update_data.new_value
@@ -393,6 +477,12 @@ class RequestService:
                 ),
             )
 
+        request_type = RequestType(edit_request.request_type)
+        if request_type == RequestType.ID_CHANGE and edit_request.new_value:
+            await self._archive_id_change_pending(
+                edit_request.new_value, user_id
+            )
+
         # Delete the request
         return await self.repository.delete_pending_request(request_id)
 
@@ -413,6 +503,7 @@ class RequestService:
             RequestType.HOME_ADDRESS_CHANGE: user.home_address,
             RequestType.EMAIL_CHANGE: user.email,
             RequestType.GENDER_CHANGE: user.gender,
+            RequestType.ID_CHANGE: "",
         }
         return str(field_map.get(request_type, ""))
 
@@ -442,6 +533,108 @@ class RequestService:
                 raise HTTPException(
                     status_code=400, detail="Email already in use"
                 )
+
+        if request_type == RequestType.ID_CHANGE:
+            await self._validate_id_change_document(
+                new_value, user_id, require_pending=True
+            )
+
+    async def _validate_id_change_document(
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        require_pending: bool,
+    ) -> dict:
+        """Ensure a document row belongs to the user and is a pending ID card."""
+        if self.documents_repository is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Document repository not configured",
+            )
+
+        doc_meta = await self.documents_repository.get_by_id(document_id)
+        if str(doc_meta.get("user_id")) != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Document does not belong to this user",
+            )
+        if doc_meta.get("document_type") != "id_card":
+            raise HTTPException(
+                status_code=400,
+                detail="ID change requests must reference an ID card document",
+            )
+        status = doc_meta.get("document_status")
+        if require_pending and status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail="ID change requests must reference a pending document",
+            )
+        return doc_meta
+
+    async def _archive_id_change_pending(
+        self, document_id: str, user_id: str
+    ) -> None:
+        """Archive a pending ID card document without moving it from temp."""
+        if self.documents_repository is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Document repository not configured",
+            )
+
+        doc_meta = await self.documents_repository.get_by_id(document_id)
+        if str(doc_meta.get("user_id")) != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Document does not belong to this user",
+            )
+        if doc_meta.get("document_type") != "id_card":
+            raise HTTPException(
+                status_code=400,
+                detail="ID change requests must reference an ID card document",
+            )
+        if doc_meta.get("document_status") != "pending":
+            return
+        await self.documents_repository.archive_pending(document_id)
+
+    async def _approve_id_change_document(
+        self,
+        *,
+        reviewer_id: str,
+        reviewer_role: str,
+        pending_document_id: str,
+        resident_id: str,
+    ) -> None:
+        """Promote the pending ID card referenced by an approved request."""
+        if self.documents_repository is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Document repository not configured",
+            )
+
+        await self._validate_id_change_document(
+            pending_document_id, resident_id, require_pending=True
+        )
+
+        reviewer = await self.user_repository.get_user_by_id(reviewer_id)
+        if reviewer is None:
+            raise HTTPException(status_code=404, detail="Reviewer not found")
+
+        if reviewer_role != "root":
+            target_user = await self.user_repository.get_user_by_id(
+                resident_id
+            )
+            if target_user is None or target_user.is_deleted:
+                raise HTTPException(
+                    status_code=404, detail="Target User not found"
+                )
+            if str(target_user.estate_id) != str(reviewer.estate_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Cannot approve documents from other estates",
+                )
+
+        await self.documents_repository.approve(pending_document_id)
 
     async def _apply_profile_change(
         self, user_id: str, request_type: RequestType, new_value: str
@@ -475,8 +668,6 @@ class RequestService:
                 status_code=400,
                 detail=f"Invalid request type: {request_type}",
             )
-
-        # Apply the update via repository
         await self.user_repository.update_user_field(
             user_id, field_name, new_value
         )
