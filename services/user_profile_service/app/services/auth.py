@@ -70,6 +70,12 @@ class AuthService:
             email, password, estate_id
         )
 
+        if user.get("role") != "root" and not estate_id:
+            raise HTTPException(
+                status_code=422,
+                detail="estate_id is required for non-root login.",
+            )
+
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)
             familiar_cutoff = now - timedelta(
