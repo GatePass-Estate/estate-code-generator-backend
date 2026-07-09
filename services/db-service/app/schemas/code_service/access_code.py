@@ -175,6 +175,10 @@ class GetResponse(SharedModel, AccessCodeBase):
         valid_until (DateTime): Expiration timestamp for the access code.
     """
 
+    deleted_at: datetime | None = Field(
+        default=None, description="UTC timestamp of soft deletion"
+    )
+
 
 class SearchRequest(BaseSearchRequest):
     """

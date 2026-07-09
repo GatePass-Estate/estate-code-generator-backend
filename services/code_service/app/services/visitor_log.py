@@ -21,7 +21,7 @@ class VisitorLogService:
     Two retrieval levels:
 
     * **First level** (``/me``, ``/user``): one entry per unique
-      ``hashed_code``, latest first.
+      ``hashed_code`` with ``usage_count``, latest first.
     * **Second level** (``/me/{code}``, ``/user/{code}``): every visit for a
       single code, latest first.
 
@@ -90,8 +90,8 @@ class VisitorLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level personal visitor history: one entry per unique code,
-        latest first. Security accounts are rejected.
+        First-level personal visitor history: one entry per unique code with
+        ``usage_count``, latest first. Security accounts are rejected.
         """
         self._reject_personal_for_security(requester)
         result = await self.repository.unique_history(
@@ -132,8 +132,9 @@ class VisitorLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level estate-wide visitor history: one entry per unique code,
-        latest first. Requires permission to view other users' logs.
+        First-level estate-wide visitor history: one entry per unique code with
+        ``usage_count``, latest first. Requires permission to view other
+        users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
         result = await self.repository.unique_history(

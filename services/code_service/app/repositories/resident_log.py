@@ -45,7 +45,8 @@ class ResidentLogRepository:
         limit: int = 20,
     ) -> dict:
         """
-        First-level history: one entry per unique code, latest first.
+        First-level history: one entry per unique code with ``usage_count`` and
+        ``code_deleted``, latest first.
 
         Backed by db-service ``residentlog/search`` with ``unique=true``.
         Scope is controlled by ``user_id`` (personal) or ``estate_id``
@@ -89,11 +90,7 @@ class ResidentLogRepository:
     ) -> dict:
         """
         Second-level history: every validation for one code, latest first.
-
-        Backed by db-service ``residentlog/search`` filtered by
-        ``hashed_code``. The BFF service enriches this payload with the
-        earliest access-code row and ``code_deleted`` before returning
-        :class:`CodeHistoryListResponse`.
+        Lifecycle metadata is added by the BFF service layer.
 
         Arguments:
             hashed_code: The specific access code to retrieve events for.
@@ -121,8 +118,8 @@ class ResidentLogRepository:
         """
         Earliest access-code row for ``hashed_code``, including soft-deleted.
 
-        Used by the BFF to populate ``code_deleted`` and the synthetic
-        code-creation item on code-level resident history.
+        Used by the BFF to populate ``code_created_at``, ``code_deleted_at``,
+        and ``code_deleted`` on code-level history.
 
         Returns:
             The first matching access-code dict ordered by ``created_at``, or

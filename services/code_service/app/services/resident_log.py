@@ -21,11 +21,10 @@ class ResidentLogService:
     Two retrieval levels are supported:
 
     * **First level** (``/me``, ``/user``): one entry per unique
-      ``hashed_code``, latest first; returns :class:`ListResponse`.
-    * **Second level** (``/me/{code}``, ``/user/{code}``): every validation
-      for a single code, latest first, plus the earliest access-code creation
-      row when the page covers it; returns :class:`CodeHistoryListResponse`
-      with ``code_deleted``.
+      ``hashed_code`` with ``usage_count`` and ``code_deleted``, latest first.
+    * **Second level** (``/me/{code}``, ``/user/{code}``): validation events
+      for a single code plus access-code lifecycle metadata on
+      :class:`CodeHistoryListResponse`.
 
     Personal endpoints reject security accounts (in-code check). Estate-wide
     endpoints require ``can_view_other_user_logs`` (admin/security within
@@ -83,65 +82,31 @@ class ResidentLogService:
                 detail="Security accounts have no personal access history.",
             )
 
-    @staticmethod
-    def _access_code_to_log_entry(
-        access_code: dict,
-        full_name: str | None,
-    ) -> dict:
-        """Map the earliest access-code row to a code-level history list item."""
-        created_at = access_code["created_at"]
-        return {
-            "id": access_code["id"],
-            "created_at": created_at,
-            "updated_at": access_code["updated_at"],
-            "user_id": access_code["user_id"],
-            "estate_id": access_code["estate_id"],
-            "hashed_code": access_code["hashed_code"],
-            "security_id": None,
-            "access_time": created_at,
-            "full_name": full_name,
-        }
-
     async def _enrich_code_history(
         self,
         result: dict,
         hashed_code: str,
-        page: int,
-        limit: int,
     ) -> dict:
         """
-        Enrich a code-level history payload.
+        Attach access-code lifecycle metadata for code-level history.
 
-        Looks up the earliest access-code row (including soft-deleted) and
-        sets ``code_deleted``. Appends a synthetic creation row as the last
-        item when the current page covers the chronologically earliest slot in
-        the latest-first combined timeline. Used only for
-        :class:`CodeHistoryListResponse`.
+        Sets ``code_created_at``, ``code_deleted``, and ``code_deleted_at``
+        from the earliest access-code row (including soft-deleted). Does not
+        modify ``items``.
         """
         access_code = await self.repository.earliest_access_code(hashed_code)
         if not access_code:
             result["code_deleted"] = False
+            result["code_created_at"] = None
+            result["code_deleted_at"] = None
             return result
 
-        result["code_deleted"] = bool(access_code.get("is_deleted"))
-
-        items = list(result.get("items") or [])
-        full_name = next(
-            (item.get("full_name") for item in items if item.get("full_name")),
-            None,
+        code_deleted = bool(access_code.get("is_deleted"))
+        result["code_deleted"] = code_deleted
+        result["code_created_at"] = access_code.get("created_at")
+        result["code_deleted_at"] = (
+            access_code.get("deleted_at") if code_deleted else None
         )
-        genesis = self._access_code_to_log_entry(access_code, full_name)
-
-        total_logs = int(result.get("total") or 0)
-        genesis_index = total_logs
-        start = (page - 1) * limit
-        end = page * limit
-
-        if start <= genesis_index < end:
-            items.append(genesis)
-            result["items"] = items
-            result["total"] = total_logs + 1
-
         return result
 
     async def my_history(
@@ -153,10 +118,9 @@ class ResidentLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level personal history: one entry per unique code, latest first.
-
-        Returns :class:`ListResponse` without ``code_deleted``. Security
-        accounts are rejected.
+        First-level personal history: one entry per unique code with
+        ``usage_count`` and ``code_deleted``, latest first. Security accounts
+        are rejected.
         """
         self._reject_personal_for_security(requester)
         result = await self.repository.unique_history(
@@ -179,8 +143,7 @@ class ResidentLogService:
         Second-level personal history for one ``hashed_code``.
 
         Returns :class:`CodeHistoryListResponse` with validation rows (latest
-        first), optional appended code-creation row, and ``code_deleted``.
-        Security accounts are rejected.
+        first) and code lifecycle metadata. Security accounts are rejected.
         """
         self._reject_personal_for_security(requester)
         result = await self.repository.code_history(
@@ -189,9 +152,7 @@ class ResidentLogService:
             page=page,
             limit=limit,
         )
-        result = await self._enrich_code_history(
-            result, hashed_code, page, limit
-        )
+        result = await self._enrich_code_history(result, hashed_code)
         return CodeHistoryListResponse.model_validate(result)
 
     async def estate_history(
@@ -203,9 +164,10 @@ class ResidentLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level estate-wide history: one entry per unique code, latest
-        first. Returns :class:`ListResponse` without ``code_deleted``.
-        Requires permission to view other users' logs.
+        First-level estate-wide history: one entry per unique code with
+        ``usage_count`` and ``code_deleted``, latest first. Requires
+        permission to view other
+        users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
         result = await self.repository.unique_history(
@@ -228,8 +190,8 @@ class ResidentLogService:
         Second-level estate-wide history for one ``hashed_code``.
 
         Returns :class:`CodeHistoryListResponse` with validation rows (latest
-        first), optional appended code-creation row, and ``code_deleted``.
-        Requires permission to view other users' logs.
+        first) and code lifecycle metadata. Requires permission to view other
+        users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
         result = await self.repository.code_history(
@@ -238,7 +200,5 @@ class ResidentLogService:
             page=page,
             limit=limit,
         )
-        result = await self._enrich_code_history(
-            result, hashed_code, page, limit
-        )
+        result = await self._enrich_code_history(result, hashed_code)
         return CodeHistoryListResponse.model_validate(result)

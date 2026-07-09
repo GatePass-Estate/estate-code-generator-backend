@@ -6,8 +6,6 @@ from pydantic import UUID4
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
-
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import VisitorLog as TableModel
 from app.schemas.code_service.visitor_log import (
@@ -435,45 +433,70 @@ class VisitorLogRepository:
         """
         Collapse a filtered query to one entry per unique ``hashed_code``.
 
-        Uses DISTINCT ON (hashed_code) to keep the most recent row per code,
-        then paginates ordered by ``created_at`` (ascending or descending).
-
-        Arguments:
-            query: The filtered base query with non-deleted and search
-                criteria already applied.
-            ascending: Whether to order the collapsed set ascending by time.
-            page: The page number to retrieve.
-            limit: The max number of items per page.
-
-        Returns:
-            A ListResponse with one representative entry per code.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
+        Keeps the most recent row per code and attaches ``usage_count`` (total
+        validations per code within the filtered set), then paginates by
+        ``created_at``.
         """
-        distinct_subquery = (
-            query.distinct(TableModel.hashed_code)
-            .order_by(TableModel.hashed_code, TableModel.created_at.desc())
-            .subquery()
+        filtered = query.subquery("filtered")
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=filtered.c.hashed_code,
+                order_by=filtered.c.created_at.desc(),
+            )
+            .label("rn")
         )
-        aliased_model = aliased(TableModel, distinct_subquery)
-        order_column = distinct_subquery.c.created_at
-        count_query = select(func.count()).select_from(distinct_subquery)
+        usage_count = (
+            func.count()
+            .over(partition_by=filtered.c.hashed_code)
+            .label("usage_count")
+        )
+        ranked = (
+            select(filtered, row_num, usage_count)
+            .select_from(filtered)
+            .subquery("ranked")
+        )
+        count_query = (
+            select(func.count()).select_from(ranked).where(ranked.c.rn == 1)
+        )
+        order_column = ranked.c.created_at
         records_query = (
-            select(aliased_model)
+            select(ranked)
+            .where(ranked.c.rn == 1)
             .order_by(order_column.asc() if ascending else order_column.desc())
             .limit(limit)
             .offset((page - 1) * limit)
         )
         try:
             total = await self.session.scalar(count_query)
-            records = (
-                (await self.session.execute(records_query)).scalars().all()
-            )
+            rows = (await self.session.execute(records_query)).all()
+            items = []
+            for row in rows:
+                mapping = row._mapping
+                items.append(
+                    GetResponse.model_validate(
+                        {
+                            "id": mapping["id"],
+                            "created_at": mapping["created_at"],
+                            "updated_at": mapping["updated_at"],
+                            "is_deleted": mapping["is_deleted"],
+                            "user_id": mapping["user_id"],
+                            "estate_id": mapping["estate_id"],
+                            "resident_fullname": mapping["resident_fullname"],
+                            "visitor_fullname": mapping["visitor_fullname"],
+                            "relationship_with_resident": mapping[
+                                "relationship_with_resident"
+                            ],
+                            "gender": mapping["gender"],
+                            "hashed_code": mapping["hashed_code"],
+                            "security_id": mapping["security_id"],
+                            "visit_time": mapping["visit_time"],
+                            "usage_count": mapping["usage_count"],
+                        }
+                    )
+                )
             return ListResponse(
-                items=[
-                    GetResponse.model_validate(record) for record in records
-                ],
+                items=items,
                 total=total,
                 page=page,
                 limit=limit,

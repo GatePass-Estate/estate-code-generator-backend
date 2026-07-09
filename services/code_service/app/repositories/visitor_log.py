@@ -40,7 +40,8 @@ class VisitorLogRepository:
         limit: int = 20,
     ) -> dict:
         """
-        First-level visitor history: one entry per unique code, latest first.
+        First-level visitor history: one entry per unique code with
+        ``usage_count``, latest first.
 
         Backed by db-service ``visitorlog/search`` with ``unique=true``.
 

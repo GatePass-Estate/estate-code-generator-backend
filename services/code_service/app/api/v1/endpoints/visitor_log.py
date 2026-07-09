@@ -47,8 +47,8 @@ async def my_history(
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse:
     """
-    First-level personal visitor history: one entry per unique code, latest
-    first. Security accounts are not permitted.
+    First-level personal visitor history: one entry per unique code with usage
+    count, latest first. Security accounts are not permitted.
     """
     try:
         return await service.my_history(
@@ -129,8 +129,9 @@ async def estate_history(
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse:
     """
-    First-level estate-wide visitor history: one entry per unique code, latest
-    first. Admin/security see their own estate; root sees all estates.
+    First-level estate-wide visitor history: one entry per unique code with
+    usage count, latest first. Admin/security see their own estate; root sees
+    all estates.
     """
     try:
         return await service.estate_history(

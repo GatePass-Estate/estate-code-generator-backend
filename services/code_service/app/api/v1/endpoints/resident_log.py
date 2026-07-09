@@ -47,10 +47,9 @@ async def my_history(
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse:
     """
-    First-level personal history: one entry per unique code, latest first.
-
-    Returns :class:`ListResponse` (no ``code_deleted``). Security accounts
-    are not permitted.
+    First-level personal history: one entry per unique code with usage count
+    and access-code deleted status, latest first. Security accounts are not
+    permitted.
     """
     try:
         return await service.my_history(
@@ -92,9 +91,9 @@ async def my_history_by_code(
     """
     Second-level personal history for a single access code.
 
-    Returns :class:`CodeHistoryListResponse` with validation events (latest
-    first), an appended code-creation row when the page covers it, and
-    ``code_deleted``. Security accounts are not permitted.
+    Returns validation events (latest first) plus ``code_created_at``,
+    ``code_deleted_at``, and ``code_deleted``. Security accounts are not
+    permitted.
     """
     try:
         return await service.my_history_by_code(
@@ -134,9 +133,8 @@ async def estate_history(
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse:
     """
-    First-level estate-wide history: one entry per unique code, latest first.
-
-    Returns :class:`ListResponse` (no ``code_deleted``). Admin/security see
+    First-level estate-wide history: one entry per unique code with usage
+    count and access-code deleted status, latest first. Admin/security see
     their own estate; root sees all estates.
     """
     try:
@@ -179,10 +177,9 @@ async def estate_history_by_code(
     """
     Second-level estate-wide history for a single access code.
 
-    Returns :class:`CodeHistoryListResponse` with validation events (latest
-    first), an appended code-creation row when the page covers it, and
-    ``code_deleted``. Admin/security are limited to their own estate; root
-    may look up any code.
+    Returns validation events (latest first) plus ``code_created_at``,
+    ``code_deleted_at``, and ``code_deleted``. Admin/security are limited to
+    their own estate; root may look up any code.
     """
     try:
         return await service.estate_history_by_code(

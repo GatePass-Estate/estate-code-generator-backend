@@ -260,7 +260,14 @@ class GetResponse(SharedModel, VisitorLogBase):
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
+        usage_count (int): Number of validations for this code; set on unique
+            search results only.
     """
+
+    usage_count: int | None = Field(
+        default=None,
+        description="Total validations for this hashed_code (unique search)",
+    )
 
 
 class SearchRequest(BaseSearchRequest):

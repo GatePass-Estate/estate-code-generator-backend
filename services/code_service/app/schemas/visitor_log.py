@@ -34,6 +34,8 @@ class VisitorLogEntry(BaseModel):
         visit_time (DateTime): Timestamp of visitor validation.
         resident_fullname (str): Denormalized full name of the visited
             resident (``user_id``).
+        usage_count (int): Total validations for this code; set on first-level
+            unique history only.
     """
 
     id: UUID4 = Field(..., description="Unique identifier for the log entry")
@@ -62,6 +64,10 @@ class VisitorLogEntry(BaseModel):
     resident_fullname: str | None = Field(
         default=None, description="Full name of the visited resident (user_id)"
     )
+    usage_count: int | None = Field(
+        default=None,
+        description="Total validations for this code (first-level only)",
+    )
 
     model_config = model_config
 
@@ -70,8 +76,9 @@ class ListResponse(BaseModel):
     """
     Paginated visitor-log history ordered latest first.
 
-    Used for both first-level (``/me``, ``/user``) and second-level
-    (``/me/{code}``, ``/user/{code}``) visitor history endpoints.
+    First-level (``/me``, ``/user``) returns one entry per unique
+    ``hashed_code`` with ``usage_count``. Second-level (``/me/{code}``,
+    ``/user/{code}``) returns every visit for a single code.
     """
 
     total: int = Field(..., description="Total number of entries")

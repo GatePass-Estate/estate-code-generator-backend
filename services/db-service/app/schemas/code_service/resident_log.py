@@ -197,7 +197,22 @@ class GetResponse(SharedModel, ResidentLogBase):
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
+        usage_count (int): Number of validations for this code; set on unique
+            search results only.
+        code_deleted (bool): Whether the linked access-code row is
+            soft-deleted; set on unique search results only.
     """
+
+    usage_count: int | None = Field(
+        default=None,
+        description="Total validations for this hashed_code (unique search)",
+    )
+    code_deleted: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the resident access code is soft-deleted (unique search)"
+        ),
+    )
 
 
 class SearchRequest(BaseSearchRequest):
