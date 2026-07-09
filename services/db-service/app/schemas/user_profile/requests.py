@@ -171,6 +171,10 @@ class UpdateRequest(BaseModel):
     reviewed_by: UUID4 | None = Field(
         default=None, description="User who reviewed the request"
     )
+    last_reminded_at: datetime | None = Field(
+        default=None,
+        description="When the user last sent a reminder to admins",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value: UUID4) -> str:

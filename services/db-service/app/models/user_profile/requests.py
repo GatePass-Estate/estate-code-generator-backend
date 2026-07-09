@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, String, Enum, ForeignKey
+from sqlalchemy import Column, DateTime, String, Enum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
 from app.schemas.user_profile.requests import (
@@ -55,3 +55,4 @@ class Requests(BaseModelDB):
     reviewed_by = Column(
         UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
     )
+    last_reminded_at = Column(DateTime(timezone=True), nullable=True)

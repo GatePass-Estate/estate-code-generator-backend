@@ -1,5 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.schemas.request import (
     CreateEditRequestRequest,
     CreateEditRequestResponse,
@@ -98,7 +101,9 @@ class RequestService:
                         f" change your "
                         f"{request.request_type.value.replace('_', ' ')}",
                         "existing_request_id": str(existing_pending.id),
-                        "existing_request_created_at": existing_pending.created_at.isoformat(),
+                        "existing_request_created_at": (
+                            existing_pending.created_at.isoformat()
+                        ),
                         "existing_new_value": existing_pending.new_value,
                     },
                 )
@@ -137,10 +142,12 @@ class RequestService:
         pending_document_id: str,
     ) -> CreateEditRequestResponse:
         """
-        Create a pending ID change request for a newly uploaded pending ID card.
+        Create a pending ID change request for a newly uploaded pending
+        ID card.
 
-        ``old_value`` is the active ID document row ID, or empty on first upload.
-        ``new_value`` is the pending document row ID awaiting admin approval.
+        ``old_value`` is the active ID document row ID, or empty on
+        first upload.
+        ``new_value`` is the pending document row ID awaiting approval.
         """
         if self.documents_repository is None:
             raise HTTPException(
@@ -437,6 +444,72 @@ class RequestService:
             request_id=request_id, new_value=update_data.new_value
         )
 
+    async def remind_admins(self, request_id: str, user_id: str) -> dict:
+        """
+        Send a reminder notification to estate admins about a pending
+        request, enforcing a cooldown window.
+
+        The cooldown baseline is ``last_reminded_at`` if already reminded
+        before, otherwise ``created_at`` — so users cannot fire a reminder
+        the moment they submit the request.
+
+        Returns a dict with keys: success, message, next_remind_after.
+        """
+        from app.schemas.request import RemindAdminsResponse
+
+        edit_request = await self.repository.get_request_by_id(request_id)
+        if not edit_request or edit_request.is_deleted:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        if str(edit_request.resident_id) != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only remind admins about your own requests",
+            )
+
+        if edit_request.status != RequestStatus.PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot remind: request is already "
+                    f"{edit_request.status.value}"
+                ),
+            )
+
+        cooldown_hours = settings.EDIT_REQUEST_REMIND_COOLDOWN_HOURS
+        cooldown = timedelta(hours=cooldown_hours)
+
+        baseline = (
+            edit_request.last_reminded_at
+            if edit_request.last_reminded_at
+            else edit_request.created_at
+        )
+        if baseline.tzinfo is None:
+            baseline = baseline.replace(tzinfo=timezone.utc)
+
+        next_remind_after = baseline + cooldown
+        now = datetime.now(timezone.utc)
+
+        if now < next_remind_after:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": (
+                        f"You can only remind admins once every "
+                        f"{cooldown_hours} hour(s)."
+                    ),
+                    "next_remind_after": next_remind_after.isoformat(),
+                },
+            )
+
+        await self.repository.set_last_reminded_at(request_id, now.isoformat())
+
+        return RemindAdminsResponse(
+            success=True,
+            message="Admins have been reminded about your request.",
+            next_remind_after=now + cooldown,
+        )
+
     async def delete_pending_request(
         self, request_id: str, user_id: str
     ) -> DeletePendingRequestResponse:
@@ -546,7 +619,7 @@ class RequestService:
         *,
         require_pending: bool,
     ) -> dict:
-        """Ensure a document row belongs to the user and is a pending ID card."""
+        """Ensure document belongs to the user and is a pending ID card."""
         if self.documents_repository is None:
             raise HTTPException(
                 status_code=500,

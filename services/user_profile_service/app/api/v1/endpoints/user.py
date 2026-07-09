@@ -44,7 +44,7 @@ from app.repositories.household import HouseholdRepository
 from app.repositories.admin_management import AdminRepository
 from app.services.user import UserService
 from app.services.guest import GuestService
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, get_current_user_unverified
 
 router = APIRouter()
 
@@ -143,7 +143,7 @@ async def close_account(
 @router.get("/profile/me", response_model=UserProfileResponse)
 async def get_my_profile(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
 ):
     """Get current user's profile."""
     repository = UserRepository(ahttp_client)

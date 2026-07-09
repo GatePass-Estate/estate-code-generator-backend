@@ -21,7 +21,6 @@ class Settings(BaseSettings):
     CACHE_SERVICE_URL: str = os.getenv("CACHE_SERVICE_URL")
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
-    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
     RESIDENT_CODE_EXPIRY_DAYS: int = int(
         os.getenv("RESIDENT_CODE_EXPIRY_DAYS", 30)
     )

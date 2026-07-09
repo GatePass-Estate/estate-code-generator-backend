@@ -30,7 +30,10 @@ from app.schemas.auth import (
     TwoFAVerifyRequest,
 )
 from app.schemas.user import SetPasswordResponse
-from app.services.auth import AuthService, get_current_user
+from app.services.auth import (
+    AuthService,
+    get_current_user_unverified as get_current_user,
+)
 from app.services.token import decode_2fa_pending_token
 from app.services.user import UserService
 

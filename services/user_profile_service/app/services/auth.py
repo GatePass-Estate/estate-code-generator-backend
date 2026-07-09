@@ -10,6 +10,7 @@ from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
 from gatepass_auth import get_current_user  # noqa: F401
+from gatepass_auth import get_current_user_unverified  # noqa: F401
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"

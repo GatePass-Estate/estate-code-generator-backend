@@ -3,12 +3,13 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select, cast, String
+from sqlalchemy import Select, cast, exists, func, select, String
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import Sessions as TableModel
+from app.models import UserDocuments as UserDocumentsModel
 from app.models import Users as UsersModel
 from app.schemas.user_profile.sessions import (
     CreateRequest,
@@ -20,6 +21,10 @@ from app.schemas.user_profile.sessions import (
     UpdateRequest,
     UpdateResponse,
     ValidateSessionResponse,
+)
+from app.schemas.user_profile.user_documents import (
+    DocumentStatus,
+    DocumentType,
 )
 
 logger = logging.getLogger(__name__)
@@ -500,6 +505,22 @@ class SessionsRepository:
                     "Session %s not found or user is deleted" % session_id
                 )
             session, user = row
+            id_verified = bool(
+                await self.session.scalar(
+                    select(
+                        exists(
+                            select(UserDocumentsModel.id).where(
+                                UserDocumentsModel.user_id == user.id,
+                                UserDocumentsModel.document_type
+                                == DocumentType.ID_CARD,
+                                UserDocumentsModel.document_status
+                                == DocumentStatus.ACTIVE,
+                                ~UserDocumentsModel.is_deleted,
+                            )
+                        )
+                    )
+                )
+            )
             return ValidateSessionResponse(
                 session_id=session.id,
                 expires_at=session.expires_at,
@@ -509,6 +530,7 @@ class SessionsRepository:
                 email=user.email,
                 role=user.role,
                 estate_id=user.estate_id,
+                id_verified=id_verified,
             )
         except NotFoundError:
             raise

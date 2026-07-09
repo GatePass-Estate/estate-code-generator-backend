@@ -5,6 +5,9 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.estate import router as estate_router
 from app.api.v1.endpoints.request import router as request_router
 from app.api.v1.endpoints.admin import router as admin_router
+from app.api.v1.endpoints.incident_report import (
+    router as incident_report_router,
+)
 from app.api.v1.endpoints.user_documents import (
     router as user_documents_router,
 )
@@ -22,6 +25,12 @@ api_router.include_router(
 )
 
 api_router.include_router(admin_router, prefix="/admins", tags=["Admins"])
+
+api_router.include_router(
+    incident_report_router,
+    prefix="/incident-reports",
+    tags=["Incident Reports"],
+)
 
 api_router.include_router(
     user_documents_router,

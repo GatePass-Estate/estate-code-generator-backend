@@ -47,6 +47,7 @@ services:
     volumes:
       - ./services/cache_service/app:/src/service/app
     env_file:
+      - ./.env.secrets
       - ./services/cache_service/.env.secrets
       - ./services/cache_service/.env.localdocker
     ports:
@@ -73,6 +74,7 @@ services:
       - ./services/notification_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
     env_file:
+      - ./.env.secrets
       - ./services/notification_service/.env.secrets
       - ./services/notification_service/.env.localdocker
     ports:
@@ -101,6 +103,7 @@ services:
       - ./services/code_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
     env_file:
+      - ./.env.secrets
       - ./services/code_service/.env.secrets
       - ./services/code_service/.env.localdocker
     ports:
@@ -129,6 +132,7 @@ services:
       - ./shared/gatepass_auth:/shared/gatepass_auth
       - ./shared/gatepass_docs:/shared/gatepass_docs
     env_file:
+      - ./.env.secrets
       - ./services/user_profile_service/.env.secrets
       - ./services/user_profile_service/.env.localdocker
     ports:
@@ -155,6 +159,7 @@ services:
       - ./services/ai_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
     env_file:
+      - ./.env.secrets
       - ./services/ai_service/.env.secrets
       - ./services/ai_service/.env.localdocker
     ports:
@@ -183,6 +188,7 @@ services:
       - ./shared/gatepass_docs:/shared/gatepass_docs
       - ./services/db-service/secrets:/var/secrets/gcs:ro
     env_file:
+      - ./.env.secrets
       - ./services/db-service/.env.secrets
       - ./services/db-service/.env.localdocker
     ports:
@@ -196,6 +202,7 @@ services:
       context: .
       dockerfile: services/db-service/Dockerfile
     env_file:
+      - ./.env.secrets
       - ./services/db-service/.env.secrets
     command: ["alembic", "upgrade", "head"]
     restart: "no"

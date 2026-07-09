@@ -16,6 +16,7 @@ from app.schemas.request import (
     UpdatePendingRequestResponse,
     DeletePendingRequestResponse,
     CheckPendingRequestResponse,
+    RemindAdminsResponse,
     RequestType,
     RequestStatus,
 )
@@ -250,6 +251,43 @@ async def delete_pending_request(
     user_id = current_user["id"]
 
     return await service.delete_pending_request(request_id, user_id)
+
+
+@router.post("/edit/{request_id}/remind", response_model=RemindAdminsResponse)
+async def remind_admins(
+    request_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
+):
+    """
+    Send a reminder to estate admins about a pending edit request.
+    Rate-limited by EDIT_REQUEST_REMIND_COOLDOWN_HOURS (default 24 h).
+    Cooldown starts from request creation, not from first reminder.
+    """
+    user_id = current_user["id"]
+    result = await service.remind_admins(request_id, user_id)
+
+    estate_id = current_user.get("estate_id")
+    if estate_id:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "EDIT_REQUEST_PENDING",
+                "title": "Edit request reminder",
+                "body": (
+                    "A resident is following up on a pending "
+                    "profile edit request."
+                ),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
+                "metadata": {"request_id": request_id},
+            },
+        )
+
+    return result
 
 
 @router.patch(
