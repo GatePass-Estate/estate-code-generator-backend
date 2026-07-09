@@ -6,6 +6,7 @@ from pydantic import UUID4
 
 from app.core.config import settings
 from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
+from app.libs.auth import get_user_details
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
 from app.schemas.code_service import (
@@ -38,6 +39,28 @@ class CodeServiceRepository:
     def _format_datetime(self, dt: datetime) -> str:
         ms = int(dt.microsecond / 1000)
         return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
+
+    async def _resolve_resident_full_name(self, user_id: str | None) -> str:
+        """
+        Resolve a resident's full name for denormalized log storage.
+
+        The name is stored on the log row at write time so history reads avoid
+        an extra lookup or join. A lookup failure must not block validation, so
+        this returns an empty string on any error.
+        """
+        if not user_id:
+            return ""
+        try:
+            user = await get_user_details(self.ahttp_client, str(user_id))
+        except Exception:
+            logger.exception(
+                "Failed to resolve resident name for user %s", user_id
+            )
+            return ""
+        return (
+            f"{user.get('first_name', '') or ''} "
+            f"{user.get('last_name', '') or ''}"
+        ).strip()
 
     async def _soft_delete_previous_resident_codes(
         self,
@@ -552,18 +575,9 @@ class CodeServiceRepository:
 
         Visitor validation uses cache_service lifecycle checks. Resident
         validation checks expiry only. The caller's estate must match the
-        code's estate.
-
-        Arguments:
-            code: Access code to validate.
-            user_details: Authenticated security user performing validation.
-
-        Returns:
-            Visitor or resident validation response model.
-
-        Raises:
-            NotFoundError: If the code is invalid or estate mismatches.
-            DatabaseError: If log persistence fails after a valid lookup.
+        code's estate. Log rows are written with denormalized resident names
+        (``full_name`` on resident logs, ``resident_fullname`` on visitor
+        logs) resolved at validation time.
         """
         try:
             # Get the record from the database
@@ -581,8 +595,13 @@ class CodeServiceRepository:
 
             if record and (record.get("receiver") == Receiver.VISITOR):
                 # Record was retrieved from the cache. Now, persist to DB.
+                full_name = await self._resolve_resident_full_name(
+                    record.get("user_id")
+                )
                 visitlog_data = {
                     "user_id": record.get("user_id"),
+                    "estate_id": record.get("estate_id"),
+                    "resident_fullname": full_name,
                     "visitor_fullname": record.get("visitor_fullname"),
                     "relationship_with_resident": record.get(
                         "relationship_with_resident"
@@ -616,9 +635,13 @@ class CodeServiceRepository:
                 )
             elif record and (record.get("receiver") == Receiver.RESIDENT):
                 # Record was retrieved from access code. Now, persist to DB.
+                full_name = await self._resolve_resident_full_name(
+                    record.get("user_id")
+                )
                 residentlog_data = {
                     "user_id": record.get("user_id"),
                     "estate_id": record.get("estate_id"),
+                    "full_name": full_name,
                     "hashed_code": record.get("hashed_code"),
                     "security_id": user_details.get("id"),
                     "access_time": record.get("visit_time"),

@@ -73,6 +73,12 @@ class RolePermissionBase(BaseModel):
     can_download_other_user_documents_in_other_estate: bool = Field(
         ..., description="May download documents across estates"
     )
+    can_view_other_user_logs: bool = Field(
+        ..., description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: bool = Field(
+        ..., description="May view logs across estates"
+    )
 
     model_config = model_config
 
@@ -162,6 +168,12 @@ class UpdateRequest(BaseModel):
     )
     can_download_other_user_documents_in_other_estate: bool | None = Field(
         default=None, description="May download documents across estates"
+    )
+    can_view_other_user_logs: bool | None = Field(
+        default=None, description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: bool | None = Field(
+        default=None, description="May view logs across estates"
     )
 
     model_config = model_config
@@ -257,6 +269,12 @@ class SearchRequest(BaseSearchRequest):
     )
     can_download_other_user_documents_in_other_estate: Optional[bool] = Field(
         default=None, description="May download documents across estates"
+    )
+    can_view_other_user_logs: Optional[bool] = Field(
+        default=None, description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: Optional[bool] = Field(
+        default=None, description="May view logs across estates"
     )
 
 

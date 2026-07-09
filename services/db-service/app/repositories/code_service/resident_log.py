@@ -6,6 +6,7 @@ from pydantic import UUID4
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import ResidentLog as TableModel
@@ -323,23 +324,20 @@ class ResidentLogRepository:
             raise DatabaseError(message) from e
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        unique: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter resident-log rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-            page: The page number to retrieve.
-            limit: The max number of items per page.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
+        ``unique`` collapses to one row per ``hashed_code`` (first-level BFF
+        history). ``ascending`` defaults to descending (latest first). Rows
+        include denormalized ``full_name``. Second-level BFF queries filter by
+        ``hashed_code`` without ``unique``.
         """
         query = select(TableModel).where(
             TableModel.is_deleted == False  # noqa E712
@@ -368,8 +366,19 @@ class ResidentLogRepository:
                 else:
                     query = query.where(column == field_value)
 
-        order_by = (TableModel.created_at.desc(),)
         try:
+            if unique:
+                return await self._search_unique(
+                    query=query,
+                    ascending=ascending,
+                    page=page,
+                    limit=limit,
+                )
+            order_by = (
+                (TableModel.created_at.asc(),)
+                if ascending
+                else (TableModel.created_at.desc(),)
+            )
             return await self._list(
                 query=query,
                 order_by=order_by,
@@ -378,5 +387,67 @@ class ResidentLogRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def _search_unique(
+        self,
+        query: Select,
+        ascending: bool = False,
+        page: int = 1,
+        limit: int = 20,
+    ) -> ListResponse:
+        """
+        Collapse a filtered query to one entry per unique ``hashed_code``.
+
+        Uses DISTINCT ON (hashed_code) to keep the most recent row per code,
+        then paginates ordered by ``created_at`` (ascending or descending).
+
+        Arguments:
+            query: The filtered base query with non-deleted and search
+                criteria already applied.
+            ascending: Whether to order the collapsed set ascending by time.
+            page: The page number to retrieve.
+            limit: The max number of items per page.
+
+        Returns:
+            A ListResponse with one representative entry per code.
+
+        Raises:
+            DatabaseError: If there's an error during the database operation.
+        """
+        distinct_subquery = (
+            query.distinct(TableModel.hashed_code)
+            .order_by(TableModel.hashed_code, TableModel.created_at.desc())
+            .subquery()
+        )
+        aliased_model = aliased(TableModel, distinct_subquery)
+        order_column = distinct_subquery.c.created_at
+        count_query = select(func.count()).select_from(distinct_subquery)
+        records_query = (
+            select(aliased_model)
+            .order_by(order_column.asc() if ascending else order_column.desc())
+            .limit(limit)
+            .offset((page - 1) * limit)
+        )
+        try:
+            total = await self.session.scalar(count_query)
+            records = (
+                (await self.session.execute(records_query)).scalars().all()
+            )
+            return ListResponse(
+                items=[
+                    GetResponse.model_validate(record) for record in records
+                ],
+                total=total,
+                page=page,
+                limit=limit,
+            )
+        except SQLAlchemyError as e:
+            message = "Database error in retrieving unique search results"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = "Unexpected error in retrieving unique search results"
             logger.exception(message)
             raise DatabaseError(message) from e
