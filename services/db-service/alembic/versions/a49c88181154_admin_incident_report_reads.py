@@ -1,7 +1,7 @@
 """admin_incident_report_reads
 
 Revision ID: a49c88181154
-Revises: c9d4e81f2a30
+Revises: e2c7a1b04f93
 Create Date: 2026-07-08 23:50:54.315524
 
 Creates ``core.admin_incident_report_reads`` — junction table that tracks
@@ -18,7 +18,7 @@ from sqlalchemy.sql import func
 
 # revision identifiers, used by Alembic.
 revision: str = "a49c88181154"
-down_revision: Union[str, None] = "c9d4e81f2a30"
+down_revision: Union[str, None] = "e2c7a1b04f93"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
