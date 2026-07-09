@@ -29,6 +29,7 @@ class ResidentLogBase(BaseModel):
     Attributes:
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
+        full_name (str): Full name of the resident.
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
@@ -46,6 +47,7 @@ class ResidentLogBase(BaseModel):
     def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
+    full_name: str = Field(..., description="Full name of the resident")
     hashed_code: str = Field(
         ..., description="Resident's generated access code"
     )
@@ -72,6 +74,7 @@ class CreateRequest(ResidentLogBase):
     Attributes:
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
+        full_name (str): Full name of the resident.
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
@@ -107,6 +110,7 @@ class UpdateRequest(BaseModel):
     Attributes:
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
+        full_name (str): Full name of the resident.
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
@@ -128,6 +132,9 @@ class UpdateRequest(BaseModel):
     def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
+    full_name: str | None = Field(
+        default=None, description="Full name of the resident"
+    )
     hashed_code: str | None = Field(
         default=None, description="Resident's generated access code"
     )
@@ -186,10 +193,26 @@ class GetResponse(SharedModel, ResidentLogBase):
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
+        full_name (str): Full name of the resident.
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
+        usage_count (int): Number of validations for this code; set on unique
+            search results only.
+        code_deleted (bool): Whether the linked access-code row is
+            soft-deleted; set on unique search results only.
     """
+
+    usage_count: int | None = Field(
+        default=None,
+        description="Total validations for this hashed_code (unique search)",
+    )
+    code_deleted: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the resident access code is soft-deleted (unique search)"
+        ),
+    )
 
 
 class SearchRequest(BaseSearchRequest):
@@ -204,6 +227,7 @@ class SearchRequest(BaseSearchRequest):
         limit: Number of items per page
         user_id: Reference to the resident.
         estate_id: Reference to the estate.
+        full_name: Full name of the resident.
         hashed_code: Resident's generated access code.
         security_id: Security personnel who validated the access.
         access_time: Timestamp of resident access validation.
@@ -214,6 +238,9 @@ class SearchRequest(BaseSearchRequest):
     )
     estate_id: UUID4 | None = Field(
         default=None, description="Reference to the estate"
+    )
+    full_name: str | None = Field(
+        default=None, description="Full name of the resident"
     )
     hashed_code: str | None = Field(
         default=None, description="Resident's generated access code"
@@ -229,14 +256,11 @@ class SearchRequest(BaseSearchRequest):
 
 class ListResponse(BaseListResponse):
     """
-    Response model to GET the list of all items that are not archived. Items
-    are returned in a chronological order based on the creation timestamp.
+    Paginated resident-log search results.
 
-    Attributes:
-        total: Total number of items that are not archived
-        page: Current page number
-        limit: Number of items per page
-        items: Ordered list of table objects
+    Consumed by the code-service BFF. Sort direction is controlled by the
+    ``ascending`` query parameter on ``/search`` (default: latest first).
+    Each item includes denormalized ``full_name``.
     """
 
     items: List[GetResponse] = Field(

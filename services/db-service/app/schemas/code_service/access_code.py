@@ -175,6 +175,10 @@ class GetResponse(SharedModel, AccessCodeBase):
         valid_until (DateTime): Expiration timestamp for the access code.
     """
 
+    deleted_at: datetime | None = Field(
+        default=None, description="UTC timestamp of soft deletion"
+    )
+
 
 class SearchRequest(BaseSearchRequest):
     """
@@ -210,14 +214,11 @@ class SearchRequest(BaseSearchRequest):
 
 class ListResponse(BaseListResponse):
     """
-    Response model to GET the list of all items that are not archived. Items
-    are returned in a chronological order based on the creation timestamp.
+    Paginated access-code search results.
 
-    Attributes:
-        total: Total number of items that are not archived
-        page: Current page number
-        limit: Number of items per page
-        items: Ordered list of table objects
+    Consumed by code-service for resident-code management and for resolving
+    the earliest row on code-level resident history (``include_deleted`` and
+    ``ascending`` on ``/search``).
     """
 
     items: List[GetResponse] = Field(

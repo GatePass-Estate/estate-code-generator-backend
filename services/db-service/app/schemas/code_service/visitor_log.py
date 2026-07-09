@@ -54,6 +54,7 @@ class VisitorLogBase(BaseModel):
 
     Attributes:
         user_id (UUID): Reference to the visited resident.
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician, other
@@ -71,6 +72,15 @@ class VisitorLogBase(BaseModel):
     def serialize_user_id(self, value: UUID4) -> str:
         return str(value)
 
+    estate_id: UUID4 = Field(..., description="Reference to the estate")
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    resident_fullname: str = Field(
+        ..., description="Full name of the visited resident"
+    )
     visitor_fullname: str = Field(..., description="Full name of the visitor")
     relationship_with_resident: Relation = Field(
         ...,
@@ -105,6 +115,7 @@ class CreateRequest(VisitorLogBase):
 
     Attributes:
         user_id (UUID): Reference to the visited resident.
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician, other
@@ -143,6 +154,7 @@ class UpdateRequest(BaseModel):
 
     Attributes:
         user_id (UUID): Reference to the visited resident.
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician, other
@@ -160,6 +172,17 @@ class UpdateRequest(BaseModel):
     def serialize_user_id(self, value: UUID4) -> str:
         return str(value)
 
+    estate_id: UUID4 | None = Field(
+        default=None, description="Reference to the estate"
+    )
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    resident_fullname: str | None = Field(
+        default=None, description="Full name of the visited resident"
+    )
     visitor_fullname: str | None = Field(
         default=None, description="Full name of the visitor"
     )
@@ -229,6 +252,7 @@ class GetResponse(SharedModel, VisitorLogBase):
         created_at (DateTime): Time when the model was created.
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician, other
@@ -236,7 +260,14 @@ class GetResponse(SharedModel, VisitorLogBase):
         hashed_code (str): Visitor's generated access code.
         security_id (UUID): Security personnel who validated the visit
         visit_time (DateTime): Timestamp of visitor validation
+        usage_count (int): Number of validations for this code; set on unique
+            search results only.
     """
+
+    usage_count: int | None = Field(
+        default=None,
+        description="Total validations for this hashed_code (unique search)",
+    )
 
 
 class SearchRequest(BaseSearchRequest):
@@ -250,6 +281,7 @@ class SearchRequest(BaseSearchRequest):
         to_date: Filter by creation date (to)
         page: Page number for pagination
         limit: Number of items per page
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician, other
@@ -259,6 +291,15 @@ class SearchRequest(BaseSearchRequest):
         visit_time (DateTime): Timestamp of visitor validation
     """
 
+    user_id: UUID4 | None = Field(
+        default=None, description="Reference to the visited resident"
+    )
+    estate_id: UUID4 | None = Field(
+        default=None, description="Reference to the estate"
+    )
+    resident_fullname: str | None = Field(
+        default=None, description="Full name of the visited resident"
+    )
     visitor_fullname: str | None = Field(
         default=None, description="Name of the workflow"
     )
@@ -285,14 +326,11 @@ class SearchRequest(BaseSearchRequest):
 
 class ListResponse(BaseListResponse):
     """
-    Response model to GET the list of all items that are not archived. Items
-    are returned in a chronological order based on the creation timestamp.
+    Paginated visitor-log search results.
 
-    Attributes:
-        total: Total number of items that are not archived
-        page: Current page number
-        limit: Number of items per page
-        items: Ordered list of table objects
+    Consumed by the code-service BFF. Sort direction is controlled by the
+    ``ascending`` query parameter on ``/search`` (default: latest first).
+    Each item includes denormalized ``resident_fullname``.
     """
 
     items: List[GetResponse] = Field(

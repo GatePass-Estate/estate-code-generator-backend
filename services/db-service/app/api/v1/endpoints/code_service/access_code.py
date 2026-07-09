@@ -176,12 +176,17 @@ async def search(
     to_date: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
+    include_deleted: bool = False,
+    ascending: bool = False,
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
-    Searches for items constrained to the criteria given.
-    It searches for all the items matching the criteria given and are not
-    archived. The list is sorted by the created_at field in descending.
+    Search access-code rows matching the given criteria.
+
+    By default only non-deleted rows are returned, ordered newest first.
+    ``include_deleted=true`` and ``ascending=true`` are used by the code-
+    service BFF to resolve the earliest access-code row for resident code-
+    level history (``code_deleted`` and the synthetic creation entry).
 
     Arguments:
         from_date: The creation date (from).
@@ -192,16 +197,24 @@ async def search(
         estate_id (UUID): Reference to the estate.
         hashed_code (str): Securely stored hash of access code.
         valid_until (DateTime): Expiration timestamp for the access code.
+        include_deleted: Include soft-deleted rows when True.
+        ascending: Order ascending by ``created_at`` when True.
 
     Returns:
-        A chronologically sorted LIST model containing a list of items.
+        A paginated list sorted by ``created_at``.
 
     Raises:
         HTTPException: If there is an internal server error
     """
     try:
         request = SearchRequest(**vars())
-        return await service.search(request=request, page=page, limit=limit)
+        return await service.search(
+            request=request,
+            page=page,
+            limit=limit,
+            include_deleted=include_deleted,
+            ascending=ascending,
+        )
     except Exception as e:
         logger.exception(
             "An unexpected error happened while searching for matches"

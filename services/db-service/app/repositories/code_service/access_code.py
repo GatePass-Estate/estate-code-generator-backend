@@ -358,28 +358,26 @@ class AccessCodeRepository:
             raise DatabaseError(message) from e
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        include_deleted: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter access-code rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-            page: The page number to retrieve.
-            limit: The max number of items per page.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
+        When ``include_deleted`` is False (the default), soft-deleted rows are
+        excluded. ``ascending`` controls ``created_at`` sort direction. The
+        code-service BFF uses ``include_deleted=True`` with ``ascending=True``
+        and ``hashed_code`` to fetch the genesis row for code-level resident
+        history.
         """
-        # Create a query to get all records from the database.
-        query = select(TableModel).where(
-            TableModel.is_deleted == False  # noqa E712
-        )
+        query = select(TableModel)
+        if not include_deleted:
+            query = query.where(TableModel.is_deleted == False)  # noqa E712
 
         # Apply filters
         for key, info in request.model_fields.items():
@@ -404,8 +402,11 @@ class AccessCodeRepository:
                 else:
                     query = query.where(column == field_value)
 
-        # Order the records by the created_at timestamp in descending order.
-        order_by = (TableModel.created_at.desc(),)
+        order_by = (
+            (TableModel.created_at.asc(),)
+            if ascending
+            else (TableModel.created_at.desc(),)
+        )
         try:
             return await self._list(
                 query=query,

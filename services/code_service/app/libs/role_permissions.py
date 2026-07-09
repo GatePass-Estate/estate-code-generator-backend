@@ -26,6 +26,26 @@ async def check_permission(
     return permissions.get(permission_key, False)
 
 
+async def get_role_permissions(
+    http_client: AsyncHttpHandler, role: str
+) -> dict:
+    """
+    Retrieves the full set of permission flags for a given role.
+    """
+    url = (
+        f"{settings.DB_SERVICE_URL}api/v1/userprofile/rolepermission/"
+        f"search?role_name={role}"
+    )
+    response = await http_client.async_get(url)
+
+    if not response or not response.get("items"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Permissions not found for role '{role}'.",
+        )
+    return response.get("items")[0]
+
+
 async def check_status(
     user_details: dict,
 ) -> bool:

@@ -98,19 +98,25 @@ class AccessCodeService:
         return await self.repository.list(page=page, limit=limit)
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        include_deleted: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter access-code rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
+        Delegates to the repository with optional ``include_deleted`` and
+        ``ascending`` flags (used by the code-service BFF for code-level
+        resident history enrichment).
         """
         return await self.repository.search(
-            request=request, page=page, limit=limit
+            request=request,
+            page=page,
+            limit=limit,
+            include_deleted=include_deleted,
+            ascending=ascending,
         )
