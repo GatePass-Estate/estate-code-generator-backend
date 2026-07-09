@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Annotated
 
 import jwt
 from fastapi import BackgroundTasks, Depends, HTTPException, status
@@ -9,6 +10,8 @@ from gatepass_auth.session_repo import update_last_active, validate_session
 
 security = HTTPBearer()
 
+_ID_EXEMPT_ROLES = {"primary_admin", "root"}
+
 
 async def _update_session_last_active(session_id: str) -> None:
     """Background task: refresh last_active_at for the current session."""
@@ -18,22 +21,24 @@ async def _update_session_last_active(session_id: str) -> None:
     )
 
 
-async def get_current_user(
+async def get_current_user_unverified(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     background_tasks: BackgroundTasks = None,
 ) -> dict:
     """
-    Decode the JWT access token, validate the embedded session via a single
-    JOIN query to db-service, and queue a last_active_at update in the
-    background.
+    Decode the JWT, validate the session, and return the user dict.
+
+    Does NOT enforce ID verification — use this only on endpoints that
+    must remain accessible before a user's ID is approved (profile view,
+    document upload, auth flows).
 
     Raises:
         HTTPException 403: If token scope is tos_pending or 2fa_pending.
-        HTTPException 401: If token is missing, invalid, expired, session
-            revoked, or session expired.
+        HTTPException 401: If token is missing, invalid, expired,
+            session revoked, or session expired.
 
     Returns:
-        dict: {id, role, email, estate_id, session_id}
+        dict: {id, role, email, estate_id, session_id, id_verified}
     """
     token = credentials.credentials
     try:
@@ -47,12 +52,12 @@ async def get_current_user(
         if scope == "tos_pending":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please accept the Terms of Service to continue.",
+                detail=("Please accept the Terms of Service to continue."),
             )
         if scope == "2fa_pending":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please complete 2FA verification to continue.",
+                detail=("Please complete 2FA verification to continue."),
             )
 
         user_id = payload.get("sub")
@@ -96,6 +101,7 @@ async def get_current_user(
             "email": payload.get("email"),
             "estate_id": payload.get("estate_id"),
             "session_id": session_id,
+            "id_verified": data.get("id_verified", False),
         }
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -107,3 +113,31 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
+
+
+async def get_current_user(
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
+) -> dict:
+    """
+    Standard authenticated dependency — enforces ID verification.
+
+    primary_admin and root are exempt. All other roles (resident,
+    security, admin) must have an active approved ID card document.
+
+    Use ``get_current_user_unverified`` on endpoints that must remain
+    accessible before ID approval (profile, document upload, auth).
+
+    Raises:
+        HTTPException 403: If the user's ID has not been verified.
+    """
+    if current_user.get("role") in _ID_EXEMPT_ROLES:
+        return current_user
+    if not current_user.get("id_verified"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Please upload and have your ID card approved "
+                "before accessing this feature."
+            ),
+        )
+    return current_user

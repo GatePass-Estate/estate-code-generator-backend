@@ -277,6 +277,13 @@ def _build_email(
 
 
 async def _send(subject: str, recipient: str, body: str) -> None:
+    if settings.MAIL_DEV_MODE:
+        logger.info(
+            "MAIL_DEV_MODE — suppressed email" " to=%s subject=%r",
+            recipient,
+            subject,
+        )
+        return
     if not settings.MAIL_USERNAME:
         logger.warning("SMTP not configured — skipping email to %s", recipient)
         return

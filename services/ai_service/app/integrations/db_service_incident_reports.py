@@ -69,7 +69,7 @@ async def load_incident_reports_for_estate(
     max_records: int,
 ) -> list[dict[str, Any]]:
     """
-    Page ``GET /api/v1/codeservice/incidentreport/search`` for one estate.
+    Page ``GET /api/v1/userprofile/incidentreport/search`` for one estate.
 
     Results are ordered by ``created_at`` descending in db-service. Stops when
     ``max_records`` is reached or the server reports no further pages.
@@ -77,7 +77,7 @@ async def load_incident_reports_for_estate(
     Raises:
         IncidentReportError: On transport or HTTP errors from db-service.
     """
-    url = _db_url(settings, "api/v1/codeservice/incidentreport/search")
+    url = _db_url(settings, "api/v1/userprofile/incidentreport/search")
     collected: list[dict[str, Any]] = []
     page = 1
     while len(collected) < max_records:

@@ -24,7 +24,13 @@ __all__ = [
     "CreateRequest",
     "CreateResponse",
     "GetResponse",
+    "GetResponseWithReadStatus",
     "IncidentCategory",
+    "ListResponseWithReadStatus",
+    "MarkReadRequest",
+    "MarkAllReadRequest",
+    "ClearReadRequest",
+    "ReporterDetails",
     "SearchRequest",
     "ListResponse",
 ]
@@ -78,7 +84,7 @@ class IncidentReportBase(BaseModel):
     )
     custom_category: str | None = Field(
         default=None,
-        description="Optional free-text label when taxonomy does not fit.",
+        description=("Optional free-text label when taxonomy does not fit."),
     )
     narrative: str = Field(..., description="Free-text description.")
     occurred_at: datetime = Field(
@@ -116,10 +122,16 @@ class CreateRequest(IncidentReportBase):
     """Create body for a new incident report."""
 
     @model_validator(mode="after")
-    def _require_category_or_custom(self) -> CreateRequest:
-        if not self.category and not self.custom_category:
+    def _validate_category_exclusive(self) -> CreateRequest:
+        has_category = bool(self.category)
+        has_custom = bool(
+            self.custom_category and self.custom_category.strip()
+        )
+        if not has_category and not has_custom:
+            raise ValueError("Provide either a category or a custom_category.")
+        if has_category and has_custom:
             raise ValueError(
-                "Provide at least one category enum value or custom_category."
+                "Provide either a category or a custom_category," " not both."
             )
         return self
 
@@ -141,8 +153,42 @@ class GetResponse(SharedModel, IncidentReportBase):
     """Full row for GET/search items."""
 
 
+class ReporterDetails(BaseModel):
+    """User details for the sender's panel."""
+
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    phone_number: str | None = None
+    home_address: str | None = None
+
+    model_config = model_config
+
+
+class GetResponseWithReadStatus(GetResponse):
+    """GetResponse enriched with per-admin read status."""
+
+    is_read: bool = False
+    read_at: datetime | None = None
+    reporter: ReporterDetails | None = None
+
+
+class ListResponse(BaseListResponse):
+    """Paginated incident list (no read status)."""
+
+    items: List[GetResponse] = Field(..., description="Matching incidents.")
+
+
+class ListResponseWithReadStatus(BaseListResponse):
+    """Paginated incident list enriched with per-admin read status."""
+
+    items: List[GetResponseWithReadStatus] = Field(
+        ..., description="Matching incidents with read status."
+    )
+
+
 class SearchRequest(BaseSearchRequest):
-    """Filter incident reports (non-deleted)."""
+    """Filter incident reports (non-deleted, non-cleared)."""
 
     estate_id: UUID4 | None = Field(
         default=None,
@@ -153,12 +199,52 @@ class SearchRequest(BaseSearchRequest):
     category: IncidentCategory | None = Field(
         default=None,
         description=(
-            "Match reports whose category array includes this enum value."
+            "Match reports whose category array includes this value."
         ),
     )
 
 
-class ListResponse(BaseListResponse):
-    """Paginated incident list."""
+class MarkReadRequest(BaseModel):
+    """Body for marking a single incident report as read."""
 
-    items: List[GetResponse] = Field(..., description="Matching incidents.")
+    admin_id: UUID4
+
+    @field_serializer("admin_id")
+    def serialize_admin_id(self, value: UUID4) -> str:
+        return str(value)
+
+    model_config = model_config
+
+
+class MarkAllReadRequest(BaseModel):
+    """Body for bulk-marking all uncleared reports as read."""
+
+    admin_id: UUID4
+    estate_id: UUID4
+
+    @field_serializer("admin_id")
+    def serialize_admin_id(self, value: UUID4) -> str:
+        return str(value)
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    model_config = model_config
+
+
+class ClearReadRequest(BaseModel):
+    """Body for soft-deleting all read records for an admin."""
+
+    admin_id: UUID4
+    estate_id: UUID4
+
+    @field_serializer("admin_id")
+    def serialize_admin_id(self, value: UUID4) -> str:
+        return str(value)
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    model_config = model_config

@@ -24,7 +24,7 @@ from app.schemas.user_documents import (
     UploadDocumentResponse,
     UserDocumentsMetadataResponse,
 )
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user_unverified as get_current_user
 from app.services.user_documents import UserDocumentsService
 
 logger = logging.getLogger(__name__)

@@ -145,6 +145,12 @@ class ValidateSessionResponse(BaseModel):
     email: str = Field(..., description="User email")
     role: UserRole = Field(..., description="User role")
     estate_id: Optional[UUID4] = Field(None, description="Estate ID")
+    id_verified: bool = Field(
+        False,
+        description=(
+            "True when the user has an active approved ID card document."
+        ),
+    )
 
     @field_serializer("session_id")
     def serialize_session_id(self, value: UUID4) -> str:

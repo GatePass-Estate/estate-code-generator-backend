@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     MAIL_PORT: int = int(os.getenv("MAIL_PORT", 587))
     MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
     MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
+    # When true, emails are logged but not actually sent.
+    # Set MAIL_DEV_MODE=true in .env during local development.
+    MAIL_DEV_MODE: bool = os.getenv("MAIL_DEV_MODE", "true").lower() == "true"
 
 
 settings = Settings()

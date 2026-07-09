@@ -109,18 +109,22 @@ class AsyncHttpHandler:
     async def async_delete(
         self,
         url: str,
+        json_data: dict = None,
         headers: dict = None,
     ):
         """
         Performs an asynchronous DELETE request using httpx.
 
         :param url: URL to request.
+        :param json_data: (Optional) Dictionary of JSON payload.
         :param headers: (Optional) Dictionary of HTTP headers.
         :return: Parsed JSON response, or None if an error occurred.
         """
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.delete(url, headers=headers)
+                response = await client.delete(
+                    url, json=json_data, headers=headers
+                )
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:

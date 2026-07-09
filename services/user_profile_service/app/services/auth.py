@@ -10,6 +10,7 @@ from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
 from gatepass_auth import get_current_user  # noqa: F401
+from gatepass_auth import get_current_user_unverified  # noqa: F401
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
@@ -68,6 +69,12 @@ class AuthService:
         user = await self.user_service.repository.authenticate_user(
             email, password, estate_id
         )
+
+        if user.get("role") != "root" and not estate_id:
+            raise HTTPException(
+                status_code=422,
+                detail="estate_id is required for non-root login.",
+            )
 
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)

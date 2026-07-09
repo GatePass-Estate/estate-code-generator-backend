@@ -14,7 +14,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
-from app.schemas.code_service.incident_report import IncidentCategory
+from app.schemas.user_profile.incident_report import IncidentCategory
 
 logger = logging.getLogger(__name__)
 
