@@ -169,6 +169,7 @@ async def delete(
 )
 async def search(
     user_id: UUID4 | None = None,
+    estate_id: UUID4 | None = None,
     visitor_fullname: str | None = None,
     relationship_with_resident: str | None = None,
     gender: str | None = None,
@@ -179,12 +180,18 @@ async def search(
     to_date: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
+    unique: bool = False,
+    ascending: bool = False,
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
-    Searches for items constrained to the criteria given.
-    It searches for all the items matching the criteria given and are not
-    archived. The list is sorted by the created_at field in descending.
+    Search visitor-log rows matching the given criteria.
+
+    Consumed by the code-service BFF for visitor history. Pass ``unique=true``
+    for first-level history (one row per ``hashed_code``, most recent kept,
+    with ``usage_count``). Filter by ``hashed_code`` for second-level visit
+    lists. Rows include denormalized ``resident_fullname``. Default order is
+    newest first (``ascending=false``).
 
     Arguments:
         from_date: The creation date (from).
@@ -192,23 +199,31 @@ async def search(
         page: The number of pages of results.
         limit: The number of items per page.
         user_id: Reference to the visited resident.
+        estate_id: Reference to the estate.
         visitor_fullname: Full name of the visitor.
-        relationship_with_resident: Relation: family, partner,
-            friend, delivery, taxi, technician.
+        relationship_with_resident: Relation to the resident.
         gender (Gender): Gender: male, female, prefer_not_to_say
         hashed_code: Visitor's generated access code.
         security_id: Security personnel who validated the visit.
         visit_time: Timestamp of visitor validation
+        unique: Collapse to one entry per unique visitor code.
+        ascending: Order ascending by time when True.
 
     Returns:
-        A chronologically sorted LIST model containing a list of items.
+        A paginated list sorted by ``created_at``.
 
     Raises:
         HTTPException: If there is an internal server error
     """
     try:
         request = SearchRequest(**vars())
-        return await service.search(request=request, page=page, limit=limit)
+        return await service.search(
+            request=request,
+            page=page,
+            limit=limit,
+            unique=unique,
+            ascending=ascending,
+        )
     except Exception as e:
         logger.exception(
             "An unexpected error happened while searching for matches"
