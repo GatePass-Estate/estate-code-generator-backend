@@ -20,6 +20,9 @@ __all__ = [
     "TwoFARegenerateCodesResponse",
     "SessionResponse",
     "SessionListResponse",
+    "BiometricEnableResponse",
+    "BiometricLoginRequest",
+    "BiometricLoginResponse",
 ]
 
 model_config = ConfigDict(
@@ -223,5 +226,68 @@ class SessionListResponse(BaseModel):
 
     items: List[SessionResponse] = Field(..., description="Session records")
     total: int = Field(..., description="Total number of sessions")
+
+    model_config = model_config
+
+
+class BiometricEnableResponse(BaseModel):
+    """Response after enabling biometric login for the current session."""
+
+    biometric_token: str = Field(
+        ...,
+        description=(
+            "Plaintext biometric token — store immediately in SecureStore. "
+            "Not stored on the backend."
+        ),
+    )
+
+    model_config = model_config
+
+
+class BiometricLoginRequest(BaseModel):
+    """Request to exchange a biometric token for a fresh access token."""
+
+    biometric_token: str = Field(
+        ..., description="Plaintext biometric token from SecureStore"
+    )
+    estate_id: str = Field(
+        ...,
+        description=(
+            "Estate ID the user is logging into — validated against the "
+            "session to prevent cross-estate token use."
+        ),
+    )
+
+    model_config = model_config
+
+
+class BiometricLoginResponse(BaseModel):
+    """
+    Response after a successful biometric token exchange.
+
+    If ``requires_full_reauth`` is True the biometric token has been
+    cleared server-side and the FE must fall back to password login.
+    """
+
+    success: bool = Field(..., description="Whether the exchange succeeded")
+    role: Optional[str] = Field(None, description="User's role")
+    access_token: Optional[str] = Field(
+        None, description="Fresh 1-hour JWT access token"
+    )
+    token_type: str = Field(default="bearer", description="Token type")
+    session_id: Optional[str] = Field(None, description="Session ID")
+    biometric_token: Optional[str] = Field(
+        None,
+        description=(
+            "Rotated biometric token — replace the old one in SecureStore."
+        ),
+    )
+    requires_full_reauth: bool = Field(
+        default=False,
+        description=(
+            "True when 2FA force-reauth is needed. "
+            "FE must fall back to password login."
+        ),
+    )
 
     model_config = model_config

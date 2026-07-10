@@ -429,6 +429,9 @@ class UserRepository:
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
                 is_deleted=item.get("is_deleted", False),
+                tos_accepted_version=item.get("tos_accepted_version"),
+                totp_enabled=item.get("totp_enabled", False),
+                last_2fa_verified_at=item.get("last_2fa_verified_at"),
             )
             for item in response.get("items", [])
         ]

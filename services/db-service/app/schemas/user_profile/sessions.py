@@ -69,6 +69,12 @@ class UpdateRequest(BaseModel):
     is_2fa_verified: Optional[bool] = Field(
         None, description="2FA verification status"
     )
+    biometric_token_hash: Optional[str] = Field(
+        None, description="SHA-256 hex hash of the biometric token"
+    )
+    expires_at: Optional[datetime] = Field(
+        None, description="Extended session expiry time"
+    )
 
     model_config = model_config
 
@@ -100,6 +106,9 @@ class GetResponse(SharedModel):
     expires_at: datetime = Field(..., description="Expiry time")
     is_2fa_verified: bool = Field(
         False, description="Whether 2FA was completed"
+    )
+    biometric_token_hash: Optional[str] = Field(
+        None, description="SHA-256 hex hash of the biometric token"
     )
 
     @field_serializer("user_id")

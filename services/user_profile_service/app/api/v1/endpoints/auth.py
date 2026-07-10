@@ -16,6 +16,9 @@ from app.libs.notify import (
 )
 from app.schemas.auth import (
     AcceptTosRequest,
+    BiometricEnableResponse,
+    BiometricLoginRequest,
+    BiometricLoginResponse,
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
@@ -285,6 +288,53 @@ async def regenerate_recovery_codes(
     return await auth_service.regenerate_recovery_codes(
         current_user["id"], request.code
     )
+
+
+@router.post("/biometric/enable", response_model=BiometricEnableResponse)
+async def enable_biometric(
+    current_user: dict = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> BiometricEnableResponse:
+    """
+    Generates a biometric token for the current session.
+    The plaintext token is returned once — store it immediately in SecureStore.
+    On subsequent biometric logins, exchange this token for a fresh access token.
+    """
+    return await auth_service.enable_biometric(current_user["session_id"])
+
+
+@router.post("/biometric/login", response_model=BiometricLoginResponse)
+async def biometric_login(
+    request: BiometricLoginRequest,
+    http_request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> BiometricLoginResponse:
+    """
+    Exchanges a biometric token for a fresh access token.
+    The old biometric token is invalidated and a new rotated token is returned.
+    FE must update SecureStore with the new token.
+    If requires_full_reauth=True, the token has been cleared and FE must fall
+    back to password login.
+    """
+    return await auth_service.biometric_login(
+        biometric_token=request.biometric_token,
+        estate_id=request.estate_id,
+        ip=get_client_ip(http_request),
+        device=get_device_name(http_request),
+    )
+
+
+@router.delete("/biometric")
+async def disable_biometric(
+    current_user: dict = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> dict:
+    """
+    Clears the biometric token from the current session.
+    After this, biometric login will return 401 until re-enabled.
+    """
+    await auth_service.disable_biometric(current_user["session_id"])
+    return {"success": True}
 
 
 @router.post("/forgot-password", response_model=SetPasswordResponse)
