@@ -316,7 +316,7 @@ class SessionsRepository:
             # Get the record from the database and convert to CREATE schema
             record = await self._getitem(session=self.session, id=id)
             # Update the data fields for the record with the new values.
-            record.update(**request.model_dump(exclude_none=True))
+            record.update(**request.model_dump(exclude_unset=True))
             # update the table with the new record and mark the updated_at
             # timestamp as the current time (done within the database).
             record = await self._setitem(session=self.session, request=record)
@@ -542,5 +542,42 @@ class SessionsRepository:
             message = (
                 "Unexpected error while validating session %s" % session_id
             )
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def get_by_biometric_hash(self, token_hash: str) -> GetResponse:
+        """
+        Look up a non-deleted session by its biometric token hash.
+
+        Arguments:
+            token_hash: SHA-256 hex digest of the biometric token.
+
+        Returns:
+            GetResponse for the matching session.
+
+        Raises:
+            NotFoundError: If no active session has this hash.
+            DatabaseError: If there's an error during the database operation.
+        """
+        query = select(TableModel).where(
+            TableModel.biometric_token_hash == token_hash,
+            TableModel.is_deleted == False,  # noqa E712
+        )
+        try:
+            result = await self.session.execute(query)
+            record = result.unique().scalar_one_or_none()
+            if not record:
+                raise NotFoundError(
+                    "No session found for the provided biometric token"
+                )
+            return GetResponse.model_validate(record, from_attributes=True)
+        except NotFoundError:
+            raise
+        except SQLAlchemyError as e:
+            message = "Database error in get_by_biometric_hash"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = "Unexpected error in get_by_biometric_hash"
             logger.exception(message)
             raise DatabaseError(message) from e

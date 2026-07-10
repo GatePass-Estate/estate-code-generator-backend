@@ -197,6 +197,51 @@ async def delete_all_for_user(
 
 
 @router.get(
+    "/by-biometric-token",
+    response_model=GetResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        404: {"description": "No session found for this biometric token"},
+        500: {"description": "Internal server error"},
+    },
+    description="Look up an active session by its biometric token hash",
+)
+async def get_by_biometric_token(
+    hash: str,
+    service: Service = Depends(get_service),
+) -> GetResponse:
+    """
+    Returns the session row whose ``biometric_token_hash`` matches the
+    provided SHA-256 hex digest.  Used by user-profile-service during
+    biometric login to verify the token without exposing the session ID.
+
+    Arguments:
+        hash: SHA-256 hex digest of the biometric token.
+
+    Returns:
+        GetResponse for the matching session.
+
+    Raises:
+        HTTPException 404: If no active session has this hash.
+        HTTPException 500: If there is an internal server error.
+    """
+    try:
+        return await service.get_by_biometric_hash(token_hash=hash)
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail="No session found for the provided biometric token",
+        ) from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while looking up biometric session"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
     "/search",
     response_model=ListResponse,
     status_code=status.HTTP_200_OK,

@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -34,3 +34,4 @@ class Sessions(BaseModelDB):
     last_active_at = Column(DateTime(timezone=True), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_2fa_verified = Column(Boolean, default=False, nullable=False)
+    biometric_token_hash = Column(Text, nullable=True)

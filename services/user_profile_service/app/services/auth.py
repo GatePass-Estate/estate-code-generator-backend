@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -15,6 +17,17 @@ from gatepass_auth import get_current_user_unverified  # noqa: F401
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = settings.LOGIN_EXPIRE_MINUTES
+
+
+def _generate_biometric_token() -> tuple[str, str]:
+    """Return (plaintext_token, sha256_hex_hash).
+
+    The plaintext is given to the FE once and stored in SecureStore.
+    Only the hash is persisted on the backend.
+    """
+    token = secrets.token_urlsafe(32)
+    hash_ = hashlib.sha256(token.encode()).hexdigest()
+    return token, hash_
 
 
 def generate_access_token(user: dict, session_id: str) -> str:
@@ -394,3 +407,144 @@ class AuthService:
             user_id, code, self.totp_recovery_repo
         )
         return TwoFARegenerateCodesResponse(recovery_codes=codes)
+
+    # ------------------------------------------------------------------
+    # Biometric login
+    # ------------------------------------------------------------------
+
+    async def enable_biometric(self, session_id: str):
+        """
+        Issue a biometric token tied to the current session.
+
+        Generates a random token, stores its SHA-256 hash on the session
+        row, and returns the plaintext token to the caller (FE stores it
+        in SecureStore behind Face ID / fingerprint).
+
+        Args:
+            session_id: The caller's current session ID (from JWT).
+
+        Returns:
+            BiometricEnableResponse with plaintext biometric_token.
+        """
+        from app.schemas.auth import BiometricEnableResponse
+
+        token, hash_ = _generate_biometric_token()
+        await self.session_repo.enable_biometric(session_id, hash_)
+        return BiometricEnableResponse(biometric_token=token)
+
+    async def biometric_login(
+        self,
+        biometric_token: str,
+        estate_id: str,
+        ip: str | None,
+        device: str | None,
+    ):
+        """
+        Exchange a biometric token for a fresh 1-hour access JWT.
+
+        Flow:
+        1. Hash the token and look up the session.
+        2. Validate session is not expired.
+        3. Fetch the user; confirm estate matches.
+        4. If 2FA force-reauth is due, clear the token and signal FE.
+        5. Rotate the biometric token and extend session expiry.
+        6. Issue a new access token against the same session.
+
+        Args:
+            biometric_token: Plaintext token from the FE's SecureStore.
+            estate_id: Estate the user is logging into (validated).
+            ip: Client IP address.
+            device: Device name from User-Agent.
+
+        Returns:
+            BiometricLoginResponse with new access_token and rotated
+            biometric_token, or requires_full_reauth=True.
+        """
+        from app.libs.auth_helpers import session_expires_at
+        from app.schemas.auth import BiometricLoginResponse
+
+        token_hash = hashlib.sha256(biometric_token.encode()).hexdigest()
+
+        session = await self.session_repo.get_session_by_biometric_hash(
+            token_hash
+        )
+        if not session:
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired biometric token."
+            )
+
+        now = datetime.now(timezone.utc)
+        expires_at_str = session.get("expires_at")
+        if expires_at_str:
+            expires_at = datetime.fromisoformat(expires_at_str)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now > expires_at:
+                raise HTTPException(
+                    status_code=401, detail="Biometric session has expired."
+                )
+
+        user = await self.user_service.repository.get_user_by_id(
+            session["user_id"]
+        )
+        if not user or not user.status or user.is_deleted:
+            raise HTTPException(
+                status_code=401, detail="User not found or inactive."
+            )
+
+        if str(user.estate_id) != estate_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Biometric token does not match this estate.",
+            )
+
+        if user.totp_enabled:
+            force_reauth_cutoff = now - timedelta(
+                days=settings.TWO_FA_FORCE_REAUTH_DAYS
+            )
+            last_2fa_raw = user.last_2fa_verified_at
+            reauth_needed = not last_2fa_raw or (
+                datetime.fromisoformat(str(last_2fa_raw)) < force_reauth_cutoff
+            )
+            if reauth_needed:
+                await self.session_repo.disable_biometric(session["id"])
+                return BiometricLoginResponse(
+                    success=False,
+                    requires_full_reauth=True,
+                )
+
+        new_token, new_hash = _generate_biometric_token()
+        await self.session_repo.rotate_biometric_token(
+            session["id"], new_hash, session_expires_at()
+        )
+
+        user_dict = {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "estate_id": str(user.estate_id) if user.estate_id else None,
+        }
+        access_token = generate_access_token(user_dict, session["id"])
+
+        return BiometricLoginResponse(
+            success=True,
+            role=user.role,
+            access_token=access_token,
+            session_id=session["id"],
+            biometric_token=new_token,
+        )
+
+    async def disable_biometric(self, session_id: str) -> dict:
+        """
+        Remove the biometric token from the current session.
+
+        After this call the FE should clear the token from SecureStore.
+
+        Args:
+            session_id: The caller's current session ID (from JWT).
+
+        Returns:
+            Success dict.
+        """
+        await self.session_repo.disable_biometric(session_id)
+        return {"success": True}

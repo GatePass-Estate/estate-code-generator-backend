@@ -118,6 +118,18 @@ class SessionsService:
 
         return await self.repository.validate_session(UUID(session_id))
 
+    async def get_by_biometric_hash(self, token_hash: str) -> GetResponse:
+        """
+        Look up a session by its biometric token hash.
+
+        Arguments:
+            token_hash: SHA-256 hex digest of the biometric token.
+
+        Returns:
+            GetResponse for the matching session.
+        """
+        return await self.repository.get_by_biometric_hash(token_hash)
+
     async def delete_all_for_user(self, user_id: str) -> None:
         """
         Soft-deletes all non-deleted sessions belonging to a given user.

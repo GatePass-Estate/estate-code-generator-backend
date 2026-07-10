@@ -83,6 +83,46 @@ class SessionRepository:
         response = await self.client.async_get(url)
         return response or None
 
+    async def enable_biometric(self, session_id: str, token_hash: str) -> None:
+        """Store biometric token hash on a session."""
+        url = f"{self.sessions_endpoint}/{session_id}"
+        await self.client.async_patch(
+            url, json_data={"biometric_token_hash": token_hash}
+        )
+
+    async def get_session_by_biometric_hash(
+        self, token_hash: str
+    ) -> Optional[dict]:
+        """Look up an active session by its biometric token hash."""
+        url = (
+            f"{self.sessions_endpoint}/by-biometric-token"
+            f"?hash={token_hash}"
+        )
+        return await self.client.async_get(url)
+
+    async def rotate_biometric_token(
+        self,
+        session_id: str,
+        new_hash: str,
+        new_expires_at: datetime,
+    ) -> None:
+        """Swap biometric hash and extend session expiry atomically."""
+        url = f"{self.sessions_endpoint}/{session_id}"
+        await self.client.async_patch(
+            url,
+            json_data={
+                "biometric_token_hash": new_hash,
+                "expires_at": new_expires_at.isoformat(),
+            },
+        )
+
+    async def disable_biometric(self, session_id: str) -> None:
+        """Clear the biometric token from a session."""
+        url = f"{self.sessions_endpoint}/{session_id}"
+        await self.client.async_patch(
+            url, json_data={"biometric_token_hash": None}
+        )
+
     async def search_sessions(
         self,
         user_id: Optional[str] = None,
