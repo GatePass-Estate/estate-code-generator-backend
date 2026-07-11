@@ -57,7 +57,7 @@ from app.pipeline.transparency_manager import explain
 
 class AnomalyOrchestrator:
     """
-    Coordinates visit log fetch, per-scope feature engineering, K-means/DBSCAN
+    Coordinates visit log fetch, per-scope feature engineering, K-means/DBSCAN/LOF
     scoring, ensemble aggregation, transparency, and feature-store persistence.
     """
 
@@ -70,7 +70,7 @@ class AnomalyOrchestrator:
     ) -> dict[str, Any]:
         """
         End-to-end analysis: fetch logs, clean rows, engineer per-scope features,
-        run detector models (K-means, DBSCAN), aggregate scores, and attach
+        run detector models (K-means, DBSCAN, LOF), aggregate scores, and attach
         transparency payloads.
 
         Returns:
@@ -100,7 +100,7 @@ class AnomalyOrchestrator:
         log_kind = log_kind_from_slices_source(log_slices.source)
 
         # Per scope: focal vector → batch-load prior engineered rows (non-anomalous)
-        # → K-means / DBSCAN vs history → pipeline score → transparency row.
+        # → K-means / DBSCAN / LOF vs history → pipeline score → transparency row.
         for scope in resolved:
             scope_rows = log_slices.rows_for_analysis_scope(scope)
             feats = await build_feature_vector(
@@ -146,7 +146,7 @@ class AnomalyOrchestrator:
                     model_ids=[
                         "kmeans-distance-v1",
                         "dbscan-noise-v1",
-                        "lfoa-pending",
+                        "lof-neighbors-v1",
                     ],
                     model_outputs=dict(model_outputs),
                 )
