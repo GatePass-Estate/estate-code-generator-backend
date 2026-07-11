@@ -98,6 +98,27 @@ all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>
 standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "jinja2 (>=3.1.5)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
+name = "gatepass-auth"
+version = "0.1.0"
+description = "Shared FastAPI authentication dependency for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+markers = "sys_platform == \"win32\" or sys_platform == \"emscripten\" or sys_platform != \"win32\" and sys_platform != \"emscripten\""
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+pyjwt = ">=2.9.0"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_auth"
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
@@ -1372,4 +1393,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "aea8f9113b095a9dbd5d3beb83a6e19a345373df1c57dfcdcbdafc98d389083a"
+content-hash = "7bc8c6b93ee0ed83c28509874c99ddd7a02cd54fcae0c76db14852499ad83972"

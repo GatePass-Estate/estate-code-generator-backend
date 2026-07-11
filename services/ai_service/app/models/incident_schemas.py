@@ -2,7 +2,7 @@
 Pydantic models for ``POST /api/v1/incident-reports/summarize``.
 
 Free tier populates ``topics``; paid tier also fills ``summary`` when
-``estate_payment_active`` is true. See ``INCIDENT_REPORTS.md``.
+``estate_payment_active`` is true. See ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md``.
 """
 
 from __future__ import annotations

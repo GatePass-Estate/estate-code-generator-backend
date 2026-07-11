@@ -1,4 +1,4 @@
-"""Abstract base for scope-level anomaly detectors (K-means, DBSCAN, …)."""
+"""Abstract base for scope-level anomaly detectors (K-means, DBSCAN, LOF, …)."""
 
 from __future__ import annotations
 

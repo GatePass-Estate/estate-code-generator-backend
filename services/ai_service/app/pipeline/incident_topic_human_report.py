@@ -3,7 +3,7 @@ Presentation layer for NMF topics: friendly names, shares, and plain-text report
 
 Maps latent topic keywords to operator-facing theme titles via rule tables,
 deduplicates redundant n-grams, and formats ``report_text``. Does not change
-the underlying factorisation; see ``INCIDENT_REPORTS.md``.
+the underlying factorisation; see ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md``.
 """
 
 from __future__ import annotations
