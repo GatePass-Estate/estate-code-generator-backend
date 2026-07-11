@@ -1,4 +1,4 @@
-.PHONY: build clean logs restart start stop gcp-deploy gcp-teardown
+.PHONY: build build-staging build-fresh clean logs restart start stop gcp-deploy gcp-teardown
 
 clean:
 	chmod +x ./scripts/clean.sh
@@ -8,6 +8,15 @@ clean-build: clean build
 
 build:
 	docker compose -f 'docker-compose.yaml' up -d --build
+	$(MAKE) run_migrations
+
+build-staging:
+	docker compose -f 'docker-compose.yaml' up -d --build --force-recreate
+	$(MAKE) run_migrations
+
+build-fresh:
+	docker compose -f 'docker-compose.yaml' build --no-cache
+	docker compose -f 'docker-compose.yaml' up -d --force-recreate
 	$(MAKE) run_migrations
 
 

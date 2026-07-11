@@ -8,6 +8,7 @@ from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
+from app.models import Estates as EstatesModel
 from app.models import Sessions as TableModel
 from app.models import UserDocuments as UserDocumentsModel
 from app.models import Users as UsersModel
@@ -505,6 +506,20 @@ class SessionsRepository:
                     "Session %s not found or user is deleted" % session_id
                 )
             session, user = row
+
+            # Block session if the user's estate has been deactivated
+            if user.estate_id is not None:
+                estate = await self.session.scalar(
+                    select(EstatesModel).where(
+                        EstatesModel.id == user.estate_id,
+                        EstatesModel.is_deleted == False,  # noqa E712
+                    )
+                )
+                if estate is not None and not estate.is_active:
+                    raise NotFoundError(
+                        "Estate %s is inactive" % user.estate_id
+                    )
+
             id_verified = bool(
                 await self.session.scalar(
                     select(

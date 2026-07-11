@@ -1,19 +1,46 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from gatepass_scheduler import scheduled_http_job
 
 from app.api.v1 import api_router
 from app.core.config import settings
 
 logger = logging.getLogger("cache-service")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cron_task = asyncio.create_task(
+        scheduled_http_job(
+            url=settings.USER_PROFILE_CRON_URL,
+            internal_api_key=settings.INTERNAL_API_KEY,
+            hour=settings.CRON_HOUR,
+            name="user-profile-daily-cron",
+        )
+    )
+    logger.info(
+        "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
+        settings.CRON_HOUR,
+    )
+    yield
+    cron_task.cancel()
+    try:
+        await cron_task
+    except asyncio.CancelledError:
+        logger.info("Scheduler stopped: user-profile-daily-cron")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
+    lifespan=lifespan,
 )
 
 # Add CORS middleware

@@ -31,6 +31,16 @@ class NotificationType(str, Enum):
     WELCOME = "WELCOME"
     PASSWORD_RESET_CONFIRMED = "PASSWORD_RESET_CONFIRMED"
     ACCOUNT_CLOSED = "ACCOUNT_CLOSED"
+    # Admin-initiated account deactivation
+    ACCOUNT_DEACTIVATED = "ACCOUNT_DEACTIVATED"
+    ACCOUNT_DEACTIVATION_SCHEDULED = "ACCOUNT_DEACTIVATION_SCHEDULED"
+    # Estate lifecycle
+    ESTATE_DEACTIVATED = "ESTATE_DEACTIVATED"
+    ESTATE_DEACTIVATION_SCHEDULED = "ESTATE_DEACTIVATION_SCHEDULED"
+    ESTATE_REACTIVATED = "ESTATE_REACTIVATED"
+    # Household management
+    HOUSEHOLD_HEAD_ASSIGNED = "HOUSEHOLD_HEAD_ASSIGNED"
+    HOUSEHOLD_NEEDS_HEAD = "HOUSEHOLD_NEEDS_HEAD"
 
 
 # Types for which user preferences are ignored — always delivered
@@ -51,6 +61,11 @@ MANDATORY_TYPES: set[NotificationType] = {
     NotificationType.WELCOME,
     NotificationType.PASSWORD_RESET_CONFIRMED,
     NotificationType.ACCOUNT_CLOSED,
+    NotificationType.ACCOUNT_DEACTIVATED,
+    NotificationType.ACCOUNT_DEACTIVATION_SCHEDULED,
+    NotificationType.ESTATE_DEACTIVATED,
+    NotificationType.ESTATE_DEACTIVATION_SCHEDULED,
+    NotificationType.ESTATE_REACTIVATED,
 }
 
 # Types that do NOT create an in-app notification row.
@@ -61,6 +76,8 @@ NO_IN_APP_TYPES: set[NotificationType] = {
     NotificationType.FORGOT_PASSWORD,
     NotificationType.EMAIL_VERIFICATION,
     NotificationType.ACCOUNT_CLOSED,
+    # Account is being force-closed; no point creating an in-app row
+    NotificationType.ACCOUNT_DEACTIVATED,
 }
 
 # Types that send email by default
@@ -80,6 +97,11 @@ EMAIL_TYPES: set[NotificationType] = {
     NotificationType.WELCOME,
     NotificationType.PASSWORD_RESET_CONFIRMED,
     NotificationType.ACCOUNT_CLOSED,
+    NotificationType.ACCOUNT_DEACTIVATED,
+    NotificationType.ACCOUNT_DEACTIVATION_SCHEDULED,
+    NotificationType.ESTATE_DEACTIVATED,
+    NotificationType.ESTATE_DEACTIVATION_SCHEDULED,
+    NotificationType.ESTATE_REACTIVATED,
 }
 
 # Types that send push by default
@@ -96,6 +118,8 @@ PUSH_TYPES: set[NotificationType] = {
     NotificationType.HOUSEHOLD_TRANSFERRED,
     NotificationType.INCIDENT_REPORT_FILED,
     NotificationType.EDIT_REQUEST_PENDING,
+    NotificationType.HOUSEHOLD_HEAD_ASSIGNED,
+    NotificationType.HOUSEHOLD_NEEDS_HEAD,
 }
 
 

@@ -79,6 +79,9 @@ class RolePermissionBase(BaseModel):
     can_view_other_user_logs_in_other_estate: bool = Field(
         ..., description="May view logs across estates"
     )
+    can_deactivate_user: bool = Field(
+        ..., description="Can force-close a user account"
+    )
 
     model_config = model_config
 
@@ -174,6 +177,9 @@ class UpdateRequest(BaseModel):
     )
     can_view_other_user_logs_in_other_estate: bool | None = Field(
         default=None, description="May view logs across estates"
+    )
+    can_deactivate_user: bool | None = Field(
+        default=None, description="Can force-close a user account"
     )
 
     model_config = model_config
@@ -275,6 +281,9 @@ class SearchRequest(BaseSearchRequest):
     )
     can_view_other_user_logs_in_other_estate: Optional[bool] = Field(
         default=None, description="May view logs across estates"
+    )
+    can_deactivate_user: Optional[bool] = Field(
+        default=None, description="Can force-close a user account"
     )
 
 

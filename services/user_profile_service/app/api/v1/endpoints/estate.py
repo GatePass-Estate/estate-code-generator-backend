@@ -1,28 +1,48 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify
+from app.libs.role_permissions import check_permission
+from app.repositories.admin_management import AdminRepository
+from app.repositories.estate import EstateRepository
+from app.repositories.schedule import ScheduleRepository as ScheduleRepo
+from app.repositories.user import UserRepository
 from app.schemas.estate import (
+    DeactivateEstateRequest,
+    DeleteEstateResponse,
     EstateType,
+    GetEstateResponse,
+    ListEstateResponse,
+    PublicEstateListResponse,
+    PublicEstateSearchResponse,
     RegisterEstateRequest,
     RegisterEstateResponse,
+    SearchEstateRequest,
     UpdateEstateRequest,
     UpdateEstateResponse,
-    GetEstateResponse,
-    DeleteEstateResponse,
-    SearchEstateRequest,
-    ListEstateResponse,
-    PublicEstateSearchResponse,
-    PublicEstateListResponse,
 )
-from app.libs.http_handler import get_http_handler, AsyncHttpHandler
-from app.libs.role_permissions import check_permission
-from app.repositories.estate import EstateRepository
-from app.repositories.user import UserRepository
-from app.repositories.admin_management import AdminRepository
-from app.services.estate import EstateService
 from app.services.admin_management import AdminManagementService
 from app.services.auth import get_current_user
+from app.services.estate import EstateService
 
 router = APIRouter()
+
+
+def get_estate_service(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> EstateService:
+    return EstateService(
+        estate_repository=EstateRepository(ahttp_client),
+        user_repository=UserRepository(ahttp_client),
+    )
+
+
+def get_schedule_repo(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> ScheduleRepo:
+    return ScheduleRepo(ahttp_client)
 
 
 @router.post("/register", response_model=RegisterEstateResponse)
@@ -236,6 +256,7 @@ async def public_search_estates(
     request = SearchEstateRequest(
         search_query=search_query,
         estate_type=estate_type,
+        is_active=True,
         page=page,
         limit=limit,
     )
@@ -256,6 +277,125 @@ async def public_search_estates(
         limit=result.limit,
         items=public_items,
     )
+
+
+@router.post("/{estate_id}/deactivate")
+async def deactivate_estate(
+    estate_id: str,
+    request: DeactivateEstateRequest,
+    background_tasks: BackgroundTasks,
+    service: EstateService = Depends(get_estate_service),
+    schedule_repo: ScheduleRepo = Depends(get_schedule_repo),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Deactivate an estate (root only). Reversible.
+
+    - `deactivate_at` omitted or null → immediate deactivation.
+    - `deactivate_at` is a future datetime → scheduled deactivation via Redis.
+      Cannot exceed SCHEDULE_CLOSE_MAX_DAYS days from now.
+    """
+    if current_user["role"] != "root":
+        raise HTTPException(
+            status_code=403,
+            detail="Only root can deactivate an estate.",
+        )
+
+    if request.deactivate_at is None:
+        await service.deactivate_estate(estate_id, current_user["id"])
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "ESTATE_DEACTIVATED",
+                "title": "Estate deactivated",
+                "body": "Your estate has been deactivated by the platform.",
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
+            },
+        )
+        return {"success": True, "message": "Estate deactivated."}
+
+    result = await service.schedule_deactivate_estate(
+        estate_id=estate_id,
+        actor_user_id=current_user["id"],
+        deactivate_at=request.deactivate_at,
+        schedule_repo=schedule_repo,
+    )
+    if result["primary_admin_id"]:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "ESTATE_DEACTIVATION_SCHEDULED",
+                "title": "Estate deactivation scheduled",
+                "body": (
+                    "Your estate is scheduled to be deactivated on "
+                    f"{result['deactivate_at'].strftime('%Y-%m-%d')}."
+                ),
+                "recipient_user_ids": [result["primary_admin_id"]],
+                "metadata": {
+                    "deactivate_at": result["deactivate_at"].isoformat()
+                },
+            },
+        )
+    return {"success": True, "message": "Estate deactivation scheduled."}
+
+
+@router.post("/{estate_id}/activate")
+async def reactivate_estate(
+    estate_id: str,
+    background_tasks: BackgroundTasks,
+    service: EstateService = Depends(get_estate_service),
+    current_user: dict = Depends(get_current_user),
+):
+    """Reactivate a previously deactivated estate (root only)."""
+    if current_user["role"] != "root":
+        raise HTTPException(
+            status_code=403,
+            detail="Only root can reactivate an estate.",
+        )
+
+    await service.reactivate_estate(estate_id, current_user["id"])
+
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "ESTATE_REACTIVATED",
+            "title": "Estate reactivated",
+            "body": "Your estate has been reactivated.",
+            "fan_out": {
+                "estate_id": estate_id,
+                "roles": ["admin", "primary_admin"],
+            },
+        },
+    )
+
+    return {"success": True, "message": "Estate reactivated."}
+
+
+@router.delete("/{estate_id}/deactivate")
+async def cancel_estate_deactivation(
+    estate_id: str,
+    service: EstateService = Depends(get_estate_service),
+    schedule_repo: ScheduleRepo = Depends(get_schedule_repo),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Cancel a pending scheduled estate deactivation (root only).
+    Returns 404 if no scheduled deactivation exists for this estate.
+    """
+    if current_user["role"] != "root":
+        raise HTTPException(
+            status_code=403,
+            detail="Only root can cancel a scheduled estate deactivation.",
+        )
+
+    await service.cancel_scheduled_deactivation(estate_id, schedule_repo)
+    return {
+        "success": True,
+        "message": "Scheduled estate deactivation cancelled.",
+    }
 
 
 @router.get("/{estate_id}", response_model=GetEstateResponse)
