@@ -1,4 +1,4 @@
-"""HTTP routes for real-time visit anomaly detection (K-means / DBSCAN ensemble)."""
+"""HTTP routes for real-time visit anomaly detection (K-means / DBSCAN / LOF ensemble)."""
 
 import logging
 
@@ -28,7 +28,8 @@ async def analyze_visit_anomalies(
     Run the anomaly pipeline for the given type using validation context.
 
     Requires a bearer token, validates path vs payload receiver alignment,
-    loads log history from db-service, and returns scores plus transparency.
+    loads log history from db-service, runs K-means/DBSCAN/LOF per scope, and
+    returns scores plus transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
     """
     if anomaly_type.value != body.code_validation.receiver.value:
         raise HTTPException(

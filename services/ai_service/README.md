@@ -2,17 +2,17 @@
 
 GatePass **AI microservice** on port **9036** with three capabilities:
 
-1. **Visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN →
+1. **Visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN/LOF →
    ensemble → transparency), pluggable per **analysis scope** (visitor / resident / security /
    estate-wide). Orchestrated by `AnomalyOrchestrator` in `app/pipeline/anomaly_orchestration.py`.
 2. **Incident report intelligence** — TF-IDF + NMF topic modelling (free) and payment-gated
-   EDA + LLM summaries (paid). Documented in **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
+   EDA + LLM summaries (paid). Documented in **[explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md](explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md)**.
 3. **Validation volume forecasting** — daily visitor / resident / combined validation volume
    forecast per estate using a non-seasonal **ARIMA** model. Orchestrated by
    `VolumeForecastOrchestrator` in `app/pipeline/volume_forecast_orchestrator.py`.
 
 This package is a **draft implementation**: HTTP API + domain enums + ABC-based managers with
-db-service integrations. LFOA, Pub/Sub, and incremental counters are still **not** wired on the
+db-service integrations. Pub/Sub and incremental counters are still **not** wired on the
 anomaly path.
 
 **Port:** `9036` (local and intended K8s service port).
@@ -20,7 +20,7 @@ anomaly path.
 **Next steps:** add weighted/learned ensembling, implement incremental aggregates, and add GCP
 Pub/Sub consumer support for the real-time path.
 
-For a **non-technical overview** of K-means, DBSCAN, and how scores combine, see **[EXPLAINER.md](EXPLAINER.md)**.
+For a **non-technical overview** of K-means, DBSCAN, LOF, and how scores combine, see **[explainer_docs/ANOMALY_DETECTION_EXPLAINER.md](explainer_docs/ANOMALY_DETECTION_EXPLAINER.md)** (includes roadmap TODOs).
 
 ---
 
@@ -49,7 +49,7 @@ flowchart TB
     SL[LogHistorySlices.rows_for_analysis_scope]
     FE[build_feature_vector\napp/pipeline/feature_engineer.py]
     ENG[engineer_scope_features\n_scope_feature_keys + feature methods]
-    MD[run_models\nK-means + DBSCAN + placeholders]
+    MD[run_models\nK-means + DBSCAN + LOF]
     SCORE[score_from_model_outputs\ncollapse detectors → 0..1]
   end
 
@@ -125,10 +125,11 @@ So: **scope → subset of keys → subset of `_feature_*` calls → one `dict[st
 
 ### 4. Features → anomaly prediction (per scope) → ensemble
 
-Today this layer is intentionally stubbed but the **wiring** matches the intended production shape:
+Per-scope detectors are implemented (K-means, DBSCAN, LOF); the **scope combiner**
+remains a draft unweighted mean until weights are configured:
 
 - **Per scope:** `run_models` in `app/pipeline/analysis_manager.py` consumes the feature vector
-  and returns model outputs (e.g. k-means / DBSCAN / LFOA-style keys). The orchestrator then
+  and returns model outputs (``kmeans``, ``dbscan``, ``lof``). The orchestrator then
   calls `score_from_model_outputs` in the same file for a scalar per-scope score in ``[0, 1]``.
 - **Across scopes:** `ensemble_score` takes the list of per-scope scores and combines them (today
   an **unweighted mean**; transparency records `ensemble_method` and notes for a future weighted
@@ -156,12 +157,11 @@ Prediction rows are tagged with enum-backed `prediction_type` values:
 | `AnomalyType` | Chooses visitor vs resident **pipeline** and **which scopes** run (via config). |
 | `AnalysisScope` | Chooses **which row slice** and **which feature key set** is evaluated. |
 | `engineer_scope_features` | Maps scope → feature keys → `_feature_*` methods → vector. |
-| `run_models` / `score_from_model_outputs` | Per-scope **detection** and scalar score. |
-| `ensemble_score` | **Single** decision from multiple scope scores (placeholder combiner). |
+| `run_models` / `score_from_model_outputs` | Per-scope **detection** (K-means, DBSCAN, LOF) and scalar score. |
+| `ensemble_score` | **Single** decision from multiple scope scores (unweighted mean; weights TBD). |
 
-When real models and a weighted ensemble land, the same boundaries apply: extend `run_models`,
-`score_from_model_outputs`, and `ensemble_score` without changing how scopes and feature keys
-are resolved.
+To change how scores combine, extend `score_from_model_outputs` and `ensemble_score`
+without changing how scopes and feature keys are resolved.
 
 ---
 
@@ -175,7 +175,7 @@ Estate incident cohorts are analysed via `POST /api/v1/incident-reports/summariz
   `estate_payment_active` is true.
 
 **Full documentation** (API, architecture, TF-IDF and NMF mathematics, hyperparameters,
-limitations): **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
+limitations): **[explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md](explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md)**.
 
 Local CLI: `poetry run python -m app.pipeline.incident_report_orchestrator --json`
 

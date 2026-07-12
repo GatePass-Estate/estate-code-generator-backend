@@ -2,7 +2,7 @@
 Incident intelligence orchestrator (free topics + paid LLM summary).
 
 Single ``analyze`` entry used by ``POST /incident-reports/summarize``. See
-``INCIDENT_REPORTS.md`` for tier behaviour and mathematics.
+``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md`` for tier behaviour and mathematics.
 """
 
 from __future__ import annotations

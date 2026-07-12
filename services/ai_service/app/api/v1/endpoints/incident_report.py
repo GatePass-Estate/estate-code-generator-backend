@@ -1,7 +1,7 @@
 """
 HTTP API for estate incident intelligence (free topics + paid LLM summary).
 
-See ``INCIDENT_REPORTS.md`` for mathematics and tier behaviour.
+See ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md`` for mathematics and tier behaviour.
 """
 
 import logging

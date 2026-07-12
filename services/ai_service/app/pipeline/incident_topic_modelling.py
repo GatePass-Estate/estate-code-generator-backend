@@ -3,7 +3,7 @@ Latent theme discovery for incident cohorts via TF-IDF and NMF.
 
 Builds a document-term matrix from incident text, factorises it into
 document-topic and topic-term matrices, and assigns each report to a
-dominant topic. See ``INCIDENT_REPORTS.md`` for the mathematical specification.
+dominant topic. See ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md`` for the mathematical specification.
 """
 
 from __future__ import annotations
