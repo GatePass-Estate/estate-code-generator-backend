@@ -148,18 +148,33 @@ async def run_daily_cron(
                 SCHEDULED_ESTATE_DEACTIVATIONS_KEY, member
             )
 
+            community_label = "community"
+            try:
+                estate = await estate_service.get_estate(estate_id)
+                community_label = {
+                    "housing": "estate",
+                    "corporate": "organisation",
+                }.get(
+                    estate.estate_type.value if estate.estate_type else "",
+                    "community",
+                )
+            except Exception:
+                pass
+
             background_tasks.add_task(
                 fire_notify,
                 {
                     "type": "ESTATE_DEACTIVATED",
-                    "title": "Estate deactivated",
+                    "title": (f"{community_label.capitalize()} deactivated"),
                     "body": (
-                        "Your estate has been deactivated by the platform."
+                        f"Your {community_label} has been deactivated"
+                        " by the platform."
                     ),
                     "fan_out": {
                         "estate_id": estate_id,
                         "roles": ["admin", "primary_admin"],
                     },
+                    "metadata": {"community_label": community_label},
                 },
             )
 

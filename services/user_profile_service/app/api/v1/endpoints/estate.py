@@ -29,6 +29,11 @@ from app.services.estate import EstateService
 
 router = APIRouter()
 
+_ESTATE_TYPE_COMMUNITY_LABEL = {
+    "housing": "estate",
+    "corporate": "organisation",
+}
+
 
 def get_estate_service(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
@@ -301,18 +306,31 @@ async def deactivate_estate(
             detail="Only root can deactivate an estate.",
         )
 
+    try:
+        estate = await service.get_estate(estate_id)
+        community_label = _ESTATE_TYPE_COMMUNITY_LABEL.get(
+            estate.estate_type.value if estate.estate_type else "",
+            "community",
+        )
+    except Exception:
+        community_label = "community"
+
     if request.deactivate_at is None:
         await service.deactivate_estate(estate_id, current_user["id"])
         background_tasks.add_task(
             fire_notify,
             {
                 "type": "ESTATE_DEACTIVATED",
-                "title": "Estate deactivated",
-                "body": "Your estate has been deactivated by the platform.",
+                "title": f"{community_label.capitalize()} deactivated",
+                "body": (
+                    f"Your {community_label} has been deactivated"
+                    " by the platform."
+                ),
                 "fan_out": {
                     "estate_id": estate_id,
                     "roles": ["admin", "primary_admin"],
                 },
+                "metadata": {"community_label": community_label},
             },
         )
         return {"success": True, "message": "Estate deactivated."}
@@ -328,14 +346,17 @@ async def deactivate_estate(
             fire_notify,
             {
                 "type": "ESTATE_DEACTIVATION_SCHEDULED",
-                "title": "Estate deactivation scheduled",
+                "title": (
+                    f"{community_label.capitalize()} deactivation scheduled"
+                ),
                 "body": (
-                    "Your estate is scheduled to be deactivated on "
-                    f"{result['deactivate_at'].strftime('%Y-%m-%d')}."
+                    f"Your {community_label} is scheduled to be deactivated"
+                    f" on {result['deactivate_at'].strftime('%Y-%m-%d')}."
                 ),
                 "recipient_user_ids": [result["primary_admin_id"]],
                 "metadata": {
-                    "deactivate_at": result["deactivate_at"].isoformat()
+                    "deactivate_at": result["deactivate_at"].isoformat(),
+                    "community_label": community_label,
                 },
             },
         )
@@ -358,16 +379,26 @@ async def reactivate_estate(
 
     await service.reactivate_estate(estate_id, current_user["id"])
 
+    try:
+        estate = await service.get_estate(estate_id)
+        community_label = _ESTATE_TYPE_COMMUNITY_LABEL.get(
+            estate.estate_type.value if estate.estate_type else "",
+            "community",
+        )
+    except Exception:
+        community_label = "community"
+
     background_tasks.add_task(
         fire_notify,
         {
             "type": "ESTATE_REACTIVATED",
-            "title": "Estate reactivated",
-            "body": "Your estate has been reactivated.",
+            "title": f"{community_label.capitalize()} reactivated",
+            "body": f"Your {community_label} has been reactivated.",
             "fan_out": {
                 "estate_id": estate_id,
                 "roles": ["admin", "primary_admin"],
             },
+            "metadata": {"community_label": community_label},
         },
     )
 

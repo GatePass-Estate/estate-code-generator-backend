@@ -545,6 +545,91 @@ async def send_account_closed_email(email: str, first_name: str) -> None:
     await _send("Your GatePass account has been closed", email, body)
 
 
+async def send_account_deactivated_email(email: str, first_name: str) -> None:
+    body = _build_email(
+        heading="Account Closed",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass account has been closed by your administrator. "
+            "You will no longer be able to log in. "
+            "For more information, please contact your administrator directly."
+        ),
+    )
+    await _send(
+        "Your GatePass account has been closed",
+        email,
+        body,
+    )
+
+
+async def send_account_deactivation_scheduled_email(
+    email: str, first_name: str, close_date: str
+) -> None:
+    body = _build_email(
+        heading="Account Closure Scheduled",
+        first_name=first_name,
+        instruction=(
+            f"Your GatePass account is scheduled to be closed on "
+            f"{close_date}. After this date you will no longer be able to "
+            "log in. For more information, please contact your administrator."
+        ),
+    )
+    await _send("Your GatePass account is scheduled for closure", email, body)
+
+
+async def send_community_deactivated_email(
+    email: str, first_name: str, community_label: str = "community"
+) -> None:
+    label = community_label.lower()
+    body = _build_email(
+        heading=f"{label.capitalize()} Deactivated",
+        first_name=first_name,
+        instruction=(
+            f"Your {label} has been deactivated by the GatePass platform. "
+            "All logins and GatePass activity are currently suspended. "
+            "Please contact GatePass support for further information."
+        ),
+    )
+    await _send(f"Your {label} has been deactivated", email, body)
+
+
+async def send_community_deactivation_scheduled_email(
+    email: str,
+    first_name: str,
+    deactivate_date: str,
+    community_label: str = "community",
+) -> None:
+    label = community_label.lower()
+    body = _build_email(
+        heading=f"{label.capitalize()} Deactivation Scheduled",
+        first_name=first_name,
+        instruction=(
+            f"Your {label} is scheduled to be deactivated on "
+            f"{deactivate_date}. After this date all logins and GatePass "
+            "activity will be suspended. Please contact GatePass support "
+            "if you have any questions."
+        ),
+    )
+    await _send(f"Your {label} is scheduled for deactivation", email, body)
+
+
+async def send_community_reactivated_email(
+    email: str, first_name: str, community_label: str = "community"
+) -> None:
+    label = community_label.lower()
+    body = _build_email(
+        heading=f"{label.capitalize()} Reactivated",
+        first_name=first_name,
+        instruction=(
+            f"Your {label} has been reactivated. "
+            "All logins and GatePass activity are now restored."
+        ),
+        button_label="Log In",
+        button_href=f"{_FRONTEND_BASE_URL}/auth/login",
+    )
+    await _send(f"Your {label} has been reactivated", email, body)
+
+
 async def dispatch_email(
     notification_type: NotificationType,
     email: str,
@@ -625,3 +710,32 @@ async def dispatch_email(
         )
     elif notification_type == NotificationType.ACCOUNT_CLOSED:
         await send_account_closed_email(email=email, first_name=first_name)
+    elif notification_type == NotificationType.ACCOUNT_DEACTIVATED:
+        await send_account_deactivated_email(
+            email=email, first_name=first_name
+        )
+    elif notification_type == NotificationType.ACCOUNT_DEACTIVATION_SCHEDULED:
+        await send_account_deactivation_scheduled_email(
+            email=email,
+            first_name=first_name,
+            close_date=metadata.get("close_at", "a scheduled date"),
+        )
+    elif notification_type == NotificationType.ESTATE_DEACTIVATED:
+        await send_community_deactivated_email(
+            email=email,
+            first_name=first_name,
+            community_label=metadata.get("community_label", "community"),
+        )
+    elif notification_type == NotificationType.ESTATE_DEACTIVATION_SCHEDULED:
+        await send_community_deactivation_scheduled_email(
+            email=email,
+            first_name=first_name,
+            deactivate_date=metadata.get("deactivate_at", "a scheduled date"),
+            community_label=metadata.get("community_label", "community"),
+        )
+    elif notification_type == NotificationType.ESTATE_REACTIVATED:
+        await send_community_reactivated_email(
+            email=email,
+            first_name=first_name,
+            community_label=metadata.get("community_label", "community"),
+        )

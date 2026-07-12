@@ -31,6 +31,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _resolve_group_label(
+    user_id: str,
+    user_repo: UserRepository,
+    estate_repo: EstateRepository,
+) -> str:
+    """Return the group label for the estate the user belongs to."""
+    try:
+        user = await user_repo.get_user_by_id(user_id)
+        estate = await estate_repo.get_estate_by_id(str(user.estate_id))
+        return _ESTATE_TYPE_GROUP_LABEL.get(
+            estate.estate_type.value if estate.estate_type else "",
+            "household",
+        )
+    except Exception:
+        return "household"
+
+
 def _get_service(ahttp_client: AsyncHttpHandler) -> HouseholdService:
     return HouseholdService(
         household_repo=HouseholdRepository(ahttp_client),
@@ -160,6 +177,12 @@ async def set_household_head(
     """
     await _require_household_permission(ahttp_client, current_user)
     service = _get_service(ahttp_client)
+    group_label = await _resolve_group_label(
+        str(request.user_id),
+        service.user_repo,
+        EstateRepository(ahttp_client),
+    )
+
     result = await service.set_household_head(
         household_id,
         request,
@@ -170,10 +193,15 @@ async def set_household_head(
         fire_notify,
         {
             "type": "HOUSEHOLD_HEAD_ASSIGNED",
-            "title": "You are now a household head",
-            "body": "You have been assigned as the head of your household.",
+            "title": f"You are now a {group_label} head",
+            "body": (
+                f"You have been assigned as the head of your {group_label}."
+            ),
             "recipient_user_ids": [str(request.user_id)],
-            "metadata": {"household_id": household_id},
+            "metadata": {
+                "household_id": household_id,
+                "group_label": group_label,
+            },
         },
     )
     return result
@@ -196,21 +224,18 @@ async def transfer_user_household(
     """
     await _require_household_permission(ahttp_client, current_user)
 
-    estate_repository = EstateRepository(ahttp_client)
     service = _get_service(ahttp_client)
-    result = await service.transfer_user(
-        payload, actor_estate_id=_actor_estate_id(current_user)
+    group_label = await _resolve_group_label(
+        str(payload.user_id),
+        service.user_repo,
+        EstateRepository(ahttp_client),
     )
 
-    try:
-        user = await service.user_repo.get_user_by_id(str(payload.user_id))
-        estate = await estate_repository.get_estate_by_id(str(user.estate_id))
-        group_label = _ESTATE_TYPE_GROUP_LABEL.get(
-            estate.estate_type.value if estate.estate_type else "",
-            "household",
-        )
-    except Exception:
-        group_label = "household"
+    result = await service.transfer_user(
+        payload,
+        actor_estate_id=_actor_estate_id(current_user),
+        group_label=group_label,
+    )
 
     background_tasks.add_task(
         fire_notify,

@@ -184,6 +184,7 @@ class HouseholdService:
         self,
         payload: UpdateHouseholdRequest,
         actor_estate_id: str | None = None,
+        group_label: str = "household",
     ) -> UpdateHouseholdResponse:
         """
         Transfers a user to a different household within the same estate.
@@ -248,6 +249,7 @@ class HouseholdService:
                         estate_id=str(old_hh.estate_id)
                         if old_hh.estate_id
                         else "",
+                        group_label=group_label,
                     )
             except Exception:
                 logger.exception(
@@ -264,6 +266,7 @@ class HouseholdService:
         household_id: str,
         household_name: str,
         estate_id: str,
+        group_label: str = "household",
     ) -> None:
         """
         Sends a HOUSEHOLD_NEEDS_HEAD in-app notification to all active
@@ -273,14 +276,16 @@ class HouseholdService:
             household_id: The household that lost its head.
             household_name: Display name of the household.
             estate_id: The estate the household belongs to.
+            group_label: Display label for the group type.
         """
         from app.libs.notify import fire_notify
 
+        label = group_label.lower()
         try:
             await fire_notify(
                 {
                     "type": "HOUSEHOLD_NEEDS_HEAD",
-                    "title": "Household needs a head",
+                    "title": f"{label.capitalize()} needs a head",
                     "body": (
                         f"'{household_name}' no longer has a head. "
                         "Please assign one."
@@ -289,7 +294,10 @@ class HouseholdService:
                         "estate_id": estate_id,
                         "roles": ["admin", "primary_admin"],
                     },
-                    "metadata": {"household_id": household_id},
+                    "metadata": {
+                        "household_id": household_id,
+                        "group_label": label,
+                    },
                 }
             )
         except Exception:
