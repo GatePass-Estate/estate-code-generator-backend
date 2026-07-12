@@ -1,11 +1,20 @@
 # ai-service (draft)
 
-GatePass **AI microservice** on port **9036** with two capabilities:
+GatePass **AI microservice** on port **9036** with three capabilities:
 
-1. **Visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN/LOF →
+1. **Spatial visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN/LOF →
    ensemble → transparency), pluggable per **analysis scope** (visitor / resident / security /
-   estate-wide). Orchestrated by `AnomalyOrchestrator` in `app/pipeline/anomaly_orchestration.py`.
-2. **Incident report intelligence** — TF-IDF + NMF topic modelling (free) and payment-gated
+   estate-wide). Orchestrated by `SpatialAnomalyOrchestrator` in `app/pipeline/spatial_anomaly_orchestration.py`
+   and exposed at `POST /api/v1/spatial-anomaly/analyze/{anomaly_type}`.
+2. **Temporal visit anomaly detection** — Matrix Profile (stumpy) over a **daily** visit-count series
+   built from an estate's **entire** log history. It scores the most recent one-week window against the
+   whole history as a discord (errors with `422` if history spans fewer than 21 days). Orchestrated by
+   `TemporalAnomalyOrchestrator` in `app/pipeline/temporal_anomaly_orchestration.py` and exposed at
+   `POST /api/v1/temporal-anomaly/analyze/{anomaly_type}`, where `anomaly_type` is `visitor`,
+   `resident`, or `combined` (merges both streams into one series). The request body is just
+   `{ "estate_id": <uuid> }`. Documented in
+   **[explainer_docs/TEMPORAL_ANOMALY_MATRIX_PROFILE_EXPLAINER.md](explainer_docs/TEMPORAL_ANOMALY_MATRIX_PROFILE_EXPLAINER.md)**.
+3. **Incident report intelligence** — TF-IDF + NMF topic modelling (free) and payment-gated
    EDA + LLM summaries (paid). Documented in **[explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md](explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md)**.
 
 This package is a **draft implementation**: HTTP API + domain enums + ABC-based managers with
@@ -75,13 +84,13 @@ flowchart TB
 
 `AnomalyType` (visitor-centred vs resident-centred) selects a **concrete pipeline** class. That
 class owns visitor- vs resident-specific cohort rules and which feature methods exist, while
-shared mechanics live on `AnomalyPipelineBase`.
+shared mechanics live on `SpatialAnomalyPipelineBase`.
 
-- **Factory:** `pipeline_for_type` in `app/pipeline/anomaly_pipeline.py`
+- **Factory:** `pipeline_for_type` in `app/pipeline/spatial_anomaly_pipeline.py`
 - **Types:** `app/domain/anomaly_types.py`
 
-`AnomalyOrchestrator` constructs the pipeline once per request, then reuses it for every scope in
-`app/pipeline/anomaly_orchestration.py`.
+`SpatialAnomalyOrchestrator` constructs the pipeline once per request, then reuses it for every
+scope in `app/pipeline/spatial_anomaly_orchestration.py`.
 
 ### 2. Anomaly type → analysis scopes (modular config)
 
@@ -108,9 +117,9 @@ For each resolved `AnalysisScope`, the orchestrator:
    `load_log_records_for_analysis` in `app/integrations/db_service_logs.py` and
    `rows_for_analysis_scope` on the slices object).
 2. Calls `build_feature_vector` in `app/pipeline/feature_engineer.py`, which delegates to
-   `AnomalyPipelineBase.engineer_scope_features`.
+   `SpatialAnomalyPipelineBase.engineer_scope_features`.
 
-Inside `engineer_scope_features` (`app/pipeline/anomaly_pipeline.py`):
+Inside `engineer_scope_features` (`app/pipeline/spatial_anomaly_pipeline.py`):
 
 - `_scope_feature_keys(scope)` returns the **ordered list of design-doc feature keys** for that
   scope only (visitor vs resident vs security vs the combined “all” list used when every scope
@@ -142,7 +151,7 @@ After scoring, the orchestrator calls db-service `logfeatureengineering/upsert` 
 
 - per-scope engineered feature JSON on `core.logfeatureengineering`,
 - anomaly flag (`is_anomalous`) for future historical filtering, and
-- prediction payload on `core.predictionresult` as `{"result": <AnalyzeResponse>}`.
+- prediction payload on `core.predictionresult` as `{"result": <SpatialAnalyzeResponse>}`.
 
 Prediction rows are tagged with enum-backed `prediction_type` values:
 `VisitorAnomalyRealtime` or `ResidentAnomalyRealtime`.

@@ -1,13 +1,13 @@
-"""Visit anomaly orchestration: log fetch → scopes → features → detector scoring."""
+"""Spatial anomaly orchestration: log fetch → scopes → features → detector scoring."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# ``python anomaly_orchestration.py`` from this folder puts ``.../app/pipeline``
-# on ``sys.path[0]``. Prepend ``services/ai_service`` so ``import app`` resolves
-# to this microservice, not another package named ``app``.
+# ``python spatial_anomaly_orchestration.py`` from this folder puts
+# ``.../app/pipeline`` on ``sys.path[0]``. Prepend ``services/ai_service`` so
+# ``import app`` resolves to this microservice, not another package named ``app``.
 _AI_SVC_ROOT = Path(__file__).resolve().parents[2]
 if str(_AI_SVC_ROOT) not in sys.path:
     sys.path.insert(0, str(_AI_SVC_ROOT))
@@ -34,11 +34,10 @@ from app.integrations.db_service_logs import (
     history_window_days,
     load_log_records_for_analysis,
 )
-from app.models.anomaly_schema import (
+from app.models.code_validation import CodeValidationPayload, Receiver
+from app.models.spatial_anomaly_schema import (
     AnalysisTransparency,
-    CodeValidationPayload,
     FeatureContribution,
-    Receiver,
     ScopeTransparencyDetail,
 )
 from app.pipeline.analysis_manager import (
@@ -46,7 +45,7 @@ from app.pipeline.analysis_manager import (
     run_models,
     score_from_model_outputs,
 )
-from app.pipeline.anomaly_pipeline import (
+from app.pipeline.spatial_anomaly_pipeline import (
     RECORDS_PRE_SLICED_CONTEXT_KEY,
     pipeline_for_type,
 )
@@ -55,7 +54,7 @@ from app.pipeline.scope_manager import resolve_scopes_for_pipeline
 from app.pipeline.transparency_manager import explain
 
 
-class AnomalyOrchestrator:
+class SpatialAnomalyOrchestrator:
     """
     Coordinates visit log fetch, per-scope feature engineering, K-means/DBSCAN/LOF
     scoring, ensemble aggregation, transparency, and feature-store persistence.
@@ -74,7 +73,7 @@ class AnomalyOrchestrator:
         transparency payloads.
 
         Returns:
-            A dict compatible with ``AnalyzeResponse`` (including nested
+            A dict compatible with ``SpatialAnalyzeResponse`` (including nested
             ``transparency``).
         """
         log_slices = await load_log_records_for_analysis(
@@ -205,7 +204,7 @@ async def _main() -> None:
         visitor_log_id=UUID("51c43fa0-5432-4b39-94da-5299581c3537"),
         resident_log_id=None,
     )
-    orch = AnomalyOrchestrator()
+    orch = SpatialAnomalyOrchestrator()
     async with httpx.AsyncClient(timeout=120.0) as client:
         result = await orch.analyze(
             client=client,

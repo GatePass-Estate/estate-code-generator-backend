@@ -1,5 +1,5 @@
 """
-ABC for visitor- vs resident-centred anomaly pipelines.
+ABC for visitor- vs resident-centred spatial (feature-space) anomaly pipelines.
 
 Feature engineering uses the **focal** log row (anchor from the request) plus a
 time-sorted cohort in the search window. Only keys for the active scope are
@@ -42,7 +42,7 @@ _FEATURE_METHOD_NAMES: dict[str, str] = {
 }
 
 
-class AnomalyPipelineBase(ABC):
+class SpatialAnomalyPipelineBase(ABC):
     """Visitor vs resident subclasses implement per-feature methods."""
 
     @property
@@ -357,7 +357,7 @@ class AnomalyPipelineBase(ABC):
         return gaps
 
 
-class VisitorAnomalyPipeline(AnomalyPipelineBase):
+class VisitorAnomalyPipeline(SpatialAnomalyPipelineBase):
     """Visitor mode: all feature scopes; focal = anchor visitor log row."""
 
     @property
@@ -568,7 +568,7 @@ class VisitorAnomalyPipeline(AnomalyPipelineBase):
         return out
 
 
-class ResidentAnomalyPipeline(AnomalyPipelineBase):
+class ResidentAnomalyPipeline(SpatialAnomalyPipelineBase):
     """Resident mode; focal = anchor resident log row."""
 
     @property
@@ -766,7 +766,7 @@ class ResidentAnomalyPipeline(AnomalyPipelineBase):
         return out
 
 
-def pipeline_for_type(anomaly_type: AnomalyType) -> AnomalyPipelineBase:
+def pipeline_for_type(anomaly_type: AnomalyType) -> SpatialAnomalyPipelineBase:
     """
     Return the concrete pipeline implementation for ``anomaly_type``.
 

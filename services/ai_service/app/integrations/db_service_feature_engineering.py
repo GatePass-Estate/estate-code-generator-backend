@@ -14,7 +14,7 @@ from app.domain.anomaly_types import AnomalyType
 from app.domain.log_feature_store import FEATURE_JSON_COLUMN
 from app.domain.log_kind import LogKind
 from app.integrations.db_service_logs import _db_url
-from app.models.anomaly_schema import CodeValidationPayload
+from app.models.code_validation import CodeValidationPayload
 
 logger = logging.getLogger(__name__)
 

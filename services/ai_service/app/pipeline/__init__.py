@@ -1,5 +1,10 @@
-"""End-to-end AI pipelines: visit anomaly detection and incident intelligence."""
+"""End-to-end AI pipelines: spatial/temporal anomaly detection and incidents."""
 
-from app.pipeline.anomaly_orchestration import AnomalyOrchestrator
+from app.pipeline.spatial_anomaly_orchestration import (
+    SpatialAnomalyOrchestrator,
+)
+from app.pipeline.temporal_anomaly_orchestration import (
+    TemporalAnomalyOrchestrator,
+)
 
-__all__ = ["AnomalyOrchestrator"]
+__all__ = ["SpatialAnomalyOrchestrator", "TemporalAnomalyOrchestrator"]

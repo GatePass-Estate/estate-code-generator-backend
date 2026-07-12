@@ -2,7 +2,7 @@ import pytest
 
 from app.domain.log_feature_store import historical_vectors_for_scope
 from app.domain.scopes import AnalysisScope
-from app.pipeline.anomaly_pipeline import (
+from app.pipeline.spatial_anomaly_pipeline import (
     ResidentAnomalyPipeline,
     VisitorAnomalyPipeline,
 )

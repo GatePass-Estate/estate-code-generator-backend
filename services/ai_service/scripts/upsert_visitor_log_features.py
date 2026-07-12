@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-# Resolve ``services/ai_service`` as package root (``anomaly_orchestration`` CLI pattern).
+# Resolve ``services/ai_service`` as package root (spatial orchestrator CLI pattern).
 _SVC_ROOT = Path(__file__).resolve().parents[1]
 if str(_SVC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SVC_ROOT))
@@ -49,8 +49,11 @@ from app.integrations.db_service_logs import (  # noqa: E402
     history_window_days,
     load_log_records_for_analysis,
 )
-from app.models.anomaly_schema import CodeValidationPayload, Receiver  # noqa: E402
-from app.pipeline.anomaly_pipeline import (  # noqa: E402
+from app.models.code_validation import (  # noqa: E402
+    CodeValidationPayload,
+    Receiver,
+)
+from app.pipeline.spatial_anomaly_pipeline import (  # noqa: E402
     RECORDS_PRE_SLICED_CONTEXT_KEY,
     pipeline_for_type,
 )

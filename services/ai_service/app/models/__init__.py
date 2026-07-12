@@ -1,21 +1,31 @@
 """Pydantic API models re-exported for convenient imports."""
 
-from app.models.anomaly_schema import (
-    AnalysisTransparency,
+from app.models.code_validation import (
     AnalyzeRequest,
-    AnalyzeResponse,
     CodeValidationPayload,
-    FeatureContribution,
     Receiver,
+)
+from app.models.spatial_anomaly_schema import (
+    AnalysisTransparency,
+    FeatureContribution,
     ScopeTransparencyDetail,
+    SpatialAnalyzeResponse,
+)
+from app.models.temporal_anomaly_schema import (
+    TemporalAnalyzeRequest,
+    TemporalAnalyzeResponse,
+    TemporalMatrixProfileDetail,
 )
 
 __all__ = [
     "AnalysisTransparency",
     "AnalyzeRequest",
-    "AnalyzeResponse",
     "CodeValidationPayload",
     "FeatureContribution",
     "Receiver",
     "ScopeTransparencyDetail",
+    "SpatialAnalyzeResponse",
+    "TemporalAnalyzeRequest",
+    "TemporalAnalyzeResponse",
+    "TemporalMatrixProfileDetail",
 ]

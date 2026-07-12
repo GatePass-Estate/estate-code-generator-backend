@@ -91,10 +91,10 @@ Pub/Sub triggers and incremental feature counters on the anomaly path are still 
 
 | Idea              | Where to look |
 |-------------------|---------------|
-| K-means scoring   | `app/pipeline/anomaly_models/kmeans_model.py` |
-| DBSCAN scoring    | `app/pipeline/anomaly_models/dbscan_model.py` |
-| LOF scoring       | `app/pipeline/anomaly_models/lof_model.py` |
+| K-means scoring   | `app/pipeline/spatial_anomaly_models/kmeans_model.py` |
+| DBSCAN scoring    | `app/pipeline/spatial_anomaly_models/dbscan_model.py` |
+| LOF scoring       | `app/pipeline/spatial_anomaly_models/lof_model.py` |
 | Running detectors | `app/pipeline/analysis_manager.py` (`run_models`) |
 | Per-scope + final combine | `score_from_model_outputs`, `ensemble_score` in the same file |
 | Historical vectors | `app/domain/log_feature_store.py`, `batch_lookup_engineered_features` |
-| End-to-end flow   | `app/pipeline/anomaly_orchestration.py` |
+| End-to-end flow   | `app/pipeline/spatial_anomaly_orchestration.py` |
