@@ -210,4 +210,7 @@ to a naive constant forecast with an explanatory `notes` field instead of failin
 
 Non-seasonal ARIMA only; weekly seasonality (SARIMA) is a deliberate future extension.
 
+**Full documentation** (API, series construction, ARIMA/ADF/AIC/RMSE mathematics, limitations):
+**[explainer_docs/VOLUME_FORECAST_EXPLAINER.md](explainer_docs/VOLUME_FORECAST_EXPLAINER.md)**.
+
 Local CLI: `poetry run python -m app.pipeline.volume_forecast_orchestrator --target combined --json`
