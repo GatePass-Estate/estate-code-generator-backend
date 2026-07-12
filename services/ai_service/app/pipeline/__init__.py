@@ -1,4 +1,4 @@
-"""End-to-end AI pipelines: visit anomaly detection and incident intelligence."""
+"""End-to-end AI pipelines: anomaly, incident, and volume forecasting."""
 
 from app.pipeline.anomaly_orchestration import AnomalyOrchestrator
 
