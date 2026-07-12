@@ -22,6 +22,7 @@ __all__ = [
     "ListEstateResponse",
     "PublicEstateSearchResponse",
     "PublicEstateListResponse",
+    "DeactivateEstateRequest",
 ]
 
 
@@ -207,6 +208,7 @@ class GetEstateResponse(BaseModel):
         None, description="Last update timestamp"
     )
     is_deleted: bool = Field(False, description="Deletion status")
+    is_active: bool = Field(True, description="Whether the estate is active")
 
     @field_serializer("id")
     def serialize_id(self, id: UUID4) -> str:
@@ -274,6 +276,9 @@ class SearchEstateRequest(BaseModel):
     )
     estate_type: Optional[EstateType] = Field(
         None, description="Filter by estate type"
+    )
+    is_active: Optional[bool] = Field(
+        None, description="Filter by active status"
     )
     from_date: Optional[datetime] = Field(
         None, description="Filter by creation date (from)"
@@ -358,6 +363,26 @@ class PublicEstateListResponse(BaseModel):
     limit: int = Field(..., description="Number of items per page")
     items: List[PublicEstateSearchResponse] = Field(
         ..., description="List of public estate records"
+    )
+
+    model_config = model_config
+
+
+class DeactivateEstateRequest(BaseModel):
+    """
+    Request model for deactivating an estate.
+
+    Attributes:
+        deactivate_at: Optional UTC datetime for scheduled deactivation.
+            Omit or pass null for immediate deactivation.
+    """
+
+    deactivate_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "UTC datetime at which the estate should be deactivated. "
+            "Omit for immediate deactivation."
+        ),
     )
 
     model_config = model_config

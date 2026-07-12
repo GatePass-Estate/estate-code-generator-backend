@@ -134,6 +134,23 @@ class UpdateRequest(BaseModel):
     def serialize_primary_admin_id(self, value: UUID4 | None) -> str:
         return str(value) if value else None
 
+    is_active: bool | None = Field(
+        default=None, description="Whether the estate is active"
+    )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description="ID of the root user who deactivated this estate",
+    )
+
+    @field_serializer("deactivated_by")
+    def serialize_deactivated_by(self, value: UUID4 | None) -> Optional[str]:
+        return str(value) if value else None
+
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the estate was deactivated",
+    )
+
     model_config = model_config
 
 
@@ -178,7 +195,22 @@ class GetResponse(SharedModel, EstateBase):
         country (str): Country.
         postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
+        is_active (bool): Whether the estate is active.
+        deactivated_by (UUID): Who deactivated the estate.
+        deactivated_at (datetime): When the estate was deactivated.
     """
+
+    is_active: bool = Field(
+        default=True, description="Whether the estate is active"
+    )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description="ID of the root user who deactivated this estate",
+    )
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the estate was deactivated",
+    )
 
 
 class SearchRequest(BaseSearchRequest):
@@ -215,6 +247,9 @@ class SearchRequest(BaseSearchRequest):
     )
     estate_type: Optional[EstateType] = Field(
         None, description="Type of estate"
+    )
+    is_active: Optional[bool] = Field(
+        None, description="Filter by active/inactive status"
     )
 
 

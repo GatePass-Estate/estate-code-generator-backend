@@ -181,6 +181,7 @@ async def search(
     can_remove_admin: bool = None,
     can_transfer_admin: bool = None,
     can_add_household_member: bool = None,
+    can_deactivate_user: bool = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,

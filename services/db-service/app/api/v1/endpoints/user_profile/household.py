@@ -169,8 +169,8 @@ async def delete(
 )
 async def search(
     estate_id: UUID4 = None,
-    primary_resident_id: UUID4 = None,
-    max_members: int = None,
+    name: str = None,
+    head_user_id: UUID4 = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
@@ -188,8 +188,8 @@ async def search(
         page: The number of pages of results.
         limit: The number of items per page.
         estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        name (str): Substring match on household name.
+        head_user_id (UUID): Head/lead of the household.
 
     Returns:
         A chronologically sorted LIST model containing a list of items.

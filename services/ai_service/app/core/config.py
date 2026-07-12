@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime config for anomaly detection, incident topic modelling, and LLM summaries."""
+    """Runtime config for anomaly, incident, and volume-forecast pipelines."""
 
     model_config = SettingsConfigDict(
         env_file=".env.localdocker", extra="ignore"
@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "ai-service"
     APP_VERSION: str = "0.1.0-draft"
     APP_DESCRIPTION: str = (
-        "AI service: visit anomaly detection and incident report intelligence "
-        "(TF-IDF+NMF topic modelling, payment-gated LLM summaries)"
+        "AI service: visit anomaly detection, incident report intelligence "
+        "(TF-IDF+NMF topic modelling, payment-gated LLM summaries), and "
+        "ARIMA validation-volume forecasting"
     )
     ENV: str = os.getenv("ENV", "local")
 

@@ -122,8 +122,8 @@ class AsyncHttpHandler:
         """
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.delete(
-                    url, json=json_data, headers=headers
+                response = await client.request(
+                    "DELETE", url, json=json_data, headers=headers
                 )
                 response.raise_for_status()
                 return response.json()
