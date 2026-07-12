@@ -1,52 +1,78 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from datetime import datetime
 from typing import Optional
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify, fire_notify_critical
+from app.libs.role_permissions import check_permission
+from app.repositories.admin_management import AdminRepository
+from app.repositories.estate import EstateRepository
+from app.repositories.guest import GuestRepository
+from app.repositories.household import HouseholdRepository
+from app.repositories.schedule import (
+    SCHEDULED_USER_CLOSURES_KEY,
+    ScheduleRepository as ScheduleRepo,
+)
+from app.repositories.user import UserRepository
+from app.schemas.email import EmailTokenResponse
+from app.schemas.guest import (
+    DeleteGuestResponse,
+    GetGuestResponse,
+    ListGuestResponse,
+    RegisterGuestRequest,
+    RegisterGuestResponse,
+    SearchGuestRequest,
+    UpdateGuestRequest,
+    UpdateGuestResponse,
+)
 from app.schemas.user import (
+    AdminCloseRequest,
+    DeleteUserResponse,
+    GetUserResponse,
+    ListUserResponse,
     RegisterUserRequest,
     RegisterUserResponse,
-    UpdateUserRequest,
-    UpdateUserResponse,
-    GetUserResponse,
-    DeleteUserResponse,
+    Role,
     SearchUserRequest,
-    ListUserResponse,
     SetPasswordRequest,
     SetPasswordResponse,
     UpdatePasswordRequest,
+    UpdateUserRequest,
+    UpdateUserResponse,
     UserProfileRequest,
     UserProfileResponse,
-    Role,
 )
-from app.schemas.guest import (
-    RegisterGuestRequest,
-    RegisterGuestResponse,
-    UpdateGuestRequest,
-    UpdateGuestResponse,
-    ListGuestResponse,
-    SearchGuestRequest,
-    GetGuestResponse,
-    DeleteGuestResponse,
-)
-from app.schemas.household import (
-    UpdateHouseholdRequest,
-    UpdateHouseholdResponse,
-)
-from app.schemas.email import (
-    EmailTokenResponse,
-)
-from app.libs.http_handler import AsyncHttpHandler, get_http_handler
-from app.core.config import settings
-from app.libs.notify import fire_notify
-from app.libs.role_permissions import check_permission
-from app.repositories.user import UserRepository
-from app.repositories.guest import GuestRepository
-from app.repositories.estate import EstateRepository
-from app.repositories.household import HouseholdRepository
-from app.repositories.admin_management import AdminRepository
-from app.services.user import UserService
-from app.services.guest import GuestService
 from app.services.auth import get_current_user, get_current_user_unverified
+from app.services.guest import GuestService
+from app.services.user import UserService
 
 router = APIRouter()
+
+
+def get_user_service(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> UserService:
+    return UserService(
+        UserRepository(ahttp_client),
+        EstateRepository(ahttp_client),
+        HouseholdRepository(ahttp_client),
+        AdminRepository(ahttp_client),
+    )
+
+
+def get_guest_service(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> GuestService:
+    return GuestService(GuestRepository(ahttp_client))
+
+
+def get_schedule_repo(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> ScheduleRepo:
+    return ScheduleRepo(ahttp_client)
 
 
 @router.post("/register", response_model=RegisterUserResponse)
@@ -54,12 +80,11 @@ async def register_user(
     request: RegisterUserRequest,
     background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
-    # Extract role of the requester
     requester_role = current_user["role"]
 
-    # Check permission to register users
     if not await check_permission(
         ahttp_client, requester_role, "can_register_users"
     ):
@@ -67,23 +92,13 @@ async def register_user(
             status_code=403, detail="You are not authorized to register users."
         )
 
-    # Proceed with user creation
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    # Only the root user can register a primary admin role
     if requester_role != Role.ROOT:
         if request.role == Role.PRIMARY_ADMIN:
             raise HTTPException(
                 status_code=403,
                 detail="Only the root user can register a primary admin role.",
             )
-        user_id = current_user["id"]
-        estate_id = await service.get_estate_id_by_user_id(user_id)
+        estate_id = await service.get_estate_id_by_user_id(current_user["id"])
         if estate_id != str(request.estate_id):
             raise HTTPException(
                 status_code=403,
@@ -91,9 +106,6 @@ async def register_user(
             )
 
     user, token = await service.register_user(request)
-
-    from urllib.parse import urlencode
-
     verification_url = (
         f"{settings.FRONTEND_BASE_URL}/activate?{urlencode({'token': token})}"
     )
@@ -102,67 +114,85 @@ async def register_user(
         {
             "type": "EMAIL_VERIFICATION",
             "title": "Verify your email address",
-            "body": "Please verify your email address "
+            "body": "Please verify your email address"
             "to activate your account.",
             "recipient_user_ids": [str(user.id)],
             "metadata": {"verification_url": verification_url},
         },
     )
-
-    # Return response model
     return user
 
 
 @router.delete("/me/account", response_model=DeleteUserResponse)
 async def close_account(
     background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
+    schedule_repo: ScheduleRepo = Depends(get_schedule_repo),
     current_user: dict = Depends(get_current_user),
 ):
     """Close the authenticated user's own account."""
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    result = await service.close_account(current_user["id"])
+    user_id = current_user["id"]
+
+    # Capture estate_id before deletion for admin notifications
+    estate_id: str | None = None
+    try:
+        estate_id = await service.get_estate_id_by_user_id(user_id)
+    except Exception:
+        pass
+
+    result = await service.close_account(user_id)
+
+    # Clean up any pending scheduled closure for this user
     background_tasks.add_task(
-        fire_notify,
+        schedule_repo.remove_by_field,
+        SCHEDULED_USER_CLOSURES_KEY,
+        "user_id",
+        user_id,
+    )
+
+    background_tasks.add_task(
+        fire_notify_critical,
         {
             "type": "ACCOUNT_CLOSED",
             "title": "Your account has been closed",
             "body": "Your GatePass account has been closed.",
-            "recipient_user_ids": [current_user["id"]],
+            "recipient_user_ids": [user_id],
         },
     )
+
+    if estate_id:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "ACCOUNT_CLOSED",
+                "title": "Account closed",
+                "body": ("A user in your estate has closed their account."),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
+            },
+        )
+
     return result
 
 
 @router.get("/profile/me", response_model=UserProfileResponse)
 async def get_my_profile(
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user_unverified),
 ):
     """Get current user's profile."""
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
+    return await service.get_user_profile(
+        UserProfileRequest(user_id=current_user["id"])
     )
-
-    user_id = current_user["id"]
-    request = UserProfileRequest(user_id=user_id)
-    return await service.get_user_profile(request)
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
 async def get_user_profile(
     user_id: str,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     requester_role = current_user["role"]
@@ -172,20 +202,12 @@ async def get_user_profile(
         raise HTTPException(
             status_code=403, detail="You are not authorized to view users."
         )
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    same_estate = await service.check_same_estate(user_id, current_user["id"])
-    if not same_estate:
+    if not await service.check_same_estate(user_id, current_user["id"]):
         raise HTTPException(
-            status_code=403, detail="You are not authorized to view this user."
+            status_code=403,
+            detail="You are not authorized to view this user.",
         )
-    payload = UserProfileRequest(user_id=user_id)
-    return await service.get_user_profile(payload)
+    return await service.get_user_profile(UserProfileRequest(user_id=user_id))
 
 
 @router.get("/", response_model=ListUserResponse)
@@ -220,6 +242,7 @@ async def list_users(
         10, ge=1, le=100, description="Number of items per page"
     ),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Search and list users with optional filters and pagination."""
@@ -232,22 +255,11 @@ async def list_users(
             status_code=403, detail="You are not authorized to view users."
         )
 
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-
-    # Parse datetime strings if provided
     from_date_obj = None
     to_date_obj = None
 
     if from_date:
         try:
-            from datetime import datetime
-
             from_date_obj = datetime.fromisoformat(from_date)
         except ValueError:
             raise HTTPException(
@@ -257,8 +269,6 @@ async def list_users(
 
     if to_date:
         try:
-            from datetime import datetime
-
             to_date_obj = datetime.fromisoformat(to_date)
         except ValueError:
             raise HTTPException(
@@ -266,27 +276,25 @@ async def list_users(
                 detail="Invalid to_date format. Use ISO format.",
             )
 
-    # For non-root users, restrict to users in their estate
     if requester_role != "root":
-        # Get requester's user data to find their estate
         requester_user = await service.get_user(current_user["id"])
         estate_id = str(requester_user.estate_id)
 
-    request = SearchUserRequest(
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        role=role,
-        estate_id=estate_id,
-        household_id=household_id,
-        status=status,
-        from_date=from_date_obj,
-        to_date=to_date_obj,
-        page=page,
-        limit=limit,
+    return await service.search_users(
+        SearchUserRequest(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            role=role,
+            estate_id=estate_id,
+            household_id=household_id,
+            status=status,
+            from_date=from_date_obj,
+            to_date=to_date_obj,
+            page=page,
+            limit=limit,
+        )
     )
-
-    return await service.search_users(request)
 
 
 @router.get("/all", response_model=ListUserResponse)
@@ -308,6 +316,7 @@ async def get_all_estate_users(
         10, ge=1, le=100, description="Number of items per page"
     ),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     requester_role = current_user["role"]
@@ -317,26 +326,16 @@ async def get_all_estate_users(
         raise HTTPException(
             status_code=403, detail="You are not authorized to view users"
         )
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    status = status or "true"
 
+    status = status or "true"
     if status not in {"true", "false", "all"}:
         raise HTTPException(status_code=400, detail="Invalid status filter")
 
-    # Parse datetime strings if provided
     from_date_obj = None
     to_date_obj = None
 
     if from_date:
         try:
-            from datetime import datetime
-
             from_date_obj = datetime.fromisoformat(from_date)
         except ValueError:
             raise HTTPException(
@@ -346,8 +345,6 @@ async def get_all_estate_users(
 
     if to_date:
         try:
-            from datetime import datetime
-
             to_date_obj = datetime.fromisoformat(to_date)
         except ValueError:
             raise HTTPException(
@@ -364,47 +361,32 @@ async def get_all_estate_users(
             from_date=from_date_obj,
             to_date=to_date_obj,
         )
-    else:
-        user_id = current_user["id"]
-        estate_id = await service.get_estate_id_by_user_id(user_id)
-        return await service.get_users_by_estate(
-            estate_id,
-            status=status,
-            page=page,
-            limit=limit,
-            from_date=from_date_obj,
-            to_date=to_date_obj,
-        )
+
+    estate_id = await service.get_estate_id_by_user_id(current_user["id"])
+    return await service.get_users_by_estate(
+        estate_id,
+        status=status,
+        page=page,
+        limit=limit,
+        from_date=from_date_obj,
+        to_date=to_date_obj,
+    )
 
 
 @router.get("/verify/email", response_model=EmailTokenResponse)
 async def verify_email(
     token: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
 ):
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     return await service.verify_email(token)
 
 
 @router.get("/verify/password-reset", response_model=EmailTokenResponse)
 async def verify_password_reset_token(
     token: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
 ):
     """Validates a password reset token and returns the user_id to proceed."""
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     return await service.verify_password_reset_token(token)
 
 
@@ -412,17 +394,10 @@ async def verify_password_reset_token(
 async def reset_password(
     payload: SetPasswordRequest,
     background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
 ):
     """Resets the password for an active account
     (no current password required)."""
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     result = await service.reset_password(payload)
     background_tasks.add_task(
         fire_notify,
@@ -449,15 +424,8 @@ async def reset_password(
 async def set_password(
     payload: SetPasswordRequest,
     background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
 ):
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     result = await service.set_password_and_activate(payload)
     background_tasks.add_task(
         fire_notify,
@@ -475,7 +443,7 @@ async def set_password(
 async def update_password(
     payload: UpdatePasswordRequest,
     background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     if str(payload.user_id) != str(current_user["id"]):
@@ -483,13 +451,6 @@ async def update_password(
             status_code=403,
             detail="You are not authorized to update this user's password.",
         )
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     result = await service.update_password(payload)
     background_tasks.add_task(
         fire_notify,
@@ -503,115 +464,45 @@ async def update_password(
     return result
 
 
-_ESTATE_TYPE_GROUP_LABEL = {
-    "housing": "household",
-    "corporate": "department",
-}
-
-
-@router.post("/household/update", response_model=UpdateHouseholdResponse)
-async def update_household(
-    payload: UpdateHouseholdRequest,
-    background_tasks: BackgroundTasks,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    requester_role = current_user["role"]
-    if not await check_permission(
-        ahttp_client, requester_role, "can_add_household_member"
-    ):
-        raise HTTPException(
-            status_code=403, detail="You are not authorized to perform action."
-        )
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-    result = await service.update_user_household(payload)
-
-    try:
-        user = await service.get_user(str(payload.user_id))
-        estate = await estate_repository.get_estate_by_id(str(user.estate_id))
-        group_label = _ESTATE_TYPE_GROUP_LABEL.get(
-            estate.estate_type.value if estate.estate_type else "", "household"
-        )
-    except Exception:
-        group_label = "household"
-
-    background_tasks.add_task(
-        fire_notify,
-        {
-            "type": "HOUSEHOLD_TRANSFERRED",
-            "title": f"{group_label.capitalize()} updated",
-            "body": f"You have been moved to a new {group_label}.",
-            "recipient_user_ids": [str(payload.user_id)],
-            "metadata": {"group_label": group_label},
-        },
-    )
-    return result
-
-
 @router.post("/guest/register", response_model=RegisterGuestResponse)
 async def register_guest(
     request: RegisterGuestRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
-    repository = GuestRepository(ahttp_client)
-    service = GuestService(repository)
-    user_id = current_user["id"]
-
-    request.resident_id = user_id
+    request.resident_id = current_user["id"]
     return await service.register_guest(request)
 
 
 @router.get("/guest/{guest_id}", response_model=GetGuestResponse)
 async def get_guest(
     guest_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Get guest details by ID."""
-
-    repository = GuestRepository(ahttp_client)
-    service = GuestService(repository)
-    user_id = current_user["id"]
-
-    return await service.get_guest(guest_id, user_id)
+    return await service.get_guest(guest_id, current_user["id"])
 
 
 @router.patch("/guest/{guest_id}", response_model=UpdateGuestResponse)
 async def update_guest(
     guest_id: str,
     request: UpdateGuestRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Update an existing guest."""
-    requester_id = current_user["id"]
-
-    repository = GuestRepository(ahttp_client)
-    service = GuestService(repository)
-    return await service.update_guest(guest_id, requester_id, request)
+    return await service.update_guest(guest_id, current_user["id"], request)
 
 
 @router.delete("/guest/{guest_id}", response_model=DeleteGuestResponse)
 async def delete_guest(
     guest_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Soft delete a guest."""
-
-    requester_id = current_user["id"]
-
-    repository = GuestRepository(ahttp_client)
-    service = GuestService(repository)
-    return await service.delete_guest(guest_id, requester_id)
+    return await service.delete_guest(guest_id, current_user["id"])
 
 
 @router.get("/guest", response_model=ListGuestResponse)
@@ -638,23 +529,15 @@ async def list_guests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Search and list guests with optional filters and pagination."""
-
-    repository = GuestRepository(ahttp_client)
-    service = GuestService(repository)
-    user_id = current_user["id"]
-
-    # Parse datetime strings if provided
     from_date_obj = None
     to_date_obj = None
 
     if from_date:
         try:
-            from datetime import datetime
-
             from_date_obj = datetime.fromisoformat(from_date)
         except ValueError:
             raise HTTPException(
@@ -664,8 +547,6 @@ async def list_guests(
 
     if to_date:
         try:
-            from datetime import datetime
-
             to_date_obj = datetime.fromisoformat(to_date)
         except ValueError:
             raise HTTPException(
@@ -673,18 +554,19 @@ async def list_guests(
                 detail="Invalid to_date format. Use ISO format.",
             )
 
-    request = SearchGuestRequest(
-        guest_name=guest_name,
-        guest_phone_number=guest_phone_number,
-        guest_gender=guest_gender,
-        relationship=relationship,
-        from_date=from_date_obj,
-        to_date=to_date_obj,
-        page=page,
-        limit=limit,
+    return await service.search_guests(
+        SearchGuestRequest(
+            guest_name=guest_name,
+            guest_phone_number=guest_phone_number,
+            guest_gender=guest_gender,
+            relationship=relationship,
+            from_date=from_date_obj,
+            to_date=to_date_obj,
+            page=page,
+            limit=limit,
+        ),
+        current_user["id"],
     )
-
-    return await service.search_guests(request, user_id)
 
 
 @router.post(
@@ -694,10 +576,11 @@ async def resend_verification_email(
     user_id: str,
     background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
-    """Regenerate and resend the email verification link
-    for an unverified user."""
+    """Regenerate and resend the email verification
+    link for an unverified user."""
     requester_role = current_user["role"]
 
     if not await check_permission(
@@ -708,25 +591,12 @@ async def resend_verification_email(
             detail="You are not authorized to perform this action.",
         )
 
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-
     if requester_role != "root":
-        same_estate = await service.check_same_estate(
-            user_id, current_user["id"]
-        )
-        if not same_estate:
+        if not await service.check_same_estate(user_id, current_user["id"]):
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to perform this action.",
             )
-
-    from urllib.parse import urlencode
 
     regenerated_user_id, token = await service.regenerate_verification_token(
         user_id
@@ -740,41 +610,156 @@ async def resend_verification_email(
             "type": "EMAIL_VERIFICATION",
             "title": "Verify your email address",
             "body": "Please verify your email address"
-            " to activate your account.",
+            "to activate your account.",
             "recipient_user_ids": [regenerated_user_id],
             "metadata": {"verification_url": verification_url},
         },
     )
-
     return SetPasswordResponse(
         success=True,
         message="Verification email has been resent.",
     )
 
 
+@router.post("/{user_id}/close")
+async def close_user_account(
+    user_id: str,
+    request: AdminCloseRequest,
+    background_tasks: BackgroundTasks,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
+    schedule_repo: ScheduleRepo = Depends(get_schedule_repo),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Admin-initiated account closure.
+
+    - `close_at` omitted or null → immediate permanent closure.
+    - `close_at` is a future datetime → scheduled closure via Redis.
+      Cannot exceed SCHEDULE_CLOSE_MAX_DAYS days from now.
+    """
+    requester_role = current_user["role"]
+
+    if not await check_permission(
+        ahttp_client, requester_role, "can_deactivate_user"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to close user accounts.",
+        )
+
+    # Capture estate_id before deletion for admin notifications
+    estate_id: str | None = None
+    try:
+        estate_id = await service.get_estate_id_by_user_id(user_id)
+    except Exception:
+        pass
+
+    if request.close_at is None:
+        # Immediate closure — also remove any pending scheduled entry
+        result = await service.admin_close_account(
+            user_id=user_id,
+            actor_user_id=current_user["id"],
+            actor_role=requester_role,
+        )
+        background_tasks.add_task(
+            schedule_repo.remove_by_field,
+            SCHEDULED_USER_CLOSURES_KEY,
+            "user_id",
+            user_id,
+        )
+        background_tasks.add_task(
+            fire_notify_critical,
+            {
+                "type": "ACCOUNT_DEACTIVATED",
+                "title": "Your account has been closed",
+                "body": (
+                    "Your GatePass account has been closed"
+                    " by an administrator."
+                ),
+                "recipient_user_ids": [user_id],
+            },
+        )
+        if estate_id:
+            background_tasks.add_task(
+                fire_notify,
+                {
+                    "type": "ACCOUNT_DEACTIVATED",
+                    "title": "Account closed",
+                    "body": (
+                        "An account in your estate has been closed"
+                        " by an administrator."
+                    ),
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["admin", "primary_admin"],
+                    },
+                },
+            )
+        return result
+
+    # Scheduled closure
+    result = await service.schedule_close_account(
+        user_id=user_id,
+        actor_user_id=current_user["id"],
+        actor_role=requester_role,
+        close_at=request.close_at,
+        schedule_repo=schedule_repo,
+    )
+    background_tasks.add_task(
+        fire_notify,
+        {
+            "type": "ACCOUNT_DEACTIVATION_SCHEDULED",
+            "title": "Account closure scheduled",
+            "body": (
+                "Your GatePass account is scheduled to be closed on "
+                f"{result['close_at'].strftime('%Y-%m-%d')}."
+            ),
+            "recipient_user_ids": [user_id],
+            "metadata": {"close_at": result["close_at"].isoformat()},
+        },
+    )
+    return {"success": True, "message": "Account closure scheduled."}
+
+
+@router.delete("/{user_id}/close")
+async def cancel_scheduled_close(
+    user_id: str,
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
+    schedule_repo: ScheduleRepo = Depends(get_schedule_repo),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Cancel a pending scheduled account closure.
+    Returns 404 if no scheduled closure exists for this user.
+    """
+    requester_role = current_user["role"]
+
+    if not await check_permission(
+        ahttp_client, requester_role, "can_deactivate_user"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not authorized to cancel account closures.",
+        )
+
+    await service.cancel_scheduled_close(user_id, schedule_repo)
+    return {"success": True, "message": "Scheduled closure cancelled."}
+
+
 @router.get("/{user_id}", response_model=GetUserResponse)
 async def get_user(
     user_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Get user details by ID."""
-    requester_role = current_user["role"]
-
-    # Restricted to Root users
-    if requester_role != "root":
+    if current_user["role"] != "root":
         raise HTTPException(
             status_code=403,
             detail="You are not authorized to view this user.",
         )
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     return await service.get_user(user_id)
 
 
@@ -783,6 +768,7 @@ async def update_user(
     user_id: str,
     request: UpdateUserRequest,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Update an existing user."""
@@ -796,18 +782,8 @@ async def update_user(
             detail="You are not authorized to update this user.",
         )
 
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     if requester_role != "root":
-        same_estate = await service.check_same_estate(
-            user_id, current_user["id"]
-        )
-        if not same_estate:
+        if not await service.check_same_estate(user_id, current_user["id"]):
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to view this user.",
@@ -819,6 +795,7 @@ async def update_user(
 async def delete_user(
     user_id: str,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Soft delete a user."""
@@ -831,18 +808,8 @@ async def delete_user(
             status_code=403, detail="You are not authorized to delete users."
         )
 
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
     if requester_role != "root":
-        same_estate = await service.check_same_estate(
-            user_id, current_user["id"]
-        )
-        if not same_estate:
+        if not await service.check_same_estate(user_id, current_user["id"]):
             raise HTTPException(
                 status_code=403,
                 detail="You are not authorized to view this user.",
@@ -854,26 +821,15 @@ async def delete_user(
 async def update_user_phone(
     user_id: str,
     phone_number: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
     """Allow a user to update their own phone number."""
-    # Only allow the user themself to update their phone number
     if str(current_user["id"]) != str(user_id):
         raise HTTPException(
             status_code=403,
             detail="You are not authorized to update this user's phone number",
         )
-
     if not phone_number:
         raise HTTPException(status_code=400, detail="phone_number is required")
-
-    repository = UserRepository(ahttp_client)
-    estate_repository = EstateRepository(ahttp_client)
-    household_repository = HouseholdRepository(ahttp_client)
-    admin_repository = AdminRepository(ahttp_client)
-    service = UserService(
-        repository, estate_repository, household_repository, admin_repository
-    )
-
     return await service.update_user_phone(user_id, phone_number)

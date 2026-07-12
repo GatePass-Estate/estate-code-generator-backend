@@ -1,17 +1,20 @@
-from app.schemas.estate import (
-    RegisterEstateRequest,
-    RegisterEstateResponse,
-    UpdateEstateRequest,
-    UpdateEstateResponse,
-    GetEstateResponse,
-    DeleteEstateResponse,
-    SearchEstateRequest,
-    ListEstateResponse,
-)
-from app.schemas.user import UpdateUserRequest
+from datetime import datetime, timezone
+
+from fastapi import HTTPException
+
 from app.repositories.estate import EstateRepository
 from app.repositories.user import UserRepository
-from fastapi import HTTPException
+from app.schemas.estate import (
+    DeleteEstateResponse,
+    GetEstateResponse,
+    ListEstateResponse,
+    RegisterEstateRequest,
+    RegisterEstateResponse,
+    SearchEstateRequest,
+    UpdateEstateRequest,
+    UpdateEstateResponse,
+)
+from app.schemas.user import UpdateUserRequest
 
 
 class EstateService:
@@ -394,3 +397,168 @@ class EstateService:
         """
         request = UpdateEstateRequest(primary_admin_id=admin_id)
         return await self.update_estate(estate_id, request)
+
+    async def deactivate_estate(
+        self, estate_id: str, actor_user_id: str
+    ) -> None:
+        """
+        Deactivates an estate (reversible). Sets is_active=False and records
+        who deactivated it and when.
+
+        Raises:
+            HTTPException 404: Estate not found or deleted.
+            HTTPException 400: Estate is already inactive.
+        """
+        estate = await self.estate_repository.get_estate_by_id(estate_id)
+        if not estate or estate.is_deleted:
+            raise HTTPException(status_code=404, detail="Estate not found.")
+        if not estate.is_active:
+            raise HTTPException(
+                status_code=400, detail="Estate is already deactivated."
+            )
+        now = datetime.now(timezone.utc)
+        await self.estate_repository.patch_estate(
+            estate_id,
+            {
+                "is_active": False,
+                "deactivated_by": actor_user_id,
+                "deactivated_at": now.isoformat(),
+            },
+        )
+
+    async def reactivate_estate(
+        self, estate_id: str, actor_user_id: str
+    ) -> None:
+        """
+        Reactivates a previously deactivated estate. Clears is_active=True
+        and nulls deactivated_by / deactivated_at.
+
+        Raises:
+            HTTPException 404: Estate not found or deleted.
+            HTTPException 400: Estate is already active.
+        """
+        estate = await self.estate_repository.get_estate_by_id(estate_id)
+        if not estate or estate.is_deleted:
+            raise HTTPException(status_code=404, detail="Estate not found.")
+        if estate.is_active:
+            raise HTTPException(
+                status_code=400, detail="Estate is already active."
+            )
+        await self.estate_repository.patch_estate(
+            estate_id,
+            {
+                "is_active": True,
+                "deactivated_by": None,
+                "deactivated_at": None,
+            },
+        )
+
+    async def schedule_deactivate_estate(
+        self,
+        estate_id: str,
+        actor_user_id: str,
+        deactivate_at,
+        schedule_repo,
+    ) -> dict:
+        """
+        Validates and schedules an estate deactivation via Redis.
+
+        Validates the estate exists and is currently active, then overwrites
+        any existing scheduled entry for this estate.
+
+        Args:
+            estate_id: The ID of the estate to deactivate.
+            actor_user_id: The ID of the root user scheduling the action.
+            deactivate_at: The datetime at which to deactivate the estate.
+            schedule_repo: The schedule repository instance.
+
+        Returns:
+            dict: Success message, deactivate_at_utc, and primary_admin_id.
+
+        Raises:
+            HTTPException 400: If deactivate_at is in the past or exceeds
+                the maximum scheduling window.
+            HTTPException 404: If the estate is not found.
+        """
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.config import settings
+        from app.repositories.schedule import (
+            SCHEDULED_ESTATE_DEACTIVATIONS_KEY,
+        )
+
+        estate = await self.estate_repository.get_estate_by_id(estate_id)
+        if not estate or estate.is_deleted:
+            raise HTTPException(status_code=404, detail="Estate not found.")
+
+        deactivate_at_utc = (
+            deactivate_at.replace(tzinfo=timezone.utc)
+            if deactivate_at.tzinfo is None
+            else deactivate_at.astimezone(timezone.utc)
+        )
+        now_utc = datetime.now(timezone.utc)
+        if deactivate_at_utc <= now_utc:
+            raise HTTPException(
+                status_code=400,
+                detail="deactivate_at must be in the future.",
+            )
+        max_days = settings.SCHEDULE_CLOSE_MAX_DAYS
+        if deactivate_at_utc > now_utc + timedelta(days=max_days):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"deactivate_at cannot be more than {max_days} days"
+                    " in the future."
+                ),
+            )
+
+        await schedule_repo.remove_by_field(
+            SCHEDULED_ESTATE_DEACTIVATIONS_KEY, "estate_id", estate_id
+        )
+        await schedule_repo.add(
+            key=SCHEDULED_ESTATE_DEACTIVATIONS_KEY,
+            score=deactivate_at_utc.timestamp(),
+            member=json.dumps(
+                {
+                    "estate_id": estate_id,
+                    "actor_user_id": actor_user_id,
+                }
+            ),
+        )
+        return {
+            "success": True,
+            "message": "Estate deactivation scheduled.",
+            "deactivate_at": deactivate_at_utc,
+            "primary_admin_id": (
+                str(estate.primary_admin_id)
+                if estate.primary_admin_id
+                else None
+            ),
+        }
+
+    async def cancel_scheduled_deactivation(
+        self, estate_id: str, schedule_repo
+    ) -> None:
+        """
+        Cancels a pending scheduled estate deactivation.
+
+        Args:
+            estate_id: The ID of the estate whose deactivation to cancel.
+            schedule_repo: The schedule repository instance.
+
+        Raises:
+            HTTPException 404: If no scheduled deactivation exists.
+        """
+        from app.repositories.schedule import (
+            SCHEDULED_ESTATE_DEACTIVATIONS_KEY,
+        )
+
+        removed = await schedule_repo.remove_by_field(
+            SCHEDULED_ESTATE_DEACTIVATIONS_KEY, "estate_id", estate_id
+        )
+        if not removed:
+            raise HTTPException(
+                status_code=404,
+                detail="No scheduled deactivation found for this estate.",
+            )

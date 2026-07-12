@@ -1,5 +1,5 @@
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from pydantic import (
     BaseModel,
     EmailStr,
@@ -18,6 +18,7 @@ __all__ = [
     "SetPasswordRequest",
     "SetPasswordResponse",
     "UpdatePasswordRequest",
+    "AdminCloseRequest",
 ]
 
 model_config = ConfigDict(
@@ -176,12 +177,28 @@ class UpdateUserRequest(BaseModel):
     gender: Optional[Gender] = Field(None, description="User's gender")
     role: Optional[Role] = Field(None, description="User's role")
     household_id: Optional[UUID4] = Field(None, description="Household ID")
+    deactivated_by: Optional[UUID4] = Field(
+        None,
+        description=(
+            "ID of the user who closed this account"
+            " (self-closure or admin-initiated)"
+        ),
+    )
+    deactivated_at: Optional[datetime] = Field(
+        None, description="When the account was closed"
+    )
 
     @field_serializer("household_id")
     def serialize_household_id(
         self, household_id: Optional[UUID4]
     ) -> Optional[str]:
         return str(household_id) if household_id else None
+
+    @field_serializer("deactivated_by")
+    def serialize_deactivated_by(
+        self, deactivated_by: Optional[UUID4]
+    ) -> Optional[str]:
+        return str(deactivated_by) if deactivated_by else None
 
     model_config = model_config
 
@@ -240,6 +257,9 @@ class GetUserResponse(BaseModel):
     role: Role = Field(..., description="User's role")
     estate_id: Optional[UUID4] = Field(None, description="Estate ID")
     household_id: Optional[UUID4] = Field(None, description="Household ID")
+    household_name: Optional[str] = Field(
+        None, description="Display name of the user's household"
+    )
     status: bool = Field(..., description="Account activation status")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: Optional[datetime] = Field(
@@ -424,7 +444,8 @@ class UserProfileResponse(BaseModel):
         role (Role): User's role.
         estate_id (UUID4): Estate ID.
         estate_name (str): Estate name.
-        household_primary_resident (str): Primary resident's name.
+        household_name (str): Display name of the user's household.
+        household_primary_resident (str): Household head's name.
         status (bool): User's status.
     """
 
@@ -438,8 +459,11 @@ class UserProfileResponse(BaseModel):
     role: Role = Field(..., description="User's role")
     estate_id: UUID4 = Field(..., description="Estate ID")
     estate_name: str = Field(..., description="Estate name")
+    household_name: str | None = Field(
+        default=None, description="Display name of the user's household"
+    )
     household_primary_resident: str | None = Field(
-        ..., description="Primary resident's name"
+        default=None, description="Household head's name"
     )
     status: bool = Field(..., description="User's status")
 
@@ -508,5 +532,25 @@ class UpdatePasswordRequest(BaseModel):
 
     current_password: str = Field(..., description="Current password")
     new_password: str = Field(..., min_length=8, description="New password")
+
+    model_config = model_config
+
+
+class AdminCloseRequest(BaseModel):
+    """
+    Request model for admin-initiated account closure.
+
+    Attributes:
+        close_at: Optional UTC datetime to schedule the closure.
+                  None = immediate, future datetime = scheduled.
+    """
+
+    close_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "UTC datetime to schedule closure. "
+            "Omit or pass null for immediate closure."
+        ),
+    )
 
     model_config = model_config
