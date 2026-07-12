@@ -1,12 +1,15 @@
 # ai-service (draft)
 
-GatePass **AI microservice** on port **9036** with two capabilities:
+GatePass **AI microservice** on port **9036** with three capabilities:
 
 1. **Visit anomaly detection** — modular pipeline (scope → data → features → K-means/DBSCAN →
    ensemble → transparency), pluggable per **analysis scope** (visitor / resident / security /
    estate-wide). Orchestrated by `AnomalyOrchestrator` in `app/pipeline/anomaly_orchestration.py`.
 2. **Incident report intelligence** — TF-IDF + NMF topic modelling (free) and payment-gated
    EDA + LLM summaries (paid). Documented in **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
+3. **Validation volume forecasting** — daily visitor / resident / combined validation volume
+   forecast per estate using a non-seasonal **ARIMA** model. Orchestrated by
+   `VolumeForecastOrchestrator` in `app/pipeline/volume_forecast_orchestrator.py`.
 
 This package is a **draft implementation**: HTTP API + domain enums + ABC-based managers with
 db-service integrations. LFOA, Pub/Sub, and incremental counters are still **not** wired on the
@@ -175,3 +178,36 @@ Estate incident cohorts are analysed via `POST /api/v1/incident-reports/summariz
 limitations): **[INCIDENT_REPORTS.md](INCIDENT_REPORTS.md)**.
 
 Local CLI: `poetry run python -m app.pipeline.incident_report_orchestrator --json`
+
+---
+
+## Validation volume forecasting (ARIMA)
+
+Forecast an estate's **daily validation volume** via
+`POST /api/v1/volume-forecast/predict/{target}` where `target` is `visitor`, `resident`, or
+`combined` (visitor + resident counts summed).
+
+The request body carries the `estate_id`, the look-back window (`history_days`, default 120, or
+explicit `from_date`/`to_date`), and the `horizon` (default 14 days). The endpoint returns the
+per-day forecast with a 95% confidence interval, the fitted ARIMA order and diagnostics, and a
+retrospective backtest RMSE.
+
+Method (per the reference article, in `app/pipeline/arima_forecaster.py`):
+
+1. **Bucket + zero-fill** — validation events from db-service (`visitorlog`/`residentlog` search)
+   are counted per calendar day and reindexed over the full window, filling empty days with `0`
+   (`app/pipeline/volume_timeseries.py`).
+2. **Stationarity** — an Augmented Dickey-Fuller (ADF) test drives the differencing order `d`
+   (retested after each difference, up to `d=2`).
+3. **Order selection** — a small grid search over `p, q ∈ 0..3` at the chosen `d` keeps the
+   lowest-AIC fit (`statsmodels` `ARIMA`).
+4. **Forecast** — `get_forecast(steps=horizon)` with a 95% interval; outputs are clipped to
+   non-negative integers since volume is a count.
+5. **Backtest** — an 80/20 train/test split reports RMSE (`sklearn.metrics.mean_squared_error`).
+
+Guards: fewer than 14 days of history returns HTTP 422; a constant/degenerate series falls back
+to a naive constant forecast with an explanatory `notes` field instead of failing.
+
+Non-seasonal ARIMA only; weekly seasonality (SARIMA) is a deliberate future extension.
+
+Local CLI: `poetry run python -m app.pipeline.volume_forecast_orchestrator --target combined --json`

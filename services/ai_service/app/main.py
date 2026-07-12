@@ -1,4 +1,4 @@
-"""FastAPI application for the AI service (anomaly detection and incident intelligence)."""
+"""FastAPI app for the AI service: anomaly, incident, volume APIs."""
 
 import logging
 

@@ -28,3 +28,12 @@ class FeatureStoreError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+class VolumeForecastError(Exception):
+    """Raised when validation-volume fetch or ARIMA preconditions fail."""
+
+    def __init__(self, message: str, *, status_code: int = 422) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
