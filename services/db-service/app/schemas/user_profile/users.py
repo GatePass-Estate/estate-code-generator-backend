@@ -230,6 +230,22 @@ class UpdateRequest(BaseModel):
         default=None,
         description="When the user last completed a TOTP challenge",
     )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description=(
+            "ID of the user who closed this account"
+            " (self-closure or admin-initiated)"
+        ),
+    )
+
+    @field_serializer("deactivated_by")
+    def serialize_deactivated_by(self, value: UUID4) -> Optional[str]:
+        return str(value) if value else None
+
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the account was closed",
+    )
 
     model_config = model_config
 
@@ -282,7 +298,21 @@ class GetResponse(SharedModel, UserBase):
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
+        deactivated_by (UUID): Who closed the account.
+        deactivated_at (datetime): When the account was closed.
     """
+
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description=(
+            "ID of the user who closed this account"
+            " (self-closure or admin-initiated)"
+        ),
+    )
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the account was closed",
+    )
 
 
 class SearchRequest(BaseSearchRequest):

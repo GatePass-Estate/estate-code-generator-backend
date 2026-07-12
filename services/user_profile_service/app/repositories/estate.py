@@ -133,6 +133,24 @@ class EstateRepository:
             updated_at=response["updated_at"],
         )
 
+    async def patch_estate(self, estate_id: str, data: dict) -> None:
+        """
+        Patches an estate with the given raw data dict.
+        Used for nullable field updates (e.g. clearing primary_admin_id,
+        setting is_active, deactivated_by, deactivated_at).
+
+        Args:
+            estate_id: The estate ID to update.
+            data: Dict of fields to update (null values clear the field).
+        """
+        url = f"{self.estates_endpoint}/{estate_id}"
+        response = await self.client.async_patch(url, json_data=data)
+        if not response:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Estate update failed for ID: {estate_id}",
+            )
+
     async def get_estate_by_id(
         self, estate_id: str
     ) -> GetEstateResponse | None:
@@ -165,6 +183,7 @@ class EstateRepository:
             created_at=response["created_at"],
             updated_at=response["updated_at"],
             is_deleted=response["is_deleted"],
+            is_active=response.get("is_active", True),
         )
 
     async def delete_estate(self, estate_id: str) -> DeleteEstateResponse:
@@ -237,6 +256,8 @@ class EstateRepository:
             params["primary_admin_id"] = request.primary_admin_id
         if request.estate_type:
             params["estate_type"] = request.estate_type.value
+        if request.is_active is not None:
+            params["is_active"] = request.is_active
         if request.from_date:
             params["from_date"] = request.from_date
         if request.to_date:
@@ -276,6 +297,7 @@ class EstateRepository:
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
                 is_deleted=item.get("is_deleted", False),
+                is_active=item.get("is_active", True),
             )
             for item in response.get("items", [])
         ]

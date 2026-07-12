@@ -1,6 +1,14 @@
 import logging
 
-from sqlalchemy import Column, String, Text, ForeignKey, Enum
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    String,
+    Text,
+    ForeignKey,
+    Enum,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
 from app.schemas.user_profile.estates import EstateType
@@ -45,3 +53,12 @@ class Estates(BaseModelDB):
         Enum(EstateType, name="estatetype", schema="core", create_type=False),
         nullable=True,
     )
+    is_active = Column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    deactivated_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
+        nullable=True,
+    )
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)

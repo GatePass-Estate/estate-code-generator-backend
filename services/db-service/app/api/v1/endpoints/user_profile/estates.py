@@ -178,6 +178,7 @@ async def search(
     postal_code: str | None = None,
     primary_admin_id: UUID4 | None = None,
     estate_type: EstateType | None = None,
+    is_active: bool | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,

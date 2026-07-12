@@ -85,3 +85,9 @@ class Users(BaseModelDB):
     totp_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, default=False, nullable=True)
     last_2fa_verified_at = Column(DateTime(timezone=True), nullable=True)
+    deactivated_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
+        nullable=True,
+    )
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
