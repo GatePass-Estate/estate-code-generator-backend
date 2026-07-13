@@ -1,11 +1,12 @@
 """
 Matrix Profile helpers for temporal (time-series) anomaly detection.
 
-Builds a **daily** visit-count series from an estate's log rows, computes the
-z-normalized Matrix Profile with ``stumpy.stump`` (see Yeh et al., 2016), and
-scores the **latest subsequence** (the most recent one-week window) as a
-*discord* (largest nearest-neighbour distance). Higher score => the latest week
-looks more unlike the rest of the estate's history.
+Daily count series are built upstream by ``build_daily_series`` in
+``volume_timeseries.py`` (fed by ``load_validation_events``). This module
+computes the z-normalized Matrix Profile with ``stumpy.stump`` (see Yeh et al.,
+2016) and scores the **latest subsequence** (the most recent one-week window)
+as a *discord* (largest nearest-neighbour distance). Higher score => the latest
+week looks more unlike the rest of the estate's history.
 
 Reference: https://medium.com/@pw33392/using-the-matrix-profile-to-detect-anomalies-in-time-series-bca14883e0fb
 """

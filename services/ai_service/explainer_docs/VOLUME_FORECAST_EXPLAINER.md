@@ -63,7 +63,8 @@ flowchart TB
 
 1. Resolve the window: `to_date` defaults to now, `from_date` to `now - history_days`.
 2. `load_validation_events()` pages db-service log search filtered by `estate_id` and the
-   date window, returning parsed event timestamps.
+   date window (or, when dates are omitted, the full history), returning parsed event
+   timestamps. The same integration also powers temporal Matrix Profile analysis.
 3. `build_daily_series()` counts events per calendar day and **zero-fills** every empty day.
 4. `run_forecast()` runs ADF → order selection → fit → forecast → backtest.
 5. Return combined JSON (`target`, `observations`, `model`, `backtest`, `forecast`, `notes`).
@@ -304,7 +305,7 @@ These keep a single sparse or degenerate estate from producing a 500 error.
 |------|----------------|
 | `api/v1/endpoints/volume_forecast.py` | HTTP handler, auth, error mapping |
 | `pipeline/volume_forecast_orchestrator.py` | Single entry: fetch → bucket → forecast; CLI harness |
-| `integrations/db_service_validation_volume.py` | Paginated visitor/resident log search → timestamps |
+| `integrations/db_service_validation_volume.py` | Paginated visitor/resident log search → timestamps (shared with temporal analysis) |
 | `pipeline/volume_timeseries.py` | Zero-filled daily count series |
 | `pipeline/arima_forecaster.py` | ADF, AIC grid search, forecast, RMSE backtest, guards |
 | `models/forecast_schema.py` | Pydantic request/response models |

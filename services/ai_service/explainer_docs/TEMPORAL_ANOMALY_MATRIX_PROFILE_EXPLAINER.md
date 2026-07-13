@@ -23,9 +23,11 @@ anomaly. The most typical window (smallest distance) is a **motif**.
 
 This endpoint is **estate-scoped**, not tied to a single validation code. The
 request body carries only an `estate_id`. We fetch the estate's **entire**
-visit/access history from `db-service` (paging `visitorlog` / `residentlog`
-searches by `estate_id`, with no date window) and turn those rows into a
-**daily visit-count series**:
+visit/access history from `db-service` using `load_validation_events` in
+`app/integrations/db_service_validation_volume.py` (paging `visitorlog` /
+`residentlog` searches by `estate_id`, with no date window or record cap) and
+turn the parsed event timestamps into a **daily visit-count series** via
+`build_daily_series` in `app/pipeline/volume_timeseries.py`:
 
 - One bucket per calendar day, from the first event day to the last.
 - Each bucket holds the number of visits/accesses that fell on that day.
@@ -44,8 +46,10 @@ into the daily series:
 
 ## How a request is scored
 
-1. Load the estate's entire history for the chosen subject.
-2. Build the daily visit-count series over `[first_event_day, last_event_day]`.
+1. Load the estate's entire history for the chosen subject via
+   `load_validation_events` (no date window).
+2. Build the daily visit-count series over `[first_event_day, last_event_day]`
+   with `build_daily_series`.
 3. **History-length check:** if the series spans fewer than
    `3 x TEMPORAL_SUBSEQUENCE_WINDOW_DAYS` days (default `3 x 7 = 21`), return a
    `422` error - there is not enough history for a meaningful comparison.
@@ -76,6 +80,8 @@ without writing to `db-service`.
 |---|---|
 | Endpoint | `app/api/v1/endpoints/temporal_anomaly.py` |
 | Orchestrator | `app/pipeline/temporal_anomaly_orchestration.py` |
+| Event fetch (shared with volume forecast) | `app/integrations/db_service_validation_volume.py` |
+| Daily series bucketing (shared with volume forecast) | `app/pipeline/volume_timeseries.py` |
 | Matrix Profile core | `app/pipeline/matrix_profile.py` |
 | Request/response schema | `app/models/temporal_anomaly_schema.py` |
 | Config | `TEMPORAL_ANOMALY_SCORE_THRESHOLD`, `TEMPORAL_SUBSEQUENCE_WINDOW_DAYS` in `app/core/config.py` |

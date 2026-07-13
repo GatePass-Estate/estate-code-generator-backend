@@ -7,8 +7,10 @@ GatePass **AI microservice** on port **9036** with three capabilities:
    estate-wide). Orchestrated by `SpatialAnomalyOrchestrator` in `app/pipeline/spatial_anomaly_orchestration.py`
    and exposed at `POST /api/v1/spatial-anomaly/analyze/{anomaly_type}`.
 2. **Temporal visit anomaly detection** — Matrix Profile (stumpy) over a **daily** visit-count series
-   built from an estate's **entire** log history. It scores the most recent one-week window against the
-   whole history as a discord (errors with `422` if history spans fewer than 21 days). Orchestrated by
+   built from an estate's **entire** log history via the shared
+   `load_validation_events` integration (`app/integrations/db_service_validation_volume.py`).
+   It scores the most recent one-week window against the whole history as a discord (errors with
+   `422` if history spans fewer than 21 days). Orchestrated by
    `TemporalAnomalyOrchestrator` in `app/pipeline/temporal_anomaly_orchestration.py` and exposed at
    `POST /api/v1/temporal-anomaly/analyze/{anomaly_type}`, where `anomaly_type` is `visitor`,
    `resident`, or `combined` (merges both streams into one series). The request body is just
@@ -203,9 +205,11 @@ retrospective backtest RMSE.
 
 Method (per the reference article, in `app/pipeline/arima_forecaster.py`):
 
-1. **Bucket + zero-fill** — validation events from db-service (`visitorlog`/`residentlog` search)
-   are counted per calendar day and reindexed over the full window, filling empty days with `0`
-   (`app/pipeline/volume_timeseries.py`).
+1. **Bucket + zero-fill** — validation events from db-service (`visitorlog`/`residentlog` search,
+   via `load_validation_events` in `app/integrations/db_service_validation_volume.py`) are counted
+   per calendar day and reindexed over the full window, filling empty days with `0`
+   (`app/pipeline/volume_timeseries.py`). The same loader and bucketing path also feeds temporal
+   Matrix Profile analysis (full history, no date cap).
 2. **Stationarity** — an Augmented Dickey-Fuller (ADF) test drives the differencing order `d`
    (retested after each difference, up to `d=2`).
 3. **Order selection** — a small grid search over `p, q ∈ 0..3` at the chosen `d` keeps the

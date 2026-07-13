@@ -1,4 +1,4 @@
-"""Pull visitor/resident log rows from db-service (codeservice paths)."""
+"""Pull visitor/resident log rows from db-service for spatial anomaly analysis."""
 
 from __future__ import annotations
 
@@ -362,98 +362,6 @@ async def load_log_records_for_analysis(
     raise LogHistoryError(
         "Exactly one of visitor_log_id or resident_log_id is required.",
         status_code=422,
-    )
-
-
-@dataclass(frozen=True)
-class EstateHistoryWindow:
-    """
-    Entire visit/access history for an estate (temporal Matrix Profile input).
-
-    Only event timestamps matter, so rows are wrangled and sorted by event time
-    into one stream. ``includes`` records which log tables were pulled.
-    """
-
-    estate_id: str
-    includes: tuple[str, ...]
-    rows: list[dict[str, Any]]
-
-
-async def _fetch_all_pages(
-    client: httpx.AsyncClient,
-    url: str,
-    base_params: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Page through a search endpoint with no date window (entire history)."""
-    params: dict[str, Any] = {"limit": _LOG_PAGE_SIZE, **base_params}
-    all_items: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        data = await _get_json(client, url, params={**params, "page": page})
-        items = data.get("items") or []
-        total = int(data.get("total") or 0)
-        all_items.extend(items)
-        if not items or len(all_items) >= total or len(items) < _LOG_PAGE_SIZE:
-            break
-        page += 1
-    return all_items
-
-
-async def load_estate_history_for_temporal(
-    client: httpx.AsyncClient,
-    settings: Settings,
-    *,
-    estate_id: str,
-    include_visitor: bool,
-    include_resident: bool,
-) -> EstateHistoryWindow:
-    """
-    Load the entire visitor and/or resident history for an estate.
-
-    Not anchored to a single validation: both search endpoints are paged in full
-    by ``estate_id`` (no date window). The rows are wrangled and sorted by event
-    time so the caller can bin them into a daily-count series.
-
-    Raises:
-        LogHistoryError: If no rows are found or HTTP transport fails.
-    """
-    from app.pipeline.data_wrangler import wrangle_visit_records
-
-    params = {"estate_id": str(estate_id)}
-    merged_raw: list[dict[str, Any]] = []
-    includes: list[str] = []
-    if include_visitor:
-        merged_raw += await _fetch_all_pages(
-            client,
-            _db_url(settings, "api/v1/codeservice/visitorlog/search"),
-            params,
-        )
-        includes.append("visitor_log")
-    if include_resident:
-        merged_raw += await _fetch_all_pages(
-            client,
-            _db_url(settings, "api/v1/codeservice/residentlog/search"),
-            params,
-        )
-        includes.append("resident_log")
-
-    logger.debug(
-        "estate history estate_id=%s includes=%s rows=%s",
-        estate_id,
-        includes,
-        len(merged_raw),
-    )
-    if not merged_raw:
-        raise LogHistoryError(
-            "No log history found for the estate; analysis cannot proceed.",
-            status_code=404,
-        )
-    merged_raw.sort(key=_event_time_for_sort)
-    cleaned = await wrangle_visit_records(merged_raw)
-    return EstateHistoryWindow(
-        estate_id=str(estate_id),
-        includes=tuple(includes),
-        rows=cleaned,
     )
 
 

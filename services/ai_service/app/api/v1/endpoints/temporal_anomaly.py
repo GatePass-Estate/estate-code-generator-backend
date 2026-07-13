@@ -32,7 +32,8 @@ async def analyze_temporal_anomalies(
     """
     Run the temporal Matrix Profile pipeline over an estate's entire history.
 
-    Requires a bearer token. Builds a daily visit-count series for the estate
+    Requires a bearer token. Loads validation events via
+    ``load_validation_events``, builds a daily visit-count series for the estate
     (``visitor`` / ``resident`` / ``combined`` selects the log tables), then
     scores the most recent one-week window against the whole history as a
     discord. Returns 422 if history spans fewer than three windows (21 days).

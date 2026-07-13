@@ -20,32 +20,24 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
-from app.core.exceptions import LogHistoryError
+from app.core.exceptions import LogHistoryError, VolumeForecastError
 from app.domain.anomaly_types import AnomalyType
-from app.integrations.db_service_logs import load_estate_history_for_temporal
-from app.models.temporal_anomaly_schema import TemporalMatrixProfileDetail
-from app.pipeline.matrix_profile import (
-    build_daily_count_series,
-    parse_event_time,
-    score_latest_subsequence,
+from app.domain.forecast_target import ForecastTarget
+from app.integrations.db_service_validation_volume import (
+    load_validation_events,
 )
-
-
-def _log_inclusion(anomaly_type: AnomalyType) -> tuple[bool, bool]:
-    """Return ``(include_visitor, include_resident)`` for the analysis subject."""
-    if anomaly_type == AnomalyType.VISITOR:
-        return True, False
-    if anomaly_type == AnomalyType.RESIDENT:
-        return False, True
-    return True, True  # COMBINED
+from app.models.temporal_anomaly_schema import TemporalMatrixProfileDetail
+from app.pipeline.matrix_profile import score_latest_subsequence
+from app.pipeline.volume_timeseries import build_daily_series
 
 
 class TemporalAnomalyOrchestrator:
     """
     Scores an estate's most recent one-week window against its entire history.
 
-    Pulls the full visitor/resident/combined history for the estate, bins it
-    into a daily visit-count series, computes the Matrix Profile with a one-week
+    Loads full visitor/resident/combined validation history via
+    ``load_validation_events``, bins timestamps into a daily count series with
+    ``build_daily_series``, computes the Matrix Profile with a one-week
     subsequence, and scores the latest window as a discord. Unsupervised and
     self-contained: nothing is persisted to db-service.
     """
@@ -60,6 +52,10 @@ class TemporalAnomalyOrchestrator:
         """
         End-to-end temporal analysis over an estate's entire history.
 
+        Fetches unbounded validation events (no date window), builds a
+        zero-filled daily series from first to last event day, then runs Matrix
+        Profile scoring on the latest subsequence window.
+
         Raises:
             LogHistoryError: If no history exists, or the history spans fewer
             than ``settings.TEMPORAL_MIN_HISTORY_WINDOW_MULTIPLE`` subsequence
@@ -70,30 +66,37 @@ class TemporalAnomalyOrchestrator:
         """
         window_days = int(settings.TEMPORAL_SUBSEQUENCE_WINDOW_DAYS)
         min_days = settings.TEMPORAL_MIN_HISTORY_WINDOW_MULTIPLE * window_days
-        include_visitor, include_resident = _log_inclusion(anomaly_type)
 
-        history = await load_estate_history_for_temporal(
-            client,
-            settings,
-            estate_id=str(estate_id),
-            include_visitor=include_visitor,
-            include_resident=include_resident,
-        )
+        try:
+            events = await load_validation_events(
+                client,
+                settings,
+                estate_id=str(estate_id),
+                target=ForecastTarget(anomaly_type.value),
+                raise_if_empty=True,
+                empty_message=(
+                    "No log history found for the estate; "
+                    "analysis cannot proceed."
+                ),
+                empty_status_code=404,
+            )
+        except VolumeForecastError as exc:
+            raise LogHistoryError(
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
 
-        event_times = [
-            ts
-            for ts in (parse_event_time(r) for r in history.rows)
-            if ts is not None
-        ]
+        event_times = events.timestamps
         if not event_times:
             raise LogHistoryError(
                 "Estate history has no parseable event timestamps; "
                 "analysis cannot proceed.",
                 status_code=422,
             )
+
         from_dt = min(event_times)
         to_dt = max(event_times)
-        series = build_daily_count_series(history.rows, from_dt, to_dt)
+        series = build_daily_series(event_times, from_dt, to_dt)
 
         history_days = int(series.shape[0])
         if history_days < min_days:
@@ -104,7 +107,7 @@ class TemporalAnomalyOrchestrator:
                 status_code=422,
             )
 
-        result = score_latest_subsequence(series, m=window_days)
+        result = score_latest_subsequence(series.values, m=window_days)
         final = result.score if result.computed else 0.0
         is_anomalous = final >= settings.TEMPORAL_ANOMALY_SCORE_THRESHOLD
 
@@ -130,7 +133,7 @@ class TemporalAnomalyOrchestrator:
             "final_score": final,
             "is_anomalous": is_anomalous,
             "explanation": explanation,
-            "included_logs": list(history.includes),
+            "included_logs": list(events.includes),
             "detail": detail.model_dump(),
         }
 

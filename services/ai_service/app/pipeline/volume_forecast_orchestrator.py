@@ -56,11 +56,14 @@ class VolumeForecastOrchestrator:
         """
         Load estate validation events, build a zero-filled daily count
         series, fit ARIMA, and return a ``VolumeForecastResponse`` dict.
+
+        Events are fetched via ``load_validation_events`` with a bounded date
+        window and optional ``max_records`` cap.
         """
         end = to_date or datetime.now(timezone.utc)
         start = from_date or (end - timedelta(days=history_days))
 
-        timestamps = await load_validation_events(
+        events = await load_validation_events(
             client,
             settings,
             estate_id=estate_id,
@@ -70,7 +73,7 @@ class VolumeForecastOrchestrator:
             max_records=max_records,
         )
 
-        series = build_daily_series(timestamps, start, end)
+        series = build_daily_series(events.timestamps, start, end)
         result = run_forecast(series, horizon)
 
         observations = int((series > 0).sum())

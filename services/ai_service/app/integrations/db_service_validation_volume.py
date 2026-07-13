@@ -1,14 +1,18 @@
 """
-Pull estate validation events from db-service for ARIMA volume forecasting.
+Pull estate validation events from db-service for volume and temporal analysis.
 
 Pages ``GET api/v1/codeservice/visitorlog/search`` and
-``.../residentlog/search`` filtered by ``estate_id`` and a date window, and
-returns only the parsed event timestamps used to build a daily count series.
+``.../residentlog/search`` filtered by ``estate_id`` (and optionally a date
+window), and returns parsed event timestamps used to build a daily count series.
+
+Shared by ``VolumeForecastOrchestrator`` (bounded window + ``max_records``) and
+``TemporalAnomalyOrchestrator`` (full history, no date filter or record cap).
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -24,6 +28,14 @@ logger = logging.getLogger(__name__)
 _PAGE_SIZE = 100
 
 
+@dataclass(frozen=True)
+class ValidationEventsResult:
+    """Parsed validation event times plus which log tables were queried."""
+
+    timestamps: list[datetime]
+    includes: tuple[str, ...]
+
+
 def _db_url(settings: Settings, path: str) -> str:
     base = settings.DB_SERVICE_URL.rstrip("/")
     return f"{base}/{path.lstrip('/')}"
@@ -35,6 +47,15 @@ def _format_query_datetime(dt: datetime) -> str:
     else:
         dt = dt.astimezone(timezone.utc)
     return dt.isoformat().replace("+00:00", "Z")
+
+
+def _includes_for_target(target: ForecastTarget) -> tuple[str, ...]:
+    includes: list[str] = []
+    if target in (ForecastTarget.VISITOR, ForecastTarget.COMBINED):
+        includes.append("visitor_log")
+    if target in (ForecastTarget.RESIDENT, ForecastTarget.COMBINED):
+        includes.append("resident_log")
+    return tuple(includes)
 
 
 def _record_event_time_or_none(rec: dict[str, Any]) -> datetime | None:
@@ -83,34 +104,49 @@ async def _load_search_timestamps(
     settings: Settings,
     *,
     search_path: str,
-    estate_id: UUID,
-    from_dt: datetime,
-    to_dt: datetime,
-    max_records: int,
+    estate_id: UUID | str,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
+    max_records: int | None,
 ) -> list[datetime]:
     """Page one search endpoint and collect parsed event timestamps."""
     url = _db_url(settings, search_path)
     timestamps: list[datetime] = []
     page = 1
-    while len(timestamps) < max_records:
-        limit = min(_PAGE_SIZE, max_records - len(timestamps))
+    fetched = 0
+    total = 0
+    while True:
+        if max_records is not None and len(timestamps) >= max_records:
+            break
+        limit = (
+            _PAGE_SIZE
+            if max_records is None
+            else min(_PAGE_SIZE, max_records - len(timestamps))
+        )
         params: dict[str, Any] = {
             "estate_id": str(estate_id),
-            "from_date": _format_query_datetime(from_dt),
-            "to_date": _format_query_datetime(to_dt),
             "page": page,
             "limit": limit,
         }
+        if from_dt is not None:
+            params["from_date"] = _format_query_datetime(from_dt)
+        if to_dt is not None:
+            params["to_date"] = _format_query_datetime(to_dt)
         data = await _get_json(client, url, params=params)
         items = data.get("items") or []
+        total = int(data.get("total") or 0)
+        fetched += len(items)
         for row in items:
             ts = _record_event_time_or_none(row)
             if ts is not None:
                 timestamps.append(ts)
-        total = int(data.get("total") or 0)
-        if not items or len(items) < limit or len(timestamps) >= total:
+                if max_records is not None and len(timestamps) >= max_records:
+                    break
+        if not items or fetched >= total or len(items) < limit:
             break
         page += 1
+    if max_records is not None:
+        return timestamps[:max_records]
     return timestamps
 
 
@@ -118,20 +154,27 @@ async def load_validation_events(
     client: httpx.AsyncClient,
     settings: Settings,
     *,
-    estate_id: UUID,
+    estate_id: UUID | str,
     target: ForecastTarget,
-    from_dt: datetime,
-    to_dt: datetime,
-    max_records: int,
-) -> list[datetime]:
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+    max_records: int | None = None,
+    raise_if_empty: bool = False,
+    empty_message: str = "No validation events found for the estate.",
+    empty_status_code: int = 404,
+) -> ValidationEventsResult:
     """
-    Return event timestamps for the estate in ``[from_dt, to_dt]``.
+    Return event timestamps for the estate.
+
+    When ``from_dt`` / ``to_dt`` are omitted, the full history is paged with no
+    date filter. When ``max_records`` is omitted, all matching rows are read.
 
     ``VISITOR`` reads visitor logs, ``RESIDENT`` reads resident logs, and
     ``COMBINED`` merges both. Rows without a parseable timestamp are skipped.
 
     Raises:
-        VolumeForecastError: On transport or HTTP errors from db-service.
+        VolumeForecastError: On transport or HTTP errors from db-service, or
+            when ``raise_if_empty`` is set and no parseable timestamps remain.
     """
     timestamps: list[datetime] = []
     if target in (ForecastTarget.VISITOR, ForecastTarget.COMBINED):
@@ -158,12 +201,27 @@ async def load_validation_events(
                 max_records=max_records,
             )
         )
+
+    window_start = (
+        _format_query_datetime(from_dt) if from_dt is not None else "full"
+    )
+    window_end = _format_query_datetime(to_dt) if to_dt is not None else "full"
     logger.debug(
         "validation events estate_id=%s target=%s rows=%s window=%s..%s",
         estate_id,
         target.value,
         len(timestamps),
-        _format_query_datetime(from_dt),
-        _format_query_datetime(to_dt),
+        window_start,
+        window_end,
     )
-    return timestamps
+
+    if raise_if_empty and not timestamps:
+        raise VolumeForecastError(
+            empty_message,
+            status_code=empty_status_code,
+        )
+
+    return ValidationEventsResult(
+        timestamps=timestamps,
+        includes=_includes_for_target(target),
+    )
