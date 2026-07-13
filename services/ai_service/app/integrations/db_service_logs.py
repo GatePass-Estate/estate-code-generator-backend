@@ -1,4 +1,4 @@
-"""Pull visitor/resident log rows from db-service (codeservice paths)."""
+"""Pull visitor/resident log rows from db-service for spatial anomaly analysis."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import httpx
 from app.core.config import Settings
 from app.core.exceptions import LogHistoryError
 from app.domain.scopes import AnalysisScope
-from app.models.anomaly_schema import CodeValidationPayload
+from app.models.code_validation import CodeValidationPayload
 
 logger = logging.getLogger(__name__)
 

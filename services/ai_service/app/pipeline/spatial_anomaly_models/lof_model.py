@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 from sklearn.neighbors import LocalOutlierFactor
 
-from app.pipeline.anomaly_models.base import AnomalyDetectorModel
-from app.pipeline.anomaly_models.preprocess import (
+from app.core.config import settings
+from app.pipeline.spatial_anomaly_models.base import AnomalyDetectorModel
+from app.pipeline.spatial_anomaly_models.preprocess import (
     ProcessedFeatureBlock,
     build_processed_block,
 )
@@ -43,6 +44,8 @@ class LOFAnomalyModel(AnomalyDetectorModel):
         Returns ``0.0`` when there is no history or no feature columns. A focal
         outlier label ``-1`` (negative ``decision_function``) yields ``1.0``;
         inlier focals get a low baseline or a mild uplift from decision scores.
+        Neighbour count, contamination, and the inlier score band come from
+        :mod:`app.core.config`.
         """
         X = data.X_historical
         n_hist, d = X.shape
@@ -56,10 +59,12 @@ class LOFAnomalyModel(AnomalyDetectorModel):
             dist = float(np.linalg.norm(X[0] - x_focal))
             return float(np.clip(dist / (dist + 1.0), 0.0, 1.0))
 
-        n_neighbors = max(1, min(20, n_hist - 1))
+        n_neighbors = max(
+            1, min(settings.SPATIAL_LOF_MAX_NEIGHBORS, n_hist - 1)
+        )
         lof = LocalOutlierFactor(
             n_neighbors=n_neighbors,
-            contamination="auto",
+            contamination=settings.SPATIAL_LOF_CONTAMINATION,
             novelty=True,
         )
         lof.fit(X)
@@ -75,4 +80,11 @@ class LOFAnomalyModel(AnomalyDetectorModel):
         lo = float(np.min(hist_dec))
         span = hi - lo + 1e-9
         relative = (hi - focal_dec) / span
-        return float(np.clip(0.05 + 0.45 * relative, 0.05, 0.5))
+        baseline = settings.SPATIAL_LOF_INLIER_BASELINE
+        return float(
+            np.clip(
+                baseline + settings.SPATIAL_LOF_INLIER_UPLIFT_SCALE * relative,
+                baseline,
+                settings.SPATIAL_LOF_INLIER_MAX,
+            )
+        )

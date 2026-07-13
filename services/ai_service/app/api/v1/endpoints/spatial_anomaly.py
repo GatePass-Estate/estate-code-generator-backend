@@ -1,4 +1,4 @@
-"""HTTP routes for real-time visit anomaly detection (K-means / DBSCAN / LOF ensemble)."""
+"""HTTP routes for spatial visit anomaly detection (K-means / DBSCAN / LOF ensemble)."""
 
 import logging
 
@@ -8,8 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.auth import get_current_user
 from app.core.exceptions import FeatureStoreError, LogHistoryError
 from app.domain.anomaly_types import AnomalyType
-from app.models.anomaly_schema import AnalyzeRequest, AnalyzeResponse
-from app.pipeline.anomaly_orchestration import AnomalyOrchestrator
+from app.models.code_validation import AnalyzeRequest
+from app.models.spatial_anomaly_schema import SpatialAnalyzeResponse
+from app.pipeline.spatial_anomaly_orchestration import (
+    SpatialAnomalyOrchestrator,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,20 +20,28 @@ router = APIRouter()
 
 @router.post(
     "/analyze/{anomaly_type}",
-    response_model=AnalyzeResponse,
+    response_model=SpatialAnalyzeResponse,
 )
-async def analyze_visit_anomalies(
+async def analyze_spatial_anomalies(
     anomaly_type: AnomalyType,
     body: AnalyzeRequest,
     current_user: dict = Depends(get_current_user),
-) -> AnalyzeResponse:
+) -> SpatialAnalyzeResponse:
     """
-    Run the anomaly pipeline for the given type using validation context.
+    Run the spatial anomaly pipeline for the given type using validation context.
 
     Requires a bearer token, validates path vs payload receiver alignment,
     loads log history from db-service, runs K-means/DBSCAN/LOF per scope, and
     returns scores plus transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
     """
+    if anomaly_type == AnomalyType.COMBINED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "anomaly_type 'combined' is only supported by the "
+                "temporal-anomaly endpoint; use 'visitor' or 'resident' here."
+            ),
+        )
     if anomaly_type.value != body.code_validation.receiver.value:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -40,12 +51,12 @@ async def analyze_visit_anomalies(
             ),
         )
     logger.debug(
-        "anomaly analyze caller_id=%s anomaly_type=%s",
+        "spatial anomaly analyze caller_id=%s anomaly_type=%s",
         current_user.get("id"),
         anomaly_type.value,
     )
 
-    orch = AnomalyOrchestrator()
+    orch = SpatialAnomalyOrchestrator()
     timeout = httpx.Timeout(30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
@@ -65,4 +76,4 @@ async def analyze_visit_anomalies(
                 detail=e.message,
             ) from e
 
-    return AnalyzeResponse(**result)
+    return SpatialAnalyzeResponse(**result)

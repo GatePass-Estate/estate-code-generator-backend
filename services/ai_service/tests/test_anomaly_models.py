@@ -3,12 +3,14 @@
 import numpy as np
 import pytest
 
-from app.pipeline.anomaly_models import (
+from app.pipeline.spatial_anomaly_models import (
     DBSCANAnomalyModel,
     KMeansAnomalyModel,
     LOFAnomalyModel,
 )
-from app.pipeline.anomaly_models.preprocess import build_processed_block
+from app.pipeline.spatial_anomaly_models.preprocess import (
+    build_processed_block,
+)
 
 
 def test_build_processed_block_aligns_keys_and_scales():

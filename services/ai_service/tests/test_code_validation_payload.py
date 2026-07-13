@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.models.anomaly_schema import CodeValidationPayload, Receiver
+from app.models.code_validation import CodeValidationPayload, Receiver
 
 
 def _base_kwargs():

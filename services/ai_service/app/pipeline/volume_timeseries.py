@@ -1,4 +1,4 @@
-"""Build a zero-filled daily validation-count series for ARIMA input."""
+"""Build a zero-filled daily validation-count series for forecasting and temporal analysis."""
 
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ def build_daily_series(
     Count events per calendar day and reindex over the full ``[start, end]``
     daily range, filling days with no validations as ``0``.
 
-    Zero-filling matters because validation counts are sparse and gappy,
-    unlike the continuous daily series in the reference article; ARIMA needs
-    a regular, contiguous index.
+    Used by ARIMA volume forecasting and temporal Matrix Profile analysis.
+    Zero-filling matters because validation counts are sparse and gappy;
+    downstream models need a regular, contiguous daily index.
     """
     start_day = _to_utc_naive_day(start)
     end_day = _to_utc_naive_day(end)

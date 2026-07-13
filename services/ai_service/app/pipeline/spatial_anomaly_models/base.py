@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.pipeline.anomaly_models.preprocess import ProcessedFeatureBlock
+from app.pipeline.spatial_anomaly_models.preprocess import (
+    ProcessedFeatureBlock,
+)
 
 
 class AnomalyDetectorModel(ABC):

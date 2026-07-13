@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.domain.scopes import AnalysisScope
-from app.pipeline.anomaly_models import (
+from app.pipeline.spatial_anomaly_models import (
     DBSCANAnomalyModel,
     KMeansAnomalyModel,
     LOFAnomalyModel,
