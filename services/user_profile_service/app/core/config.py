@@ -37,9 +37,15 @@ class Settings(BaseSettings):
         os.getenv("EDIT_REQUEST_REMIND_COOLDOWN_HOURS", 24)
     )
 
+    # Cache service
+    CACHE_SERVICE_URL: str = os.getenv("CACHE_SERVICE_URL", "")
+
     # Notification service
     NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
     INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    SCHEDULE_CLOSE_MAX_DAYS: int = int(
+        os.getenv("SCHEDULE_CLOSE_MAX_DAYS", 30)
+    )
     FRONTEND_BASE_URL: str = os.getenv(
         "FRONTEND_BASE_URL", "https://app.gatepassng.com"
     )

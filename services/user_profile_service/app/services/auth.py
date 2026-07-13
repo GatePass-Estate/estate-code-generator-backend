@@ -89,6 +89,23 @@ class AuthService:
                 detail="estate_id is required for non-root login.",
             )
 
+        if estate_id:
+            try:
+                estate = await (
+                    self.user_service.estate_repository.get_estate_by_id(
+                        estate_id
+                    )
+                )
+            except HTTPException:
+                raise HTTPException(
+                    status_code=403, detail="Estate not found."
+                )
+            if not estate.is_active:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This estate has been deactivated.",
+                )
+
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)
             familiar_cutoff = now - timedelta(

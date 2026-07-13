@@ -1,4 +1,4 @@
-"""API v1: spatial/temporal anomaly detection and incident report intelligence."""
+"""API v1: spatial/temporal anomaly detection, incident report intelligence, and volume forecasting."""
 
 from fastapi import APIRouter
 
@@ -8,6 +8,9 @@ from app.api.v1.endpoints.spatial_anomaly import (
 )
 from app.api.v1.endpoints.temporal_anomaly import (
     router as temporal_anomaly_router,
+)
+from app.api.v1.endpoints.volume_forecast import (
+    router as volume_forecast_router,
 )
 
 api_router = APIRouter()
@@ -25,4 +28,9 @@ api_router.include_router(
     incident_router,
     prefix="/incident-reports",
     tags=["Incident reports (TF-IDF/NMF + paid LLM)"],
+)
+api_router.include_router(
+    volume_forecast_router,
+    prefix="/volume-forecast",
+    tags=["Volume forecast (ARIMA)"],
 )

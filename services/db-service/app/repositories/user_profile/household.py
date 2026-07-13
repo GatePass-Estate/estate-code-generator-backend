@@ -391,6 +391,9 @@ class HouseholdRepository:
                     if key == "from_date"
                     else query.where(TableModel.created_at <= request.to_date)
                 )
+            elif key == "name" and request.name is not None:
+                # Substring match for household name
+                query = query.where(TableModel.name.ilike(f"%{request.name}%"))
             elif hasattr(TableModel, key):
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)

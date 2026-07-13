@@ -11,6 +11,9 @@ ENV POETRY_VERSION=2.0.0
 # Set the working directory in the container
 WORKDIR /src/service
 
+# Copy shared packages so path deps resolve during poetry lock
+COPY shared/gatepass_scheduler /shared/gatepass_scheduler/
+
 # Copy the pyproject.toml and lock file to the working directory
 COPY services/cache_service/pyproject.toml services/cache_service/poetry.lock services/cache_service/README.md /src/service/
 

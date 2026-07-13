@@ -5,7 +5,8 @@ This document describes how the **ai-service** analyses estate incident cohorts:
 summary). It explains the end-to-end flow, API contract, and the mathematics behind
 TF-IDF and Non-negative Matrix Factorisation (NMF).
 
-For visit anomaly detection (K-means / DBSCAN / LOF), see [ANOMALY_DETECTION_EXPLAINER.md](ANOMALY_DETECTION_EXPLAINER.md) and
+For visit anomaly detection (K-means / DBSCAN / LOF), see [ANOMALY_DETECTION_EXPLAINER.md](ANOMALY_DETECTION_EXPLAINER.md);
+for validation volume forecasting (ARIMA), see [VOLUME_FORECAST_EXPLAINER.md](VOLUME_FORECAST_EXPLAINER.md); and
 the main [README.md](../README.md).
 
 ---

@@ -1,4 +1,4 @@
-"""End-to-end AI pipelines: spatial/temporal anomaly detection and incidents."""
+"""End-to-end AI pipelines: spatial/temporal anomaly detection, incident, and volume forecasting."""
 
 from app.pipeline.spatial_anomaly_orchestration import (
     SpatialAnomalyOrchestrator,

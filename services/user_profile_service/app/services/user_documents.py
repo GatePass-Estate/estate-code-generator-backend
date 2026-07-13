@@ -18,7 +18,7 @@ from app.libs.document_validation import (
 from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
-from app.schemas.request import RequestType
+from app.schemas.request import RequestType, UpdatePendingRequestRequest
 from app.services.request import RequestService
 from app.schemas.user_documents import (
     DocumentMetadataItem,
@@ -143,7 +143,12 @@ class UserDocumentsService:
                     requester, document_id
                 )
             else:
-                edit_request_id = str(existing.id)
+                updated = await request_service.update_pending_request(
+                    str(existing.id),
+                    UpdatePendingRequestRequest(new_value=document_id),
+                    str(requester["id"]),
+                )
+                edit_request_id = str(updated.id)
 
         return UploadDocumentResponse(
             document_type=DocumentType(result["document_type"]),

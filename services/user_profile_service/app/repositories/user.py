@@ -196,6 +196,10 @@ class UserRepository:
             payload["role"] = data.role.value
         if data.household_id is not None:
             payload["household_id"] = str(data.household_id)
+        if data.deactivated_by is not None:
+            payload["deactivated_by"] = str(data.deactivated_by)
+        if data.deactivated_at is not None:
+            payload["deactivated_at"] = data.deactivated_at.isoformat()
 
         url = f"{self.users_endpoint}/{user_id}"
         response = await self.client.async_patch(url, json_data=payload)

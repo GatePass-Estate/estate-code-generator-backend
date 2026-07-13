@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import secrets
 from typing import List, Optional
@@ -46,6 +47,17 @@ from app.libs.password_utils import (
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+# Role hierarchy rank for deactivation permission checks.
+# An actor can only close accounts with a strictly lower rank.
+_ROLE_RANK: dict[str, int] = {
+    "root": 5,
+    "primary_admin": 4,
+    "admin": 3,
+    "resident": 2,
+    "security": 2,
+    "guest": 1,
+}
 
 
 def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
@@ -262,7 +274,32 @@ class UserService:
         Returns:
             ListUserResponse: Search results with pagination.
         """
-        return await self.repository.search_users(request)
+        result = await self.repository.search_users(request)
+
+        # Enrich items with household_name
+        household_ids = list(
+            {str(u.household_id) for u in result.items if u.household_id}
+        )
+        if household_ids:
+            households = await asyncio.gather(
+                *[
+                    self.household_repository.get_household_by_id(hid)
+                    for hid in household_ids
+                ],
+                return_exceptions=True,
+            )
+            household_map = {}
+            for hid, h in zip(household_ids, households):
+                if isinstance(h, dict):
+                    household_map[hid] = h.get("name")
+
+            for user in result.items:
+                if user.household_id:
+                    user.household_name = household_map.get(
+                        str(user.household_id)
+                    )
+
+        return result
 
     async def list_users(
         self, page: int = 1, limit: int = 10
@@ -426,22 +463,6 @@ class UserService:
             if not user or user.is_deleted:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            # If no household and the role is NOT the root user,
-            # create one and assign user as primary_resident
-            if not user.household_id and user.role != "root":
-                household = await self.household_repository.create_household(
-                    {
-                        "estate_id": str(user.estate_id),
-                        "primary_resident_id": str(user.id),
-                        "max_members": 10,
-                    }
-                )
-                household_id = household["id"]
-                payload = UpdateUserRequest(household_id=household_id)
-                await self.repository.update_user(
-                    user_id=str(user.id), data=payload
-                )
-
             # If admin or primary_admin, add to admin_management
             if user.role in ("admin", "primary_admin"):
                 await self.admin_repository.create_admin_record(
@@ -490,22 +511,22 @@ class UserService:
             raise HTTPException(status_code=404, detail="Estate not found")
         estate_name = estate_name.name
 
-        primary_resident_id = None
+        household_name = None
+        head_user_id = None
         if user.household_id:
             household = await self.household_repository.get_household_by_id(
                 str(user.household_id)
             )
-            if household and household["primary_resident_id"]:
-                primary_resident_id = household["primary_resident_id"]
+            if household:
+                household_name = household.name
+                if household.head_user_id:
+                    head_user_id = household.head_user_id
 
-        if primary_resident_id:
-            primary_resident = await self.repository.get_user_by_id(
-                str(primary_resident_id)
-            )
-            if primary_resident:
+        if head_user_id:
+            head_user = await self.repository.get_user_by_id(str(head_user_id))
+            if head_user:
                 primary_resident_name = (
-                    f"{primary_resident.first_name} "
-                    f"{primary_resident.last_name}"
+                    f"{head_user.first_name} " f"{head_user.last_name}"
                 )
             else:
                 primary_resident_name = None
@@ -523,6 +544,7 @@ class UserService:
             role=user.role,
             estate_id=estate_id,
             estate_name=estate_name,
+            household_name=household_name,
             household_primary_resident=primary_resident_name,
             status=user.status,
         )
@@ -1228,15 +1250,24 @@ class UserService:
 
         return recovery_codes
 
-    async def close_account(self, user_id: str) -> DeleteUserResponse:
+    async def close_account(
+        self,
+        user_id: str,
+        actor_user_id: str | None = None,
+    ) -> DeleteUserResponse:
         """
-        Closes the authenticated user's own account.
+        Closes a user account.
 
-        Primary admins must transfer their role before closing their account.
+        When called without actor_user_id (self-service), primary admins must
+        transfer their role first. When called with actor_user_id (admin path),
+        that restriction is bypassed and deactivated_by is set to the actor.
+
         Admin records and household records are cleaned up automatically.
 
         Args:
-            user_id: The ID of the user closing their account.
+            user_id: The ID of the user whose account is being closed.
+            actor_user_id: The ID of the admin performing the closure,
+                or None for self-service.
 
         Returns:
             DeleteUserResponse: Deletion confirmation.
@@ -1244,9 +1275,12 @@ class UserService:
         Raises:
             HTTPException: If the user cannot close their account.
         """
+        from datetime import datetime, timezone
+        from uuid import UUID
+
         user = await self.repository.get_user_by_id(user_id)
 
-        if not user or user.is_deleted:
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
         if user.role == "root":
@@ -1255,7 +1289,7 @@ class UserService:
                 detail="Root accounts cannot be closed.",
             )
 
-        if user.role == "primary_admin":
+        if actor_user_id is None and user.role == "primary_admin":
             raise HTTPException(
                 status_code=403,
                 detail=(
@@ -1272,27 +1306,246 @@ class UserService:
                 await self.admin_repository.delete_admin_record(
                     admin_record["id"]
                 )
-            except HTTPException:
-                pass
+            except HTTPException as e:
+                if e.status_code != 404:
+                    logger.error(
+                        "Failed to delete admin record for user_id=%s "
+                        "during account closure: HTTP %s — %s",
+                        user_id,
+                        e.status_code,
+                        e.detail,
+                    )
+                    raise
+                logger.warning(
+                    "Admin record not found for user_id=%s during account "
+                    "closure; may have already been removed.",
+                    user_id,
+                )
 
         if user.household_id:
             try:
-                await self.household_repository.delete_household(
-                    str(user.household_id)
+                from app.services.household import HouseholdService
+
+                hh_service = HouseholdService(
+                    household_repo=self.household_repository,
+                    user_repo=self.repository,
+                    admin_repo=self.admin_repository,
                 )
-            except HTTPException:
-                pass
+                household = (
+                    await self.household_repository.get_household_by_id(
+                        str(user.household_id)
+                    )
+                )
+                if household and household.head_user_id == str(user.id):
+                    await self.household_repository.update_household(
+                        str(user.household_id), {"head_user_id": None}
+                    )
+                    await hh_service.notify_admins_headless_household(
+                        household_id=str(user.household_id),
+                        household_name=household.name or "",
+                        estate_id=str(household.estate_id)
+                        if household.estate_id
+                        else "",
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to clear head from household %s",
+                    str(user.household_id),
+                )
 
         try:
             from app.repositories.user_documents import UserDocumentsRepository
 
             docs_repo = UserDocumentsRepository(self.repository.client)
             await docs_repo.delete_all_for_user(user_id)
-        except HTTPException:
-            pass
+        except HTTPException as e:
+            if e.status_code == 404:
+                logger.info(
+                    "No documents found for user_id=%s during account closure",
+                    user_id,
+                )
+            else:
+                logger.error(
+                    "Failed to delete documents for user_id=%s "
+                    "during account closure: HTTP %s — %s",
+                    user_id,
+                    e.status_code,
+                    e.detail,
+                )
+                raise
         except Exception:
             logger.exception(
-                "Failed to delete user documents for user %s", user_id
+                "Failed to delete user documents for user_id=%s", user_id
             )
 
+        closing_user_id = actor_user_id if actor_user_id else user_id
+        await self.repository.update_user(
+            user_id=user_id,
+            data=UpdateUserRequest(
+                deactivated_by=UUID(closing_user_id),
+                deactivated_at=datetime.now(timezone.utc),
+            ),
+        )
         return await self.repository.delete_user(user_id)
+
+    async def validate_close_target(
+        self, user_id: str, actor_role: str
+    ) -> None:
+        """
+        Validates that an actor with actor_role can close the given user.
+
+        Args:
+            user_id: The ID of the target user.
+            actor_role: The role string of the actor.
+
+        Raises:
+            HTTPException 404: If the user does not exist or is already
+                deleted.
+            HTTPException 403: If the actor's rank is not strictly above the
+                target's rank.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        target_role_str = (
+            user.role.value if hasattr(user.role, "value") else str(user.role)
+        )
+        actor_rank = _ROLE_RANK.get(actor_role, 0)
+        target_rank = _ROLE_RANK.get(target_role_str, 0)
+        if actor_rank <= target_rank:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "You cannot close an account of equal or higher rank."
+                ),
+            )
+
+    async def admin_close_account(
+        self,
+        user_id: str,
+        actor_user_id: str,
+        actor_role: str,
+    ) -> DeleteUserResponse:
+        """
+        Force-closes a user account on behalf of an admin.
+
+        Validates the role hierarchy then delegates to close_account with
+        the actor_user_id so that deactivated_by is set correctly.
+
+        Args:
+            user_id: The ID of the user to close.
+            actor_user_id: The ID of the admin performing the action.
+            actor_role: The role string of the admin.
+
+        Returns:
+            DeleteUserResponse: Deletion confirmation.
+
+        Raises:
+            HTTPException: If the actor lacks permission or the user is
+                not found.
+        """
+        await self.validate_close_target(user_id, actor_role)
+        return await self.close_account(
+            user_id=user_id, actor_user_id=actor_user_id
+        )
+
+    async def schedule_close_account(
+        self,
+        user_id: str,
+        actor_user_id: str,
+        actor_role: str,
+        close_at,
+        schedule_repo,
+    ):
+        """
+        Validates and schedules an account closure via Redis.
+
+        Overwrites any existing scheduled entry for the same user.
+
+        Args:
+            user_id: The ID of the user to close.
+            actor_user_id: The ID of the admin scheduling the action.
+            actor_role: The role string of the admin.
+            close_at: The datetime at which to close the account.
+            schedule_repo: The schedule repository instance.
+
+        Returns:
+            dict: Success message and the scheduled UTC datetime.
+
+        Raises:
+            HTTPException 400: If close_at is in the past or exceeds the
+                maximum allowed scheduling window.
+            HTTPException 403: If the actor lacks permission over the target.
+        """
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.config import settings
+        from app.repositories.schedule import SCHEDULED_USER_CLOSURES_KEY
+
+        await self.validate_close_target(user_id, actor_role)
+
+        close_at_utc = (
+            close_at.replace(tzinfo=timezone.utc)
+            if close_at.tzinfo is None
+            else close_at.astimezone(timezone.utc)
+        )
+        now_utc = datetime.now(timezone.utc)
+        if close_at_utc <= now_utc:
+            raise HTTPException(
+                status_code=400, detail="close_at must be in the future."
+            )
+        max_days = settings.SCHEDULE_CLOSE_MAX_DAYS
+        if close_at_utc > now_utc + timedelta(days=max_days):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"close_at cannot be more than {max_days} days"
+                    " in the future."
+                ),
+            )
+
+        await schedule_repo.remove_by_field(
+            SCHEDULED_USER_CLOSURES_KEY, "user_id", user_id
+        )
+        await schedule_repo.add(
+            key=SCHEDULED_USER_CLOSURES_KEY,
+            score=close_at_utc.timestamp(),
+            member=json.dumps(
+                {
+                    "user_id": user_id,
+                    "actor_user_id": actor_user_id,
+                    "actor_role": actor_role,
+                }
+            ),
+        )
+        return {
+            "success": True,
+            "message": "Account closure scheduled.",
+            "close_at": close_at_utc,
+        }
+
+    async def cancel_scheduled_close(
+        self, user_id: str, schedule_repo
+    ) -> None:
+        """
+        Cancels a pending scheduled account closure.
+
+        Args:
+            user_id: The ID of the user whose closure to cancel.
+            schedule_repo: The schedule repository instance.
+
+        Raises:
+            HTTPException 404: If no scheduled closure exists for this user.
+        """
+        from app.repositories.schedule import SCHEDULED_USER_CLOSURES_KEY
+
+        removed = await schedule_repo.remove_by_field(
+            SCHEDULED_USER_CLOSURES_KEY, "user_id", user_id
+        )
+        if not removed:
+            raise HTTPException(
+                status_code=404,
+                detail="No scheduled closure found for this user.",
+            )

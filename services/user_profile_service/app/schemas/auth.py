@@ -128,7 +128,7 @@ class LoginResponse(BaseModel):
     )
     session_id: Optional[str] = Field(
         default=None,
-        description="Session ID — pass this when registering an FCM device token",
+        description="Session ID — when registering an FCM device token",
     )
 
     model_config = model_config

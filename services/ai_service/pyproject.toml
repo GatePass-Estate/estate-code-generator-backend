@@ -19,6 +19,7 @@ pyjwt = "^2.12.1"
 pandas = "^3.0.2"
 scikit-learn = ">=1.5,<2"
 stumpy = "^1.13.0"
+statsmodels = "^0.14"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -31,6 +32,7 @@ asyncio_default_fixture_loop_scope = "function"
 # ``sys.path`` is adjusted before ``app.*`` imports (see module docstring).
 "app/pipeline/spatial_anomaly_orchestration.py" = ["E402"]
 "app/pipeline/temporal_anomaly_orchestration.py" = ["E402"]
+"app/pipeline/volume_forecast_orchestrator.py" = ["E402"]
 
 [build-system]
 requires = ["poetry-core"]

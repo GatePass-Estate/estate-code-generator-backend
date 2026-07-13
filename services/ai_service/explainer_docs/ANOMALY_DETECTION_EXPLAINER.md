@@ -2,6 +2,8 @@
 
 This note describes the **ideas behind** the numbers—without equations or jargon. It matches what the code does today: **K-means**, **DBSCAN**, and **LOF** run per analysis scope, then scores are combined into one final result.
 
+See also: incident intelligence in [INCIDENT_REPORT_SUMMARY_EXPLAINER.md](INCIDENT_REPORT_SUMMARY_EXPLAINER.md), validation volume forecasting in [VOLUME_FORECAST_EXPLAINER.md](VOLUME_FORECAST_EXPLAINER.md), and the main [README.md](../README.md).
+
 ---
 
 ## The situation
