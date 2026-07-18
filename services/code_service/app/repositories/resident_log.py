@@ -114,7 +114,7 @@ class ResidentLogRepository:
         """Map an access-code row plus optional log metadata to a list item."""
         hashed_code = access_code["hashed_code"]
         item = {
-            "id": log["id"] if log else access_code["id"],
+            "id": access_code["id"],
             "created_at": access_code["created_at"],
             "updated_at": (
                 log["updated_at"] if log else access_code["updated_at"]
