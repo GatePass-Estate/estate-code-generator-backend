@@ -7,6 +7,8 @@ from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.device_token import DeviceTokenRepository
 from app.schemas.internal import InternalNotifyRequest
+from app.schemas.feedback import FeedbackEmailRequest
+from app.services.email import send_user_feedback_email
 from app.services.notification import NotificationService
 
 logger = logging.getLogger(__name__)
@@ -87,3 +89,33 @@ async def remove_device_tokens_by_user(
     """Remove all device tokens for a user (called on revoke-all-sessions)."""
     repo = DeviceTokenRepository(ahttp_client)
     await repo.remove_by_user(user_id=user_id)
+
+
+@router.post(
+    "/feedback",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(_verify_internal_key)],
+)
+async def send_feedback(
+    payload: FeedbackEmailRequest,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Forward user-submitted feedback as an email to the GatePass team.
+
+    Protected by X-Internal-Key header. Returns 202 immediately and
+    sends the email in a background task.
+    """
+    background_tasks.add_task(
+        send_user_feedback_email,
+        feedback_type=payload.feedback_type,
+        user_name=payload.user_name,
+        user_email=payload.user_email,
+        estate_name=payload.estate_name,
+        rating=payload.rating,
+        liked=payload.liked,
+        improvement=payload.improvement,
+        description=payload.description,
+        attachment_url=payload.attachment_url,
+    )
+    return {"status": "accepted"}

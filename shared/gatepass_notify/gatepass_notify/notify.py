@@ -7,6 +7,7 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 _NOTIFY_SUFFIX = "api/v1/internal/notify"
+_FEEDBACK_SUFFIX = "api/v1/internal/feedback"
 _DEACTIVATE_BY_SESSION_SUFFIX = (
     "api/v1/internal/device-tokens/deactivate-by-session"
 )
@@ -148,3 +149,23 @@ async def fire_remove_device_token_by_user(
             user_id,
             exc,
         )
+
+
+async def fire_feedback(
+    payload: Dict[str, Any],
+    notification_service_url: str,
+    internal_api_key: str,
+) -> None:
+    """Best-effort fire-and-forget POST to
+    forward feedback to the GatePass team."""
+    if not notification_service_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"{notification_service_url}{_FEEDBACK_SUFFIX}",
+                json=payload,
+                headers={"X-Internal-Key": internal_api_key},
+            )
+    except Exception as exc:
+        logger.exception("fire_feedback failed — %s", exc)
