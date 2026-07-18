@@ -188,10 +188,11 @@ async def search(
     Search visitor-log rows matching the given criteria.
 
     Consumed by the code-service BFF for visitor history. Pass ``unique=true``
-    for first-level history (one row per ``hashed_code``, most recent kept,
-    with ``usage_count``). Filter by ``hashed_code`` for second-level visit
-    lists. Rows include denormalized ``resident_fullname``. Default order is
-    newest first (``ascending=false``).
+    for first-level history (one row per ``hashed_code``; display fields from
+    the most recent validation, ``created_at`` from the earliest log row per
+    code, plus ``usage_count``). Filter by ``hashed_code`` for second-level
+    visit lists. Rows include denormalized ``resident_fullname``. Default order
+    is newest first by earliest ``created_at`` (``ascending=false``).
 
     Arguments:
         from_date: The creation date (from).

@@ -13,7 +13,8 @@ class VisitorLogRepository:
     """
     Fetches visitor-log history from db-service for the BFF.
 
-    First-level queries use ``visitorlog/search`` with ``unique=true``.
+    First-level queries use ``visitorlog/search`` with ``unique=true``; the
+    db-service sets ``created_at`` from the earliest log row per code.
     Second-level queries filter by ``hashed_code``.
     """
 
@@ -43,7 +44,10 @@ class VisitorLogRepository:
         First-level visitor history: one entry per unique code with
         ``usage_count``, latest first.
 
-        Backed by db-service ``visitorlog/search`` with ``unique=true``.
+        Backed by db-service ``visitorlog/search`` with ``unique=true``. The
+        db-service sets ``created_at`` from the earliest log row per code so
+        first-level history reflects when the code was first used; other fields
+        come from the most recent validation row.
 
         Returns:
             Raw db-service list payload for :class:`ListResponse`.
