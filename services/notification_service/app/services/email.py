@@ -630,6 +630,63 @@ async def send_community_reactivated_email(
     await _send(f"Your {label} has been reactivated", email, body)
 
 
+async def send_user_feedback_email(
+    *,
+    feedback_type: str,
+    user_name: str,
+    user_email: str,
+    estate_name: str,
+    rating: int | None = None,
+    liked: str | None = None,
+    improvement: str | None = None,
+    description: str | None = None,
+    attachment_url: str | None = None,
+) -> None:
+    """Send a user-submitted feedback email to the GatePass team."""
+    subject = (
+        f"[GatePass Feedback] {feedback_type.capitalize()} "
+        f"from {user_name}"
+    )
+
+    if feedback_type == "suggestion":
+        star_display = (
+            ("★" * rating + "☆" * (5 - rating)) if rating else "Not rated"
+        )
+        body_lines = [
+            f"<b>From:</b> {user_name} ({user_email})<br>",
+            f"<b>Estate:</b> {estate_name}<br>",
+            "<b>Type:</b> Suggestion<br>",
+            f"<b>Rating:</b> {star_display}<br><br>",
+        ]
+        if liked:
+            body_lines.append(f"<b>What they liked:</b><br>{liked}<br><br>")
+        if improvement:
+            body_lines.append(
+                f"<b>Suggested improvement:</b><br>{improvement}<br><br>"
+            )
+    else:
+        body_lines = [
+            f"<b>From:</b> {user_name} ({user_email})<br>",
+            f"<b>Estate:</b> {estate_name}<br>",
+            "<b>Type:</b> Issue<br><br>",
+        ]
+        if description:
+            body_lines.append(f"<b>Description:</b><br>{description}<br><br>")
+        if attachment_url:
+            body_lines.append(
+                f'<b>Screenshot:</b> <a href="{attachment_url}">'
+                f"View attachment</a><br>"
+            )
+
+    instruction = "".join(body_lines)
+    html_body = _build_email(
+        heading="New User Feedback",
+        first_name="Team",
+        instruction=instruction,
+    )
+    await _send(subject, settings.FEEDBACK_RECIPIENT_EMAIL, html_body)
+
+
 async def dispatch_email(
     notification_type: NotificationType,
     email: str,

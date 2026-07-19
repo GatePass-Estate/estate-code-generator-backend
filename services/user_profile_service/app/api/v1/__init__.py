@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints.admin import router as admin_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.estate import router as estate_router
+from app.api.v1.endpoints.help import router as help_router
 from app.api.v1.endpoints.household import router as household_router
 from app.api.v1.endpoints.incident_report import (
     router as incident_report_router,
@@ -43,3 +44,4 @@ api_router.include_router(
     prefix="/internal",
     tags=["Internal"],
 )
+api_router.include_router(help_router, prefix="/help", tags=["Help"])
