@@ -10,6 +10,8 @@ from app.schemas.code_service.access_code import (
     CreateResponse,
     DeleteResponse,
     GetResponse,
+    HistoryListResponse,
+    HistorySearchRequest,
     ListResponse,
     SearchRequest,
     UpdateRequest,
@@ -118,5 +120,26 @@ class AccessCodeService:
             page=page,
             limit=limit,
             include_deleted=include_deleted,
+            ascending=ascending,
+        )
+
+    async def history_search(
+        self,
+        request: HistorySearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        ascending: bool = False,
+    ) -> HistoryListResponse:
+        """
+        Return first-level resident access-code history with resident names.
+
+        Each ``accesscode`` row is joined to ``users``; validation metadata is
+        aggregated from ``residentlog`` in the same query.
+        """
+        return await self.repository.history_search(
+            request=request,
+            page=page,
+            limit=limit,
             ascending=ascending,
         )

@@ -187,9 +187,9 @@ async def search(
 
     Passing ``unique=true`` collapses to one row per ``hashed_code`` with
     ``usage_count`` and ``code_deleted`` (from the earliest ``accesscode`` row
-    per hash). The code-service BFF uses ``accesscode/search`` directly for
+    per hash). The code-service BFF uses ``accesscode/history/search`` for
     first-level resident history; this endpoint remains for second-level
-    validation lists and for enriching unique metadata. Default order is newest
+    validation lists and unique metadata enrichment. Default order is newest
     first.
 
     Arguments:

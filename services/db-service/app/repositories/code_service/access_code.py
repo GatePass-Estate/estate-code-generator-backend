@@ -9,11 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import AccessCode as TableModel
+from app.models import ResidentLog as ResidentLogModel
+from app.models import Users as UsersModel
 from app.schemas.code_service.access_code import (
     CreateRequest,
     CreateResponse,
     DeleteResponse,
     GetResponse,
+    HistoryItemResponse,
+    HistoryListResponse,
+    HistorySearchRequest,
     ListResponse,
     SearchRequest,
     UpdateRequest,
@@ -416,5 +421,136 @@ class AccessCodeRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    @staticmethod
+    def _apply_history_filters(
+        query: Select,
+        request: HistorySearchRequest,
+    ) -> Select:
+        if request.user_id is not None:
+            query = query.where(TableModel.user_id == request.user_id)
+        if request.estate_id is not None:
+            query = query.where(TableModel.estate_id == request.estate_id)
+        if request.from_date is not None:
+            query = query.where(TableModel.created_at >= request.from_date)
+        if request.to_date is not None:
+            query = query.where(TableModel.created_at <= request.to_date)
+        return query
+
+    async def history_search(
+        self,
+        request: HistorySearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        ascending: bool = False,
+    ) -> HistoryListResponse:
+        """
+        First-level resident access-code history in one query.
+
+        Reads ``accesscode`` rows (each row is already unique), joins
+        ``users`` for ``full_name``, and left-correlates ``residentlog`` for
+        ``usage_count`` plus the latest validation metadata.
+        """
+        usage_count = (
+            select(func.count(ResidentLogModel.id))
+            .where(
+                func.lower(ResidentLogModel.hashed_code)
+                == func.lower(TableModel.hashed_code),
+                ResidentLogModel.is_deleted == False,  # noqa: E712
+            )
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        latest_security_id = (
+            select(ResidentLogModel.security_id)
+            .where(
+                func.lower(ResidentLogModel.hashed_code)
+                == func.lower(TableModel.hashed_code),
+                ResidentLogModel.is_deleted == False,  # noqa: E712
+            )
+            .order_by(ResidentLogModel.access_time.desc())
+            .limit(1)
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        latest_access_time = (
+            select(ResidentLogModel.access_time)
+            .where(
+                func.lower(ResidentLogModel.hashed_code)
+                == func.lower(TableModel.hashed_code),
+                ResidentLogModel.is_deleted == False,  # noqa: E712
+            )
+            .order_by(ResidentLogModel.access_time.desc())
+            .limit(1)
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        full_name = func.trim(
+            func.concat(
+                func.coalesce(UsersModel.first_name, ""),
+                " ",
+                func.coalesce(UsersModel.last_name, ""),
+            )
+        )
+
+        filtered = self._apply_history_filters(
+            select(TableModel).join(
+                UsersModel, TableModel.user_id == UsersModel.id
+            ),
+            request,
+        )
+        count_query = select(func.count()).select_from(filtered.subquery())
+        order_column = (
+            TableModel.created_at.asc()
+            if ascending
+            else TableModel.created_at.desc()
+        )
+        records_query = (
+            self._apply_history_filters(
+                select(
+                    TableModel.id,
+                    TableModel.created_at,
+                    TableModel.updated_at,
+                    TableModel.user_id,
+                    TableModel.estate_id,
+                    TableModel.hashed_code,
+                    TableModel.is_deleted.label("code_deleted"),
+                    full_name.label("full_name"),
+                    func.coalesce(usage_count, 0).label("usage_count"),
+                    func.coalesce(
+                        latest_security_id, TableModel.user_id
+                    ).label("security_id"),
+                    func.coalesce(
+                        latest_access_time, TableModel.created_at
+                    ).label("access_time"),
+                ).join(UsersModel, TableModel.user_id == UsersModel.id),
+                request,
+            )
+            .order_by(order_column)
+            .limit(limit)
+            .offset((page - 1) * limit)
+        )
+        try:
+            total = await self.session.scalar(count_query)
+            rows = (await self.session.execute(records_query)).all()
+            items = [
+                HistoryItemResponse.model_validate(dict(row._mapping))
+                for row in rows
+            ]
+            return HistoryListResponse(
+                items=items,
+                total=total,
+                page=page,
+                limit=limit,
+            )
+        except SQLAlchemyError as e:
+            message = "Database error in retrieving access-code history"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = "Unexpected error in retrieving access-code history"
             logger.exception(message)
             raise DatabaseError(message) from e
