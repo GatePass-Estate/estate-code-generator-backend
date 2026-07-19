@@ -49,5 +49,10 @@ class Settings(BaseSettings):
     # Set MAIL_DEV_MODE=true in .env during local development.
     MAIL_DEV_MODE: bool = os.getenv("MAIL_DEV_MODE", "true").lower() == "true"
 
+    # Recipient for user-submitted feedback emails
+    FEEDBACK_RECIPIENT_EMAIL: str = os.getenv(
+        "FEEDBACK_RECIPIENT_EMAIL", "info@gatepassng.com"
+    )
+
 
 settings = Settings()

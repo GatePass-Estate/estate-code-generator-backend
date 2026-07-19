@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from gatepass_notify import (
     fire_deactivate_device_token_by_session as _deactivate_by_session,
+    fire_feedback as _fire_feedback,
     fire_notify as _fire_notify,
     fire_notify_critical as _fire_notify_critical,
     fire_remove_device_token_by_session as _remove_by_session,
@@ -50,6 +51,14 @@ async def fire_remove_device_token_by_session(
 async def fire_remove_device_token_by_user(user_id: str) -> None:
     await _remove_by_user(
         user_id,
+        settings.NOTIFICATION_SERVICE_URL,
+        settings.INTERNAL_API_KEY,
+    )
+
+
+async def fire_feedback(payload: Dict[str, Any]) -> None:
+    await _fire_feedback(
+        payload,
         settings.NOTIFICATION_SERVICE_URL,
         settings.INTERNAL_API_KEY,
     )
