@@ -13,8 +13,9 @@ class ResidentLogRepository:
     """
     Fetches resident access-log history from db-service for the BFF.
 
-    First-level queries use ``residentlog/search`` with ``unique=true``.
-    Second-level queries filter by ``hashed_code``; the service layer may
+    First-level queries use ``accesscode/history/search`` (one row per access
+    code joined to ``users`` for ``full_name``). Second-level queries filter
+    by ``hashed_code`` on ``residentlog/search``; the service layer may
     additionally call ``accesscode/search`` via :meth:`earliest_access_code`
     to enrich code-level responses.
     """
@@ -33,6 +34,10 @@ class ResidentLogRepository:
         self.access_code_endpoint = (
             f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/search"
         )
+        self.access_code_history_endpoint = (
+            f"{settings.DB_SERVICE_URL}"
+            "api/v1/codeservice/accesscode/history/search"
+        )
 
     async def unique_history(
         self,
@@ -45,18 +50,22 @@ class ResidentLogRepository:
         limit: int = 20,
     ) -> dict:
         """
-        First-level history: one entry per unique code with ``usage_count`` and
-        ``code_deleted``, latest first.
+        First-level history: one entry per access code with ``usage_count``,
+        ``code_deleted``, and resident ``full_name``, latest first.
 
-        Backed by db-service ``residentlog/search`` with ``unique=true``.
+        Backed by db-service ``accesscode/history/search``, which joins
+        ``users`` and aggregates ``residentlog`` in a single query. Both
+        ``created_at`` and ``updated_at`` come from the access-code row.
+
         Scope is controlled by ``user_id`` (personal) or ``estate_id``
-        (estate-wide); passing neither returns all estates.
+        (estate-wide); passing neither returns all estates. Date filters apply
+        to access-code ``created_at``.
 
         Arguments:
             user_id: Restrict to a single resident's history.
             estate_id: Restrict to a single estate's history.
-            from_date: Filter access events on or after this timestamp.
-            to_date: Filter access events on or before this timestamp.
+            from_date: Filter access codes created on or after this timestamp.
+            to_date: Filter access codes created on or before this timestamp.
             page: The page number to retrieve.
             limit: The number of items per page.
 
@@ -64,7 +73,6 @@ class ResidentLogRepository:
             Raw db-service list payload for :class:`ListResponse`.
         """
         params: dict = {
-            "unique": True,
             "ascending": False,
             "page": page,
             "limit": limit,
@@ -77,7 +85,10 @@ class ResidentLogRepository:
             params["from_date"] = from_date.isoformat()
         if to_date is not None:
             params["to_date"] = to_date.isoformat()
-        return await self.ahttp_client.async_get(self.endpoint, params=params)
+
+        return await self.ahttp_client.async_get(
+            self.access_code_history_endpoint, params=params
+        )
 
     async def code_history(
         self,

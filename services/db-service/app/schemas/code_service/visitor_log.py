@@ -249,7 +249,8 @@ class GetResponse(SharedModel, VisitorLogBase):
 
     Attributes:
         id (UUID): Unique identifier for visitor log entry.
-        created_at (DateTime): Time when the model was created.
+        created_at (DateTime): Time when the model was created; on unique
+            search results this is the earliest log row per code.
         updated_at (DateTime): Time when the model was last updated.
         user_id (UUID): Reference to the visited resident.
         resident_fullname (str): Full name of the visited resident.

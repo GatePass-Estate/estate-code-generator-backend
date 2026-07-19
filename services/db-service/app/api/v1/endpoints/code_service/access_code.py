@@ -12,6 +12,8 @@ from app.schemas.code_service.access_code import (
     CreateResponse,
     DeleteResponse,
     GetResponse,
+    HistoryListResponse,
+    HistorySearchRequest,
     ListResponse,
     SearchRequest,
     UpdateRequest,
@@ -218,6 +220,51 @@ async def search(
     except Exception as e:
         logger.exception(
             "An unexpected error happened while searching for matches"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/history/search",
+    response_model=HistoryListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "Retrieved access-code history"},
+    },
+    description="First-level resident access-code history",
+)
+async def history_search(
+    user_id: UUID4 | None = None,
+    estate_id: UUID4 | None = None,
+    from_date: datetime.datetime | None = None,
+    to_date: datetime.datetime | None = None,
+    page: int = 1,
+    limit: int = 10,
+    ascending: bool = False,
+    service: Service = Depends(get_service),
+) -> HistoryListResponse:
+    """
+    Paginated resident access-code history for the code-service BFF.
+
+    Each ``accesscode`` row is unique. Results join ``users`` for
+    ``full_name`` and aggregate ``residentlog`` for ``usage_count`` plus the
+    latest validation metadata. ``created_at`` and ``updated_at`` come from
+    the access-code row.
+    """
+    try:
+        request = HistorySearchRequest(**vars())
+        return await service.history_search(
+            request=request,
+            page=page,
+            limit=limit,
+            ascending=ascending,
+        )
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while searching access-code history"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"

@@ -22,7 +22,8 @@ class VisitorLogEntry(BaseModel):
 
     Attributes:
         id (UUID): Unique identifier for the visitor log entry.
-        created_at (DateTime): Time when the entry was created.
+        created_at (DateTime): Earliest log row time on first-level unique
+            history; validation log creation time otherwise.
         updated_at (DateTime): Time when the entry was last updated.
         user_id (UUID): Reference to the visited resident.
         estate_id (UUID): Reference to the estate.
@@ -77,8 +78,9 @@ class ListResponse(BaseModel):
     Paginated visitor-log history ordered latest first.
 
     First-level (``/me``, ``/user``) returns one entry per unique
-    ``hashed_code`` with ``usage_count``. Second-level (``/me/{code}``,
-    ``/user/{code}``) returns every visit for a single code.
+    ``hashed_code`` with ``usage_count``; ``created_at`` is the earliest log
+    row per code (from db-service ``unique=true``). Second-level
+    (``/me/{code}``, ``/user/{code}``) returns every visit for a single code.
     """
 
     total: int = Field(..., description="Total number of entries")

@@ -21,8 +21,10 @@ class ResidentLogEntry(BaseModel):
 
     Attributes:
         id (UUID): Unique identifier for the resident log entry.
-        created_at (DateTime): Time when the entry was created.
-        updated_at (DateTime): Time when the entry was last updated.
+        created_at (DateTime): Access-code generation time on first-level
+            history; validation log creation time otherwise.
+        updated_at (DateTime): Access-code update time on first-level history;
+            validation log update time otherwise.
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
         hashed_code (str): Resident's generated access code.
@@ -70,8 +72,9 @@ class ListResponse(BaseModel):
     """
     Paginated first-level resident access history (``/me``, ``/user``).
 
-    Returns one entry per unique ``hashed_code`` with ``usage_count`` and
-    ``code_deleted``, ordered latest first.
+    Returns one entry per access code with ``usage_count`` and
+    ``code_deleted``, ordered latest first. ``created_at`` and ``updated_at``
+    come from the access-code row; ``full_name`` is joined from ``users``.
     """
 
     total: int = Field(..., description="Total number of entries")

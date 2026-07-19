@@ -20,8 +20,10 @@ class ResidentLogService:
 
     Two retrieval levels are supported:
 
-    * **First level** (``/me``, ``/user``): one entry per unique
-      ``hashed_code`` with ``usage_count`` and ``code_deleted``, latest first.
+    * **First level** (``/me``, ``/user``): one entry per access code from
+      ``accesscode/history/search`` (access-code ``created_at``/``updated_at``,
+      resident ``full_name`` from ``users``, plus ``usage_count`` and
+      ``code_deleted``).
     * **Second level** (``/me/{code}``, ``/user/{code}``): validation events
       for a single code plus access-code lifecycle metadata on
       :class:`CodeHistoryListResponse`.
@@ -118,9 +120,9 @@ class ResidentLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level personal history: one entry per unique code with
-        ``usage_count`` and ``code_deleted``, latest first. Security accounts
-        are rejected.
+        First-level personal history: one entry per access code with
+        access-code timestamps, resident ``full_name``, ``usage_count``, and
+        ``code_deleted``. Security accounts are rejected.
         """
         self._reject_personal_for_security(requester)
         result = await self.repository.unique_history(
@@ -164,10 +166,9 @@ class ResidentLogService:
         limit: int = 20,
     ) -> ListResponse:
         """
-        First-level estate-wide history: one entry per unique code with
-        ``usage_count`` and ``code_deleted``, latest first. Requires
-        permission to view other
-        users' logs.
+        First-level estate-wide history: one entry per access code with
+        access-code timestamps, resident ``full_name``, ``usage_count``, and
+        ``code_deleted``. Requires permission to view other users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
         result = await self.repository.unique_history(

@@ -185,12 +185,12 @@ async def search(
     """
     Search resident-log rows matching the given criteria.
 
-    Passing ``unique=true`` for first-level history: one row per
-    ``hashed_code`` (most recent kept) with ``usage_count``. Filter by
-    ``hashed_code`` for second-level validation lists; the BFF adds code
-    lifecycle metadata separately. Unique rows include ``code_deleted`` from
-    a left join to the earliest ``accesscode`` row per hash. Default order is
-    newest first.
+    Passing ``unique=true`` collapses to one row per ``hashed_code`` with
+    ``usage_count`` and ``code_deleted`` (from the earliest ``accesscode`` row
+    per hash). The code-service BFF uses ``accesscode/history/search`` for
+    first-level resident history; this endpoint remains for second-level
+    validation lists and unique metadata enrichment. Default order is newest
+    first.
 
     Arguments:
         from_date: The creation date (from).

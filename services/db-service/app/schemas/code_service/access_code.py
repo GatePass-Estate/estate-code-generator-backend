@@ -19,6 +19,9 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+    "HistorySearchRequest",
+    "HistoryItemResponse",
+    "HistoryListResponse",
 ]
 
 
@@ -223,4 +226,90 @@ class ListResponse(BaseListResponse):
 
     items: List[GetResponse] = Field(
         ..., description="Ordered list of table objects"
+    )
+
+
+class HistorySearchRequest(BaseSearchRequest):
+    """
+    Filters for first-level resident access-code history.
+
+    Each ``accesscode`` row is already unique. Results are joined to
+    ``users`` for ``full_name`` and optionally aggregated against
+    ``residentlog`` for ``usage_count`` and the latest validation metadata.
+    """
+
+    user_id: UUID4 | None = Field(
+        default=None, description="Restrict to a single resident"
+    )
+    estate_id: UUID4 | None = Field(
+        default=None, description="Restrict to a single estate"
+    )
+
+
+class HistoryItemResponse(BaseModel):
+    """One access-code row enriched for first-level resident history."""
+
+    id: UUID4 = Field(..., description="Access-code row ID")
+
+    @field_serializer("id")
+    def serialize_id(self, value: UUID4) -> str:
+        return str(value)
+
+    created_at: datetime = Field(
+        ..., description="When the access code was generated"
+    )
+    updated_at: datetime = Field(
+        ..., description="Last update timestamp on the access-code row"
+    )
+    user_id: UUID4 = Field(..., description="Resident who owns the code")
+
+    @field_serializer("user_id")
+    def serialize_user_id(self, value: UUID4) -> str:
+        return str(value)
+
+    estate_id: UUID4 = Field(..., description="Estate scope of the code")
+
+    @field_serializer("estate_id")
+    def serialize_estate_id(self, value: UUID4) -> str:
+        return str(value)
+
+    hashed_code: str = Field(..., description="Resident access code hash")
+    full_name: str | None = Field(
+        default=None, description="Resident full name from users"
+    )
+    code_deleted: bool = Field(
+        ..., description="Whether the access-code row is soft-deleted"
+    )
+    usage_count: int = Field(
+        default=0,
+        description="Total resident validations for this code",
+    )
+    security_id: UUID4 = Field(
+        ...,
+        description=(
+            "Security user from the latest validation, or the resident when "
+            "the code has never been used"
+        ),
+    )
+
+    @field_serializer("security_id")
+    def serialize_security_id(self, value: UUID4) -> str:
+        return str(value)
+
+    access_time: datetime = Field(
+        ...,
+        description=(
+            "Latest validation time, or the access-code ``created_at`` when "
+            "never used"
+        ),
+    )
+
+    model_config = model_config
+
+
+class HistoryListResponse(BaseListResponse):
+    """Paginated first-level resident access-code history."""
+
+    items: List[HistoryItemResponse] = Field(
+        ..., description="Ordered access-code history rows"
     )

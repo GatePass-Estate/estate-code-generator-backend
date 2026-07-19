@@ -6,6 +6,7 @@ from pydantic import UUID4
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import VisitorLog as TableModel
 from app.schemas.code_service.visitor_log import (
@@ -433,9 +434,10 @@ class VisitorLogRepository:
         """
         Collapse a filtered query to one entry per unique ``hashed_code``.
 
-        Keeps the most recent row per code and attaches ``usage_count`` (total
-        validations per code within the filtered set), then paginates by
-        ``created_at``.
+        Keeps the most recent row per code for display fields, attaches
+        ``usage_count`` (total validations per code within the filtered set),
+        and sets ``created_at`` from the earliest row per code so first-level
+        history reflects when the code was first used.
         """
         filtered = query.subquery("filtered")
         row_num = (
@@ -446,22 +448,44 @@ class VisitorLogRepository:
             )
             .label("rn")
         )
+        earliest_row_num = (
+            func.row_number()
+            .over(
+                partition_by=filtered.c.hashed_code,
+                order_by=filtered.c.created_at.asc(),
+            )
+            .label("ern")
+        )
         usage_count = (
             func.count()
             .over(partition_by=filtered.c.hashed_code)
             .label("usage_count")
         )
         ranked = (
-            select(filtered, row_num, usage_count)
+            select(filtered, row_num, earliest_row_num, usage_count)
             .select_from(filtered)
             .subquery("ranked")
+        )
+        earliest_created = (
+            select(
+                ranked.c.hashed_code,
+                ranked.c.created_at.label("earliest_created_at"),
+            )
+            .where(ranked.c.ern == 1)
+            .subquery("earliest_created")
         )
         count_query = (
             select(func.count()).select_from(ranked).where(ranked.c.rn == 1)
         )
-        order_column = ranked.c.created_at
+        order_column = earliest_created.c.earliest_created_at
         records_query = (
-            select(ranked)
+            select(ranked, earliest_created.c.earliest_created_at)
+            .select_from(ranked)
+            .join(
+                earliest_created,
+                func.lower(ranked.c.hashed_code)
+                == func.lower(earliest_created.c.hashed_code),
+            )
             .where(ranked.c.rn == 1)
             .order_by(order_column.asc() if ascending else order_column.desc())
             .limit(limit)
@@ -477,7 +501,7 @@ class VisitorLogRepository:
                     GetResponse.model_validate(
                         {
                             "id": mapping["id"],
-                            "created_at": mapping["created_at"],
+                            "created_at": mapping["earliest_created_at"],
                             "updated_at": mapping["updated_at"],
                             "is_deleted": mapping["is_deleted"],
                             "user_id": mapping["user_id"],
