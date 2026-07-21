@@ -40,6 +40,28 @@ class CodeServiceRepository:
         ms = int(dt.microsecond / 1000)
         return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
 
+    def _is_upcoming_visitor_code(self, item: dict, now: datetime) -> bool:
+        """Return True when the code's validity period has not started yet."""
+        period = item.get("validity_period") or {}
+        start = period.get("start")
+        if not start:
+            return False
+        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S.%f%z")
+        return now < start_dt
+
+    def _is_visitor_code_expired(
+        self, record: dict, now: datetime | None = None
+    ) -> bool:
+        """Return True when the visitor code is past its total validity end."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        period = record.get("validity_period") or {}
+        end = period.get("end") or record.get("valid_until")
+        if not end:
+            return False
+        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S.%f%z")
+        return now > end_dt
+
     async def _resolve_resident_full_name(self, user_id: str | None) -> str:
         """
         Resolve a resident's full name for denormalized log storage.
@@ -61,6 +83,38 @@ class CodeServiceRepository:
             f"{user.get('first_name', '') or ''} "
             f"{user.get('last_name', '') or ''}"
         ).strip()
+
+    async def _resolve_household_name(self, user_id: str | None) -> str | None:
+        """Resolve the household display name for a resident user."""
+        if not user_id:
+            return None
+        try:
+            user = await get_user_details(self.ahttp_client, str(user_id))
+        except Exception:
+            logger.exception(
+                "Failed to resolve household name for user %s", user_id
+            )
+            return None
+
+        household_id = user.get("household_id")
+        if not household_id:
+            return None
+
+        try:
+            url = (
+                f"{settings.DB_SERVICE_URL}api/v1/userprofile"
+                f"/household/{household_id}"
+            )
+            household = await self.ahttp_client.async_get(url)
+        except Exception:
+            logger.exception(
+                "Failed to fetch household %s for user %s",
+                household_id,
+                user_id,
+            )
+            return None
+
+        return household.get("name") if household else None
 
     async def _soft_delete_previous_resident_codes(
         self,
@@ -220,6 +274,7 @@ class CodeServiceRepository:
         user_id = kwargs.get("user_id", None)
         receiver = kwargs.get("receiver", None)
         user_details = kwargs.get("user_details", None)
+        upcoming = kwargs.get("upcoming", False)
 
         try:
             if receiver == Receiver.VISITOR:
@@ -229,6 +284,13 @@ class CodeServiceRepository:
                 )
                 params = {"estate_id": user_details.get("estate_id")}
                 response = await self.ahttp_client.async_get(url, params)
+                if upcoming:
+                    now = datetime.now(timezone.utc)
+                    response["items"] = [
+                        item
+                        for item in response.get("items", [])
+                        if self._is_upcoming_visitor_code(item, now)
+                    ]
                 return response
             elif receiver == Receiver.RESIDENT:
                 url = (
@@ -385,8 +447,11 @@ class CodeServiceRepository:
 
         Returns:
             A boolean indicating whether the item was deleted successfully.
+            Returns False when the code is expired or is a resident code.
 
         Raises:
+            NotFoundError: If the code is missing or the requester is not the
+                owner.
             HTTPException: If there is an internal server error
         """
 
@@ -394,36 +459,53 @@ class CodeServiceRepository:
         user_details = kwargs.get("user_details", None)
 
         try:
-            # Get the record from the database
-            record = await self._getitem(
-                ahttp_client=self.ahttp_client,
-                code=code,
+            raw_url = (
+                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                f"/cachehandler/{code}/raw"
             )
-            if record and (
-                str(record.get("user_id")) != user_details.get("id")
-            ):
-                message = (
-                    "User is not authorized to delete this resource "
-                    "due to user_id mismatch!"
-                )
-                logger.exception(message)
-                raise NotFoundError(f"Invalid code: {code}!")
+            try:
+                record = await self.ahttp_client.async_get(raw_url)
+            except NotFoundError:
+                record = None
 
-            if record.get("receiver") == Receiver.RESIDENT:
+            if record:
+                if self._is_visitor_code_expired(record):
+                    logger.info(
+                        "Skipping delete for expired visitor code %s", code
+                    )
+                    return False
+
+                if str(record.get("user_id")) != user_details.get("id"):
+                    message = (
+                        "User is not authorized to delete this resource "
+                        "due to user_id mismatch!"
+                    )
+                    logger.exception(message)
+                    raise NotFoundError(f"Invalid code: {code}!")
+
+                cache_url = (
+                    f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                    f"/cachehandler/{code}"
+                )
+                return await self.ahttp_client.async_delete(cache_url)
+
+            url = (
+                f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                f"/accesscode/search"
+            )
+            params = {"hashed_code": code}
+            response = await self.ahttp_client.async_get(url, params=params)
+            if response.get("items"):
                 logger.info(
                     "Resident's code can't be deleted from this endpoint!"
                 )
                 return False
 
-            cache_url = (
-                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
-                f"/cachehandler/{code}"
-            )
-
-            response = await self.ahttp_client.async_delete(cache_url)
-            return response
+            raise NotFoundError(f"Invalid code: {code}!")
+        except NotFoundError:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def _update_resident_code(
         self,
@@ -589,6 +671,10 @@ class CodeServiceRepository:
                 )
                 logger.exception(message)
                 raise NotFoundError(f"Invalid code: {code}!")
+
+            record["household_name"] = await self._resolve_household_name(
+                record.get("user_id")
+            )
 
             if record and (record.get("receiver") == Receiver.VISITOR):
                 # Record was retrieved from the cache. Now, persist to DB.

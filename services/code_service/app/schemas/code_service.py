@@ -228,6 +228,9 @@ class GetResponseVisitor(VisitorData):
     receiver: Receiver = Field(
         ..., description="Receiver: visitor or resident"
     )
+    household_name: str | None = Field(
+        default=None, description="Display name of the resident's household"
+    )
 
 
 class GetResponseResident(ResidentData):
@@ -245,6 +248,9 @@ class GetResponseResident(ResidentData):
     )
     receiver: Receiver = Field(
         ..., description="Receiver: visitor or resident"
+    )
+    household_name: str | None = Field(
+        default=None, description="Display name of the resident's household"
     )
 
 

@@ -73,6 +73,7 @@ class CodeService:
         user_id: UUID4,
         receiver: Receiver,
         user_details: dict | None = None,
+        upcoming: bool = False,
     ) -> ListResponse | GetResponseResident:
         """
         Get items from the table by user ID.
@@ -81,9 +82,14 @@ class CodeService:
             user_id: The ID of the user whose items are to be retrieved.
             receiver: The status of the code owner (visitor or resident).
             user_details: The details of the user making the request.
+            upcoming: When True, return only visitor codes scheduled for
+                future use (requires visitor receiver).
         """
         return await self.repository._get_items_by_user(
-            user_id=user_id, receiver=receiver, user_details=user_details
+            user_id=user_id,
+            receiver=receiver,
+            user_details=user_details,
+            upcoming=upcoming,
         )
 
     async def delete(
