@@ -229,6 +229,7 @@ async def validate(
 async def get_all_codes_by_user(
     user_id: UUID4,
     receiver: str,
+    upcoming: bool = False,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse | GetResponseResident:
@@ -238,6 +239,8 @@ async def get_all_codes_by_user(
     Arguments:
         user_id: The user ID to be retrieved for.
         recevier: The status of the code owner (visitor and resident)
+        upcoming: When true, return only visitor codes whose validity period
+            has not started yet. Only valid with receiver=visitor.
 
     Returns:
         A List response model containing reference to the retrieved items if
@@ -257,6 +260,12 @@ async def get_all_codes_by_user(
                 "Invalid receiver type. Must be one of: "
                 f"{[r.value for r in Receiver]}"
             ),
+        )
+
+    if upcoming and receiver != Receiver.VISITOR:
+        raise HTTPException(
+            status_code=400,
+            detail="The upcoming filter is only supported for visitor codes.",
         )
 
     # Extract complete user_details
@@ -283,7 +292,10 @@ async def get_all_codes_by_user(
 
     try:
         return await service.get_items_by_user(
-            user_id=user_id, receiver=receiver, user_details=user_details
+            user_id=user_id,
+            receiver=receiver,
+            user_details=user_details,
+            upcoming=upcoming,
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
