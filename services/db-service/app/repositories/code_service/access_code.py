@@ -454,23 +454,20 @@ class AccessCodeRepository:
         ``users`` for ``full_name``, and left-correlates ``residentlog`` for
         ``usage_count`` plus the latest validation metadata.
         """
+        log_match = (
+            func.lower(ResidentLogModel.hashed_code)
+            == func.lower(TableModel.hashed_code),
+            ResidentLogModel.is_deleted == False,  # noqa: E712
+        )
         usage_count = (
             select(func.count(ResidentLogModel.id))
-            .where(
-                func.lower(ResidentLogModel.hashed_code)
-                == func.lower(TableModel.hashed_code),
-                ResidentLogModel.is_deleted == False,  # noqa: E712
-            )
+            .where(*log_match)
             .correlate(TableModel)
             .scalar_subquery()
         )
         latest_security_id = (
             select(ResidentLogModel.security_id)
-            .where(
-                func.lower(ResidentLogModel.hashed_code)
-                == func.lower(TableModel.hashed_code),
-                ResidentLogModel.is_deleted == False,  # noqa: E712
-            )
+            .where(*log_match)
             .order_by(ResidentLogModel.access_time.desc())
             .limit(1)
             .correlate(TableModel)
@@ -478,11 +475,7 @@ class AccessCodeRepository:
         )
         latest_access_time = (
             select(ResidentLogModel.access_time)
-            .where(
-                func.lower(ResidentLogModel.hashed_code)
-                == func.lower(TableModel.hashed_code),
-                ResidentLogModel.is_deleted == False,  # noqa: E712
-            )
+            .where(*log_match)
             .order_by(ResidentLogModel.access_time.desc())
             .limit(1)
             .correlate(TableModel)
