@@ -282,7 +282,7 @@ class HistoryItemResponse(BaseModel):
     )
     usage_count: int = Field(
         default=0,
-        description="Total resident validations for this code",
+        description="Total resident validations for this hashed code",
     )
     security_id: UUID4 = Field(
         ...,

@@ -311,12 +311,11 @@ class CodeServiceRepository:
                 code = generate_unique_code(
                     user_id=visit_data.get("user_id"),
                     estate_id=visit_data.get("estate_id"),
+                    now=now,
                     visitor_fullname=visit_data.get("visitor_fullname"),
                     relationship_with_resident=visit_data.get(
                         "relationship_with_resident"
                     ),
-                    date=now.strftime("%Y-%m-%d"),
-                    hour=now.strftime("%H"),
                     receiver=receiver,
                     validity_period=visit_data.get("validity_period"),
                 )
@@ -336,8 +335,7 @@ class CodeServiceRepository:
                 code = generate_unique_code(
                     user_id=resident_data.get("user_id"),
                     estate_id=resident_data.get("estate_id"),
-                    date=now.strftime("%Y-%m-%d"),
-                    hour=now.strftime("%H"),
+                    now=now,
                     receiver=receiver,
                 )
                 resident_data["hashed_code"] = code
@@ -472,8 +470,7 @@ class CodeServiceRepository:
             new_code = generate_unique_code(
                 user_id=user_id,
                 estate_id=user_details.get("estate_id"),
-                date=now.strftime("%Y-%m-%d"),
-                hour=now.strftime("%H"),
+                now=now,
                 receiver=Receiver.RESIDENT,
             )
 

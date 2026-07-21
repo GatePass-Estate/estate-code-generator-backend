@@ -1,15 +1,25 @@
 import hashlib
+from datetime import datetime, timezone
 
 from app.schemas.code_service import Receiver
+
+
+def _utc_timestamp_token(now: datetime) -> str:
+    """Normalize ``now`` to UTC and stringify for stable hash input."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    return now.isoformat().replace("+00:00", "Z")
 
 
 def generate_unique_code(
     user_id: str,
     estate_id: str,
+    *,
+    now: datetime,
     visitor_fullname: str = None,
     relationship_with_resident: str = None,
-    date: str = None,
-    hour: str = None,
     receiver: Receiver = None,
     validity_period: dict | None = None,
 ) -> str:
@@ -19,10 +29,9 @@ def generate_unique_code(
     Arguments:
         user_id: The unique identifier for the user (e.g., a UUID).
         estate_id: The estate the code belongs to.
+        now: UTC-aware generation timestamp (microsecond precision preserved).
         visitor_fullname: The name of the visitor.
         relationship_with_resident: The relationship of the visitor to the user.
-        date: The date of the visit, typically in YYYY-MM-DD format.
-        hour: The hour of the visit.
         receiver: Whether the code is for a visitor or resident.
         validity_period: Optional visitor validity bounds with ``start`` and
             ``end`` UTC datetimes. Included in the hash for visitors only.
@@ -31,8 +40,8 @@ def generate_unique_code(
         A 6-character alphanumeric code that uniquely represents the
         combination of the input values.
     """
+    timestamp = _utc_timestamp_token(now)
 
-    # Combine the input fields into a single string
     if receiver == Receiver.VISITOR:
         raw_period = validity_period or {}
         if isinstance(raw_period, dict):
@@ -43,20 +52,16 @@ def generate_unique_code(
             period_end = getattr(raw_period, "end", None) or ""
         combined = (
             f"{user_id}|{estate_id}|{visitor_fullname}|"
-            f"{relationship_with_resident}|{date}|{hour}|"
+            f"{relationship_with_resident}|{timestamp}|"
             f"{period_start}|{period_end}"
         )
     else:
-        combined = f"{user_id}|{estate_id}|{date}|{hour}"
+        combined = f"{user_id}|{estate_id}|{timestamp}"
 
-    # Compute the SHA256 hash of the combined string
     hash_obj = hashlib.sha256(combined.encode("utf-8"))
     hash_int = int(hash_obj.hexdigest(), 16)
-
-    # Reduce the hash to a number that fits in 6 base-36 digits
     mod_value = hash_int % (36**6)
 
-    # Convert the number to a 6-character base-36 string
     alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     code = ""
     for _ in range(6):
@@ -71,17 +76,15 @@ if __name__ == "__main__":
     estate_id = "123e4567-e89b-12d3-a456-426614174000"
     visitor_fullname = "Michael"
     relationship_with_resident = "friend"
-    date = "2025-04-06"
-    hour = "14"
+    now = datetime(2025, 4, 6, 14, 30, 45, 123456, tzinfo=timezone.utc)
     print(
         generate_unique_code(
             user_id,
             estate_id,
-            visitor_fullname,
-            relationship_with_resident,
-            date,
-            hour,
-            Receiver.VISITOR,
+            now=now,
+            visitor_fullname=visitor_fullname,
+            relationship_with_resident=relationship_with_resident,
+            receiver=Receiver.VISITOR,
             validity_period={
                 "start": "2025-04-06 14:00:00.000+0000",
                 "end": "2025-04-06 18:00:00.000+0000",
