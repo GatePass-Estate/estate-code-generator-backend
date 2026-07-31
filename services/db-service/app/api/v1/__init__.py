@@ -18,6 +18,9 @@ from app.api.v1.endpoints.code_service.visitor_log import (
 from app.api.v1.endpoints.user_profile.admin_management import (
     router as adminmanagement_router,
 )
+from app.api.v1.endpoints.user_profile.broadcast_reads import (
+    router as broadcast_reads_router,
+)
 from app.api.v1.endpoints.user_profile.broadcasts import (
     router as broadcasts_router,
 )
@@ -129,6 +132,12 @@ api_router.include_router(
     broadcasts_router,
     prefix="/userprofile/broadcasts",
     tags=["Broadcasts"],
+)
+
+api_router.include_router(
+    broadcast_reads_router,
+    prefix="/userprofile/broadcast_reads",
+    tags=["BroadcastReads"],
 )
 
 api_router.include_router(

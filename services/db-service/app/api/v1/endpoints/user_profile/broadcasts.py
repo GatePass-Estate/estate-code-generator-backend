@@ -1,14 +1,16 @@
 import datetime
 import logging
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db_session
 from app.schemas.user_profile.broadcasts import (
-    Audience,
+    BroadcastCategory,
+    BroadcastPriority,
     CreateRequest,
     CreateResponse,
     DeleteResponse,
@@ -173,10 +175,14 @@ async def search(
     sender_id: UUID4 | None = None,
     title: str | None = None,
     message: str | None = None,
-    audience: Audience | None = None,
-    attachment_url: str | None = None,
+    priority: BroadcastPriority | None = None,
+    category: BroadcastCategory | None = None,
+    audience: Optional[List[str]] = Query(default=None),
     status: bool | None = None,
     expires_at: datetime.datetime | None = None,
+    exclude_expired: bool | None = None,
+    include_global: bool | None = None,
+    exclude_dismissed_by_user_id: UUID4 | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,

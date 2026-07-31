@@ -82,6 +82,9 @@ class RolePermissionBase(BaseModel):
     can_deactivate_user: bool = Field(
         ..., description="Can force-close a user account"
     )
+    can_create_broadcast: bool = Field(
+        ..., description="Can create and send broadcasts"
+    )
 
     model_config = model_config
 
@@ -180,6 +183,9 @@ class UpdateRequest(BaseModel):
     )
     can_deactivate_user: bool | None = Field(
         default=None, description="Can force-close a user account"
+    )
+    can_create_broadcast: bool | None = Field(
+        default=None, description="Can create and send broadcasts"
     )
 
     model_config = model_config
@@ -284,6 +290,9 @@ class SearchRequest(BaseSearchRequest):
     )
     can_deactivate_user: Optional[bool] = Field(
         default=None, description="Can force-close a user account"
+    )
+    can_create_broadcast: Optional[bool] = Field(
+        default=None, description="Can create and send broadcasts"
     )
 
 

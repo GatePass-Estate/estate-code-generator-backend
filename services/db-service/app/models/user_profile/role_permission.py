@@ -51,3 +51,4 @@ class RolePermission(BaseModelDB):
     can_view_other_user_logs = Column(Boolean, default=False)
     can_view_other_user_logs_in_other_estate = Column(Boolean, default=False)
     can_deactivate_user = Column(Boolean, default=False)
+    can_create_broadcast = Column(Boolean, default=False)

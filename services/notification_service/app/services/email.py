@@ -324,7 +324,8 @@ async def send_password_changed_email(email: str, first_name: str) -> None:
         first_name=first_name,
         instruction=(
             "Your GatePass password was successfully changed. "
-            "If you did not make this change, contact your administrator immediately."
+            "If you did not make this change, "
+            "contact your administrator immediately."
         ),
     )
     await _send("Your GatePass password was changed", email, body)
@@ -337,7 +338,8 @@ async def send_two_fa_enabled_email(email: str, first_name: str) -> None:
         instruction=(
             "Two-factor authentication has been enabled on your GatePass "
             "account. Your account is now more secure. "
-            "If you did not make this change, please contact your administrator immediately."
+            "If you did not make this change, please contact your "
+            "administrator immediately."
         ),
     )
     await _send("Two-factor authentication enabled", email, body)
@@ -525,7 +527,8 @@ async def send_password_reset_confirmed_email(
             "Your GatePass password has been successfully reset. "
             "Log in with your new password to continue accessing "
             "your account. "
-            "If you did not make this change, please contact your administrator immediately."
+            "If you did not make this change, please contact your "
+            "administrator immediately."
         ),
     )
     await _send("Your GatePass password has been reset", email, body)
@@ -539,7 +542,8 @@ async def send_account_closed_email(email: str, first_name: str) -> None:
             "Your GatePass account has been successfully closed. "
             "We're sorry to see you go. If you ever change your mind, "
             "you're welcome to create a new account at any time. "
-            "If you did not request this, please contact your administrator immediately."
+            "If you did not request this, please contact your "
+            "administrator immediately."
         ),
     )
     await _send("Your GatePass account has been closed", email, body)
@@ -628,6 +632,23 @@ async def send_community_reactivated_email(
         button_href=f"{_FRONTEND_BASE_URL}/auth/login",
     )
     await _send(f"Your {label} has been reactivated", email, body)
+
+
+async def send_broadcast_email(
+    email: str,
+    first_name: str,
+    title: str,
+    message: str,
+    sender_name: str | None = None,
+) -> None:
+    """Send a HIGH-priority broadcast to a recipient via email."""
+    from_label = sender_name or "GatePass"
+    body = _build_email(
+        heading=title,
+        first_name=first_name,
+        instruction=message,
+    )
+    await _send(f"[{from_label}] {title}", email, body)
 
 
 async def send_user_feedback_email(
@@ -795,4 +816,12 @@ async def dispatch_email(
             email=email,
             first_name=first_name,
             community_label=metadata.get("community_label", "community"),
+        )
+    elif notification_type == NotificationType.BROADCAST_HIGH:
+        await send_broadcast_email(
+            email=email,
+            first_name=first_name,
+            title=metadata.get("title", "Announcement"),
+            message=metadata.get("body", ""),
+            sender_name=metadata.get("sender_name"),
         )

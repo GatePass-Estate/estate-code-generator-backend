@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select, cast, String
+from sqlalchemy import Select, func, or_, select, cast, String
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -309,7 +309,9 @@ class BroadcastsRepository:
             # Get the record from the database and convert to CREATE schema
             record = await self._getitem(session=self.session, id=id)
             # Update the data fields for the record with the new values.
-            record.update(**request.model_dump(exclude_unset=True))
+            record.update(
+                **request.model_dump(exclude_unset=True, exclude_none=True)
+            )
             # update the table with the new record and mark the updated_at
             # timestamp as the current time (done within the database).
             record = await self._setitem(session=self.session, request=record)
@@ -381,33 +383,58 @@ class BroadcastsRepository:
             TableModel.is_deleted == False  # noqa E712
         )
 
-        # Apply filters
-        for key, info in request.model_fields.items():
-            if getattr(request, key) is None:
-                continue
-            if key in ["from_date", "to_date"]:
-                query = (
-                    query.where(TableModel.created_at >= request.from_date)
-                    if key == "from_date"
-                    else query.where(TableModel.created_at <= request.to_date)
-                )
-            elif hasattr(TableModel, key):
-                field_value = getattr(request, key)
-                column = getattr(TableModel, key)
-
-                # Extract enum value if it's an enum
-                if hasattr(field_value, "value"):
-                    field_value = field_value.value
-
-                if isinstance(field_value, str):
-                    # Normalize both column and input
-                    # for case-insensitive matching
-                    # Cast column to text for enum types before applying lower
-                    query = query.where(
-                        func.lower(cast(column, String)) == field_value.lower()
+        if request.estate_id is not None:
+            if request.include_global:
+                query = query.where(
+                    or_(
+                        TableModel.estate_id == request.estate_id,
+                        TableModel.estate_id.is_(None),
                     )
-                else:
-                    query = query.where(column == field_value)
+                )
+            else:
+                query = query.where(TableModel.estate_id == request.estate_id)
+        if request.sender_id is not None:
+            query = query.where(TableModel.sender_id == request.sender_id)
+        if request.title is not None:
+            query = query.where(
+                func.lower(TableModel.title) == request.title.lower()
+            )
+        if request.priority is not None:
+            query = query.where(
+                func.lower(cast(TableModel.priority, String))
+                == request.priority.value.lower()
+            )
+        if request.audience is not None:
+            # Filter broadcasts whose audience array overlaps the given list
+            query = query.where(TableModel.audience.overlap(request.audience))
+        if request.category is not None:
+            query = query.where(
+                func.lower(cast(TableModel.category, String))
+                == request.category.value.lower()
+            )
+        if request.status is not None:
+            query = query.where(TableModel.status == request.status)
+        if request.expires_at is not None:
+            query = query.where(TableModel.expires_at == request.expires_at)
+        if request.exclude_expired:
+            query = query.where(
+                or_(
+                    TableModel.expires_at.is_(None),
+                    TableModel.expires_at > func.now(),
+                )
+            )
+        if request.exclude_dismissed_by_user_id is not None:
+            from app.models import BroadcastReads as ReadsModel  # noqa: PLC0415
+
+            dismissed_subq = select(ReadsModel.broadcast_id).where(
+                ReadsModel.user_id == request.exclude_dismissed_by_user_id,
+                ReadsModel.is_dismissed.is_(True),
+            )
+            query = query.where(TableModel.id.not_in(dismissed_subq))
+        if request.from_date is not None:
+            query = query.where(TableModel.created_at >= request.from_date)
+        if request.to_date is not None:
+            query = query.where(TableModel.created_at <= request.to_date)
 
         # Order the records by the created_at timestamp in descending order.
         order_by = (TableModel.created_at.desc(),)
