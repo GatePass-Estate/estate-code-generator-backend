@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -19,6 +19,11 @@ __all__ = [
     "BroadcastItem",
     "BroadcastListResponse",
     "UnreadBroadcastCountResponse",
+]
+
+
+AudienceRole = Literal[
+    "resident", "security", "admin", "primary_admin", "root"
 ]
 
 
@@ -47,7 +52,7 @@ class CreateBroadcastRequest(BaseModel):
     priority: BroadcastPriority = Field(
         BroadcastPriority.LOW, description="Delivery priority"
     )
-    audience: List[str] = Field(
+    audience: List[AudienceRole] = Field(
         ..., description="Roles that should receive this broadcast"
     )
     sender_name: Optional[str] = Field(
@@ -79,7 +84,7 @@ class UpdateBroadcastRequest(BaseModel):
     title: Optional[str] = None
     message: Optional[str] = None
     priority: Optional[BroadcastPriority] = None
-    audience: Optional[List[str]] = None
+    audience: Optional[List[AudienceRole]] = None
     sender_name: Optional[str] = None
     attachment_url: Optional[str] = None
     status: Optional[bool] = None
@@ -100,7 +105,7 @@ class BroadcastCreatePayload(BaseModel):
     message: str
     category: str
     priority: str
-    audience: List[str]
+    audience: List[AudienceRole]
     sender_name: Optional[str] = None
     attachment_url: Optional[str] = None
     status: bool = True

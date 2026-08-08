@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -22,6 +22,11 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+]
+
+
+AudienceRole = Literal[
+    "resident", "security", "admin", "primary_admin", "root"
 ]
 
 
@@ -59,7 +64,9 @@ class BroadcastBase(BaseModel):
     title: str = Field(..., description="Broadcast title")
     message: str = Field(..., description="Full Broadcast message")
 
-    audience: List[str] = Field(..., description="Role-based audience list")
+    audience: List[AudienceRole] = Field(
+        ..., description="Role-based audience list"
+    )
     category: BroadcastCategory = Field(
         BroadcastCategory.BROADCAST, description="Broadcast category"
     )
@@ -157,7 +164,7 @@ class UpdateRequest(BaseModel):
         default=None, description="Full Broadcast message"
     )
 
-    audience: List[str] | None = Field(
+    audience: List[AudienceRole] | None = Field(
         default=None, description="Role-based audience list"
     )
     category: BroadcastCategory | None = Field(
@@ -271,7 +278,7 @@ class SearchRequest(BaseSearchRequest):
         default=None, description="Full Broadcast message"
     )
 
-    audience: Optional[List[str]] = Field(
+    audience: Optional[List[AudienceRole]] = Field(
         default=None, description="Role-based audience list"
     )
     category: Optional[BroadcastCategory] = Field(

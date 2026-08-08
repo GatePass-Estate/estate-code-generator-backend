@@ -131,13 +131,6 @@ def upgrade() -> None:
         schema="core",
     )
     op.create_index(
-        op.f("ix_core_broadcast_reads_id"),
-        "broadcast_reads",
-        ["id"],
-        unique=True,
-        schema="core",
-    )
-    op.create_index(
         op.f("ix_core_broadcast_reads_broadcast_id"),
         "broadcast_reads",
         ["broadcast_id"],
@@ -209,11 +202,6 @@ def downgrade() -> None:
     )
     op.drop_index(
         op.f("ix_core_broadcast_reads_broadcast_id"),
-        table_name="broadcast_reads",
-        schema="core",
-    )
-    op.drop_index(
-        op.f("ix_core_broadcast_reads_id"),
         table_name="broadcast_reads",
         schema="core",
     )
