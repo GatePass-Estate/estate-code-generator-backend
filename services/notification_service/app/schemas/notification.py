@@ -12,7 +12,8 @@ model_config = ConfigDict(
 class NotificationType(str, Enum):
     GUEST_CODE_USED = "GUEST_CODE_USED"
     RESIDENT_CODE_USED = "RESIDENT_CODE_USED"
-    BROADCAST_RECEIVED = "BROADCAST_RECEIVED"
+    BROADCAST_HIGH = "BROADCAST_HIGH"
+    BROADCAST_MEDIUM = "BROADCAST_MEDIUM"
     INCIDENT_REPORT_FILED = "INCIDENT_REPORT_FILED"
     EDIT_REQUEST_PENDING = "EDIT_REQUEST_PENDING"
     EDIT_REQUEST_REVIEWED = "EDIT_REQUEST_REVIEWED"
@@ -45,6 +46,7 @@ class NotificationType(str, Enum):
 
 # Types for which user preferences are ignored — always delivered
 MANDATORY_TYPES: set[NotificationType] = {
+    NotificationType.BROADCAST_HIGH,
     NotificationType.LOGIN_NEW_DEVICE,
     NotificationType.SESSION_REVOKED,
     NotificationType.PASSWORD_CHANGED,
@@ -78,10 +80,15 @@ NO_IN_APP_TYPES: set[NotificationType] = {
     NotificationType.ACCOUNT_CLOSED,
     # Account is being force-closed; no point creating an in-app row
     NotificationType.ACCOUNT_DEACTIVATED,
+    # Broadcasts are in-app via the dedicated broadcasts screen, not the
+    # notifications table — push/email only here.
+    NotificationType.BROADCAST_HIGH,
+    NotificationType.BROADCAST_MEDIUM,
 }
 
 # Types that send email by default
 EMAIL_TYPES: set[NotificationType] = {
+    NotificationType.BROADCAST_HIGH,
     NotificationType.LOGIN_NEW_DEVICE,
     NotificationType.PASSWORD_CHANGED,
     NotificationType.TWO_FA_ENABLED,
@@ -108,7 +115,8 @@ EMAIL_TYPES: set[NotificationType] = {
 PUSH_TYPES: set[NotificationType] = {
     NotificationType.GUEST_CODE_USED,
     NotificationType.RESIDENT_CODE_USED,
-    NotificationType.BROADCAST_RECEIVED,
+    NotificationType.BROADCAST_HIGH,
+    NotificationType.BROADCAST_MEDIUM,
     NotificationType.EDIT_REQUEST_REVIEWED,
     NotificationType.LOGIN_NEW_DEVICE,
     NotificationType.SESSION_REVOKED,
@@ -134,10 +142,9 @@ class ResidentCodeUsedMeta(BaseModel):
     access_time: str
 
 
-class BroadcastReceivedMeta(BaseModel):
+class BroadcastMeta(BaseModel):
     broadcast_id: str
-    sender_name: str
-    audience: str
+    sender_name: str | None = None
 
 
 class IncidentReportFiledMeta(BaseModel):

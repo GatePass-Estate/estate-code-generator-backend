@@ -11,6 +11,7 @@ from app.models.code_service.prediction_result import PredictionResult
 from app.models.code_service.resident_log import ResidentLog
 from app.models.code_service.visitor_log import VisitorLog
 from app.models.user_profile.admin_management import AdminManagement
+from app.models.user_profile.broadcast_reads import BroadcastReads
 from app.models.user_profile.broadcasts import Broadcasts
 from app.models.user_profile.estates import Estates
 from app.models.user_profile.guests import Guests
@@ -33,6 +34,7 @@ from app.models.user_profile.users import Users
 __all__ = [
     "AccessCode",
     "AdminIncidentReportRead",
+    "BroadcastReads",
     "IncidentReport",
     "LogFeatureEngineering",
     "PredictionResult",

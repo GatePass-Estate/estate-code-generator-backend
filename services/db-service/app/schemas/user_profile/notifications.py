@@ -31,7 +31,8 @@ __all__ = [
 class NotificationType(str, Enum):
     GUEST_CODE_USED = "GUEST_CODE_USED"
     RESIDENT_CODE_USED = "RESIDENT_CODE_USED"
-    BROADCAST_RECEIVED = "BROADCAST_RECEIVED"
+    BROADCAST_HIGH = "BROADCAST_HIGH"
+    BROADCAST_MEDIUM = "BROADCAST_MEDIUM"
     INCIDENT_REPORT_FILED = "INCIDENT_REPORT_FILED"
     EDIT_REQUEST_PENDING = "EDIT_REQUEST_PENDING"
     EDIT_REQUEST_REVIEWED = "EDIT_REQUEST_REVIEWED"
@@ -66,7 +67,7 @@ class DevicePlatform(str, Enum):
     ANDROID = "ANDROID"
 
 
-# ── Notifications ─────────────────────────────────────────────────────────────
+# ── Notifications ────────────────────────────────────────────────────────────
 
 
 class CreateNotificationRequest(BaseModel):
@@ -148,7 +149,7 @@ class DeleteAllNotificationsResponse(BaseModel):
     model_config = model_config
 
 
-# ── Device Tokens ─────────────────────────────────────────────────────────────
+# ── Device Tokens ────────────────────────────────────────────────────────────
 
 
 class RegisterDeviceTokenRequest(BaseModel):
@@ -205,7 +206,7 @@ class ListDeviceTokensResponse(BaseModel):
     model_config = model_config
 
 
-# ── Notification Preferences ──────────────────────────────────────────────────
+# ── Notification Preferences ─────────────────────────────────────────────────
 
 
 class UpsertPreferenceRequest(BaseModel):
