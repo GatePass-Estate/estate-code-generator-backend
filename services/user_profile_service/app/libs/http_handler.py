@@ -106,6 +106,41 @@ class AsyncHttpHandler:
                 print(f"PATCH request unexpected error: {e}")
         return None
 
+    async def async_put(
+        self,
+        url: str,
+        data: dict = None,
+        json_data: dict = None,
+        headers: dict = None,
+    ):
+        """
+        Performs an asynchronous PUT request using httpx.
+
+        :param url: URL to request.
+        :param data: (Optional) Dictionary of form data.
+        :param json_data: (Optional) Dictionary of JSON payload.
+        :param headers: (Optional) Dictionary of HTTP headers.
+        :return: Parsed JSON response, or None if an error occurred.
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.put(
+                    url, data=data, json=json_data, headers=headers
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                print(
+                    f"PUT request failed"
+                    f" with status {e.response.status_code}"
+                    f": {e.response.text}"
+                )
+            except httpx.RequestError as e:
+                print(f"PUT request encountered a network error: {e}")
+            except Exception as e:
+                print(f"PUT request unexpected error: {e}")
+        return None
+
     async def async_delete(
         self,
         url: str,

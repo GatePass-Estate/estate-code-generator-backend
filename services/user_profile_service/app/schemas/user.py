@@ -334,7 +334,7 @@ class SearchUserRequest(BaseModel):
     last_name: Optional[str] = Field(None, description="Filter by last name")
     email: Optional[str] = Field(None, description="Filter by email")
     gender: Optional[Gender] = Field(None, description="Filter by user gender")
-    role: Optional[Role] = Field(None, description="Filter by role")
+    roles: Optional[List[Role]] = Field(None, description="Filter by role(s)")
     estate_id: Optional[UUID4] = Field(None, description="Filter by estate ID")
     household_id: Optional[UUID4] = Field(
         None, description="Filter by household ID"

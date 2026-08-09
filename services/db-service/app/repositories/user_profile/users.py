@@ -381,8 +381,17 @@ class UsersRepository:
             TableModel.is_deleted == False  # noqa E712
         )
 
+        # Apply role filter (list → IN clause)
+        if request.roles:
+            role_values = [r.value for r in request.roles]
+            query = query.where(
+                func.lower(cast(TableModel.role, String)).in_(role_values)
+            )
+
         # Apply filters
         for key, info in request.model_fields.items():
+            if key == "roles":
+                continue  # handled above
             if getattr(request, key) is None:
                 continue
             if key in ["from_date", "to_date"]:

@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     SCHEDULE_CLOSE_MAX_DAYS: int = int(
         os.getenv("SCHEDULE_CLOSE_MAX_DAYS", 30)
     )
+    NOTIFICATION_MAX_AGE_DAYS: int = int(
+        os.getenv("NOTIFICATION_MAX_AGE_DAYS", 90)
+    )
+    NOTIFICATION_PURGE_MIN_AGE_DAYS: int = int(
+        os.getenv("NOTIFICATION_PURGE_MIN_AGE_DAYS", 90)
+    )
     FRONTEND_BASE_URL: str = os.getenv(
         "FRONTEND_BASE_URL", "https://app.gatepassng.com"
     )

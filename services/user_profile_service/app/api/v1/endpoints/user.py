@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -221,7 +221,9 @@ async def list_users(
     email: Optional[str] = Query(
         None, description="Filter by email (partial match)"
     ),
-    role: Optional[Role] = Query(None, description="Filter by user role"),
+    roles: Optional[List[Role]] = Query(
+        None, description="Filter by user role(s)"
+    ),
     estate_id: Optional[str] = Query(
         None, description="Filter by estate ID (root only)"
     ),
@@ -285,7 +287,7 @@ async def list_users(
             first_name=first_name,
             last_name=last_name,
             email=email,
-            role=role,
+            roles=roles,
             estate_id=estate_id,
             household_id=household_id,
             status=status,

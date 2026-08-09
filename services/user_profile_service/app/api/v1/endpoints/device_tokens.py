@@ -3,7 +3,7 @@ from gatepass_auth import get_current_user
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.device_token import DeviceTokenRepository
-from app.schemas.device_token import (
+from app.schemas.notification import (
     RegisterDeviceTokenRequest,
     RegisterDeviceTokenResponse,
 )
@@ -28,6 +28,27 @@ async def register_device_token(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to register device token",
+        )
+    return result
+
+
+@router.get("/by-user/{user_id}")
+async def get_device_tokens_by_user(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+):
+    if user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot access another user's device tokens.",
+        )
+    repo = DeviceTokenRepository(ahttp_client)
+    result = await repo.get_by_user(user_id=user_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch device tokens",
         )
     return result
 

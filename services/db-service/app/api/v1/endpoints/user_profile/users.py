@@ -1,7 +1,9 @@
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -178,7 +180,7 @@ async def search(
     household_id: UUID4 | None = None,
     estate_id: UUID4 | None = None,
     gender: Gender | None = None,
-    role: UserRole | None = None,
+    roles: List[UserRole] | None = Query(None),
     status: bool | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
