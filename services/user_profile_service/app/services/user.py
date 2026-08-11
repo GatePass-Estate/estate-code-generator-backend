@@ -290,8 +290,9 @@ class UserService:
             )
             household_map = {}
             for hid, h in zip(household_ids, households):
-                if isinstance(h, dict):
-                    household_map[hid] = h.get("name")
+                if isinstance(h, Exception) or h is None:
+                    continue
+                household_map[hid] = h.name
 
             for user in result.items:
                 if user.household_id:

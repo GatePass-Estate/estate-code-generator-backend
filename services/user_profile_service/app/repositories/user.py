@@ -381,8 +381,8 @@ class UserRepository:
             params["email"] = request.email
         if request.gender:
             params["gender"] = request.gender.value
-        if request.role:
-            params["role"] = request.role.value
+        if request.roles:
+            params["roles"] = [r.value for r in request.roles]
         if request.estate_id:
             params["estate_id"] = str(request.estate_id)
         if request.household_id:
@@ -401,7 +401,7 @@ class UserRepository:
         # Build URL with query parameters
         base_url = f"{self.users_endpoint}/search"
         if params:
-            query_string = urlencode(params)
+            query_string = urlencode(params, doseq=True)
             url = f"{base_url}?{query_string}"
         else:
             url = base_url

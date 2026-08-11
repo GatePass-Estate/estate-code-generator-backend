@@ -59,6 +59,21 @@ async def unread_count(
     return result
 
 
+@router.patch("/read-all", response_model=dict)
+async def mark_all_read(
+    current_user: dict = Depends(get_current_user),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+):
+    repo = NotificationRepository(ahttp_client)
+    result = await repo.mark_all_read(user_id=current_user["id"])
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to mark all notifications as read",
+        )
+    return result
+
+
 @router.patch("/{notification_id}/read", response_model=MarkReadResponse)
 async def mark_read(
     notification_id: str,
@@ -74,21 +89,6 @@ async def mark_read(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to mark notification as read",
-        )
-    return result
-
-
-@router.patch("/read-all", response_model=dict)
-async def mark_all_read(
-    current_user: dict = Depends(get_current_user),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-):
-    repo = NotificationRepository(ahttp_client)
-    result = await repo.mark_all_read(user_id=current_user["id"])
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to mark all notifications as read",
         )
     return result
 

@@ -354,7 +354,9 @@ class SearchRequest(BaseSearchRequest):
     household_id: Optional[UUID4] = Field(
         None, description="Reference to the household"
     )
-    role: Optional[UserRole] = Field(None, description="User role")
+    roles: Optional[List[UserRole]] = Field(
+        None, description="Filter by role(s)"
+    )
     status: Optional[bool] = Field(None, description="Active/inactive status")
 
 

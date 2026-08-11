@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from gatepass_auth import get_current_user
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
-from app.repositories.preference import PreferenceRepository
-from app.schemas.notification import NotificationType
-from app.schemas.preference import (
+from app.repositories.notification_preference import (
+    NotificationPreferenceRepository,
+)
+from app.schemas.notification import (
     ListPreferencesResponse,
+    NotificationType,
     PreferenceResponse,
     UpdatePreferenceRequest,
 )
@@ -18,7 +20,7 @@ async def list_preferences(
     current_user: dict = Depends(get_current_user),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
-    repo = PreferenceRepository(ahttp_client)
+    repo = NotificationPreferenceRepository(ahttp_client)
     result = await repo.get_by_user(user_id=current_user["id"])
     if result is None:
         raise HTTPException(
@@ -35,7 +37,7 @@ async def upsert_preference(
     current_user: dict = Depends(get_current_user),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
-    repo = PreferenceRepository(ahttp_client)
+    repo = NotificationPreferenceRepository(ahttp_client)
     result = await repo.upsert(
         user_id=current_user["id"],
         notification_type=notification_type,

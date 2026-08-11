@@ -6,7 +6,6 @@ from gatepass_auth import get_current_user
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.notification import NotificationRepository
-from app.services.maintenance import MaintenanceService
 
 router = APIRouter()
 
@@ -17,8 +16,8 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
     description=(
         "Hard-delete notification rows older than the specified number of days. "
-        f"Minimum allowed value is NOTIFICATION_PURGE_MIN_AGE_DAYS "
-        f"(default {settings.NOTIFICATION_PURGE_MIN_AGE_DAYS}). Root only."
+        "Minimum allowed value is NOTIFICATION_PURGE_MIN_AGE_DAYS "
+        "(default 90). Root only."
     ),
 )
 async def purge_old_notifications(
@@ -36,5 +35,27 @@ async def purge_old_notifications(
             detail="Only root users can perform this operation.",
         )
 
-    service = MaintenanceService(repo=NotificationRepository(ahttp_client))
-    return await service.purge_old_notifications(older_than_days)
+    age = (
+        older_than_days
+        if older_than_days is not None
+        else settings.NOTIFICATION_PURGE_MIN_AGE_DAYS
+    )
+
+    if age < settings.NOTIFICATION_PURGE_MIN_AGE_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"older_than_days must be at least "
+                f"{settings.NOTIFICATION_PURGE_MIN_AGE_DAYS} days. "
+                f"Received: {age}."
+            ),
+        )
+
+    repo = NotificationRepository(ahttp_client)
+    result = await repo.purge_old(older_than_days=age)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to purge notifications.",
+        )
+    return result
