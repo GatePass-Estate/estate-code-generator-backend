@@ -53,6 +53,33 @@ from app.api.v1.endpoints.user_profile.user_documents import (
     router as userdocuments_router,
 )
 from app.api.v1.endpoints.user_profile.users import router as users_router
+from app.api.v1.endpoints.revenue.service_catalog import (
+    router as servicecatalog_router,
+)
+from app.api.v1.endpoints.revenue.ai_feature import (
+    router as aifeature_router,
+)
+from app.api.v1.endpoints.revenue.feature_unit_price import (
+    router as featureunitprice_router,
+)
+from app.api.v1.endpoints.revenue.subscription_tier import (
+    router as subscriptiontier_router,
+)
+from app.api.v1.endpoints.revenue.estate_subscription import (
+    router as estatesubscription_router,
+)
+from app.api.v1.endpoints.revenue.estate_ai_feature import (
+    router as estateaifeature_router,
+)
+from app.api.v1.endpoints.revenue.payment_checkout_session import (
+    router as paymentcheckoutsession_router,
+)
+from app.api.v1.endpoints.revenue.payment_event import (
+    router as paymentevent_router,
+)
+from app.api.v1.endpoints.revenue.payment_transaction import (
+    router as paymenttransaction_router,
+)
 
 api_router = APIRouter()
 
@@ -168,4 +195,58 @@ api_router.include_router(
     notifications_router,
     prefix="/notifications",
     tags=["Notifications"],
+)
+
+api_router.include_router(
+    servicecatalog_router,
+    prefix="/revenue/servicecatalog",
+    tags=["ServiceCatalog"],
+)
+
+api_router.include_router(
+    aifeature_router,
+    prefix="/revenue/aifeature",
+    tags=["AiFeature"],
+)
+
+api_router.include_router(
+    featureunitprice_router,
+    prefix="/revenue/featureunitprice",
+    tags=["FeatureUnitPrice"],
+)
+
+api_router.include_router(
+    subscriptiontier_router,
+    prefix="/revenue/subscriptiontier",
+    tags=["SubscriptionTier"],
+)
+
+api_router.include_router(
+    estatesubscription_router,
+    prefix="/revenue/estatesubscription",
+    tags=["EstateSubscription"],
+)
+
+api_router.include_router(
+    estateaifeature_router,
+    prefix="/revenue/estateaifeature",
+    tags=["EstateAiFeature"],
+)
+
+api_router.include_router(
+    paymentcheckoutsession_router,
+    prefix="/revenue/paymentcheckoutsession",
+    tags=["PaymentCheckoutSession"],
+)
+
+api_router.include_router(
+    paymentevent_router,
+    prefix="/revenue/paymentevent",
+    tags=["PaymentEvent"],
+)
+
+api_router.include_router(
+    paymenttransaction_router,
+    prefix="/revenue/paymenttransaction",
+    tags=["PaymentTransaction"],
 )

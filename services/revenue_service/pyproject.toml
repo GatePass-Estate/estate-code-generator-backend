@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "revenue-service"
+version = "0.1.0"
+description = "Revenue / billing BFF for GatePass"
+authors = ["GatePass <info@gatepassng.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+fastapi = "^0.138.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+pydantic = {extras = ["email"], version = "^2.11.4"}
+pydantic-settings = "^2.6.1"
+httpx = "^0.28.1"
+pyjwt = "^2.9.0"
+load-dotenv = "^0.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.4"
+pytest-asyncio = "^0.24.0"
+pytest-cov = "^6.0.0"
+pytest-mock = "^3.14.0"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
