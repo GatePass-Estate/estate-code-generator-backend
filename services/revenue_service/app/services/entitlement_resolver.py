@@ -7,11 +7,33 @@ from typing import Any, Mapping
 ACTIVE_STATUSES = frozenset({"active", "trialing"})
 
 
+def _access_entitlements(
+    access_tier: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Return Access-tier entitlements for fallback resolution.
+
+    Args:
+        access_tier: Seeded Access tier row, or None if not loaded.
+
+    Returns:
+        Entitlements map from the Access tier.
+
+    Raises:
+        ValueError: If access_tier is missing when fallback is required.
+    """
+    if not access_tier:
+        raise ValueError(
+            "access_tier is required when falling back to Access entitlements"
+        )
+    return dict(access_tier.get("entitlements") or {})
+
+
 def resolve_entitlements(
     *,
     subscription: Mapping[str, Any] | None,
     tier: Mapping[str, Any] | None,
-    access_tier: Mapping[str, Any],
+    access_tier: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Resolve effective entitlements using plan precedence:
@@ -28,21 +50,23 @@ def resolve_entitlements(
         subscription: Active estate subscription row, or None.
         tier: Subscription tier row for the subscription, or None.
         access_tier: Seeded Access tier used as the free fallback.
+            Required only when falling back; may be omitted for paid paths.
 
     Returns:
         Effective entitlements map for the estate.
-    """
-    access_ents = dict(access_tier.get("entitlements") or {})
 
+    Raises:
+        ValueError: If fallback is needed but access_tier was not provided.
+    """
     if not subscription:
-        return access_ents
+        return _access_entitlements(access_tier)
 
     status = (subscription.get("status") or "").lower()
     if status not in ACTIVE_STATUSES:
-        return access_ents
+        return _access_entitlements(access_tier)
 
     if not tier:
-        return access_ents
+        return _access_entitlements(access_tier)
 
     if tier.get("is_custom"):
         snapshot = subscription.get("entitlements")

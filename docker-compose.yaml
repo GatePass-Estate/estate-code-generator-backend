@@ -113,6 +113,7 @@ services:
       - cache-service
       - db-service
       - notification-service
+      - revenue-service
     build:
       context: .
       dockerfile: services/code_service/Dockerfile
@@ -169,6 +170,7 @@ services:
     container_name: ai-service
     depends_on:
       - db-service
+      - revenue-service
     build:
       context: .
       dockerfile: services/ai_service/Dockerfile

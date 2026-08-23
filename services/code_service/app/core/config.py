@@ -29,5 +29,9 @@ class Settings(BaseSettings):
     NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
     INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
 
+    REVENUE_SERVICE_URL: str = os.getenv(
+        "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
+    )
+
 
 settings = Settings()

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.entitlement_resolver import (
+    ACTIVE_STATUSES,
     check_service_entitlement,
     resolve_entitlements,
 )
@@ -33,24 +34,37 @@ class EntitlementService:
         """
         Load subscription, tier, and resolved entitlements for an estate.
 
+        Resolves by estate subscription first. Loads the Access tier only
+        when falling back (no subscription, inactive status, or missing tier).
+
         Args:
             estate_id: Estate UUID string.
 
         Returns:
             Context dict with subscription, tier, access_tier, entitlements.
+            access_tier is None when the paid path was used.
 
         Raises:
-            HTTPException: 500 if the Access tier is not seeded.
+            HTTPException: 500 if Access fallback is needed but not seeded.
         """
-        access_tier = await self.repo.get_tier_by_slug("access")
-        if not access_tier:
-            raise HTTPException(
-                status_code=500, detail="Access tier not seeded"
-            )
         subscription = await self.repo.get_active_subscription(estate_id)
         tier = None
         if subscription:
             tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
+
+        status = ((subscription or {}).get("status") or "").lower()
+        needs_access_fallback = (
+            not subscription or status not in ACTIVE_STATUSES or not tier
+        )
+
+        access_tier = None
+        if needs_access_fallback:
+            access_tier = await self.repo.get_tier_by_slug("access")
+            if not access_tier:
+                raise HTTPException(
+                    status_code=500, detail="Access tier not seeded"
+                )
+
         entitlements = resolve_entitlements(
             subscription=subscription,
             tier=tier,
@@ -95,7 +109,7 @@ class EntitlementService:
             **result,
             "covered_users": (sub or {}).get("covered_users"),
             "subscription_status": (sub or {}).get("status"),
-            "tier_slug": (tier or ctx["access_tier"]).get("slug"),
+            "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),
         }
 
     async def estate_entitlements(self, estate_id: str) -> dict[str, Any]:
@@ -116,7 +130,7 @@ class EntitlementService:
             "entitlements": ctx["entitlements"],
             "covered_users": (sub or {}).get("covered_users"),
             "subscription_status": (sub or {}).get("status"),
-            "tier_slug": (tier or ctx["access_tier"]).get("slug"),
+            "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),
         }
 
     async def check_ai_feature(

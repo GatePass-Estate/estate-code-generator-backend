@@ -96,6 +96,7 @@ class ResidentLogRepository:
         hashed_code: str,
         user_id: UUID4 | str | None = None,
         estate_id: UUID4 | str | None = None,
+        from_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
     ) -> dict:
@@ -107,6 +108,7 @@ class ResidentLogRepository:
             hashed_code: The specific access code to retrieve events for.
             user_id: Restrict to a single resident.
             estate_id: Restrict to a single estate.
+            from_date: Optional lower bound on validation timestamps.
             page: The page number to retrieve.
             limit: The number of items per page.
 
@@ -123,6 +125,8 @@ class ResidentLogRepository:
             params["user_id"] = str(user_id)
         if estate_id is not None:
             params["estate_id"] = str(estate_id)
+        if from_date is not None:
+            params["from_date"] = from_date.isoformat()
         return await self.ahttp_client.async_get(self.endpoint, params=params)
 
     async def earliest_access_code(self, hashed_code: str) -> dict | None:
