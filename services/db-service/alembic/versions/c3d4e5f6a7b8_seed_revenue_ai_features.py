@@ -23,15 +23,11 @@ depends_on: Union[str, Sequence[str], None] = None
 _FEATURE_KEYS = ("visitor_resident_anomaly_detection",)
 
 
-def _uid(name: str) -> uuid.UUID:
-    return uuid.uuid5(uuid.NAMESPACE_DNS, f"gatepass.revenue.{name}")
-
-
 def upgrade() -> None:
     """Insert minimal ai_feature seed rows."""
     ai_rows = [
         {
-            "id": _uid("ai.visitor_resident_anomaly_detection"),
+            "id": uuid.uuid4(),
             "feature_key": "visitor_resident_anomaly_detection",
             "name": "Visitor/Resident Anomaly Detection",
             "description": None,

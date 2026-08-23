@@ -27,15 +27,11 @@ _SERVICE_KEYS = (
 )
 
 
-def _uid(name: str) -> uuid.UUID:
-    return uuid.uuid5(uuid.NAMESPACE_DNS, f"gatepass.revenue.{name}")
-
-
 def upgrade() -> None:
     """Insert minimal service_catalog seed rows."""
     service_rows = [
         {
-            "id": _uid("service.administrative_fee"),
+            "id": uuid.uuid4(),
             "service_key": "administrative_fee",
             "name": "Administrative Fee",
             "description": None,
@@ -44,7 +40,7 @@ def upgrade() -> None:
             "is_deleted": False,
         },
         {
-            "id": _uid("service.visitor_log_retention_days"),
+            "id": uuid.uuid4(),
             "service_key": "visitor_log_retention_days",
             "name": "Visitor Log Retention Days",
             "description": None,
@@ -53,7 +49,7 @@ def upgrade() -> None:
             "is_deleted": False,
         },
         {
-            "id": _uid("service.resident_log_retention_days"),
+            "id": uuid.uuid4(),
             "service_key": "resident_log_retention_days",
             "name": "Resident Log Retention Days",
             "description": None,
