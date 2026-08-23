@@ -260,12 +260,24 @@ def upgrade() -> None:
             "covered_users", sa.Integer(), server_default="1", nullable=False
         ),
         sa.Column(
+            "over_cap_locked",
+            sa.Boolean(),
+            server_default="false",
+            nullable=False,
+        ),
+        sa.Column(
             "entitlements",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
         ),
         sa.Column("paystack_subscription_code", sa.String(), nullable=True),
         sa.Column("paystack_customer_code", sa.String(), nullable=True),
+        sa.Column(
+            "renew_attempt_count",
+            sa.Integer(),
+            server_default="0",
+            nullable=False,
+        ),
         sa.Column(
             "last_renewal_failure_at",
             sa.DateTime(timezone=True),
@@ -400,7 +412,11 @@ def upgrade() -> None:
             "metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
         sa.Column("paid_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("callback_url", sa.String(), nullable=True),
+        sa.Column("initiated_by_user_id", sa.UUID(), nullable=True),
         sa.ForeignKeyConstraint(["estate_id"], ["core.estates.id"]),
+        sa.ForeignKeyConstraint(["initiated_by_user_id"], ["core.users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("idempotency_key"),
         sa.UniqueConstraint("paystack_reference"),
