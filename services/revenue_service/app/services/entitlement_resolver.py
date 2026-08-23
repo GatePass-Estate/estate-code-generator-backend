@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
+# Billing statuses that may still carry paid entitlements until period_end.
+PAID_ACCESS_STATUSES = frozenset(
+    {"active", "trialing", "cancelled", "past_due"}
+)
+# Narrow set used by some callers that only want "healthy" billing rows.
 ACTIVE_STATUSES = frozenset({"active", "trialing"})
 
 
@@ -29,6 +35,20 @@ def _access_entitlements(
     return dict(access_tier.get("entitlements") or {})
 
 
+def _period_still_valid(subscription: Mapping[str, Any]) -> bool:
+    """Return True when period_end is missing or still in the future."""
+    raw = subscription.get("period_end")
+    if not raw:
+        return True
+    try:
+        end = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        return True
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return end > datetime.now(tz=timezone.utc)
+
+
 def resolve_entitlements(
     *,
     subscription: Mapping[str, Any] | None,
@@ -38,13 +58,13 @@ def resolve_entitlements(
     """
     Resolve effective entitlements using plan precedence:
 
-    1. If no subscription or status not in active/trialing → access tier.
+    1. If no subscription, status not in paid-access set, or period ended
+       → access tier.
     2. If tier is_custom → estate_subscription.entitlements snapshot.
     3. Else → subscription_tier.entitlements.
 
-    Note: past_due is intentionally treated as inactive for entitlement
-    resolution in Phase 1 (falls back to Access), matching the plan text
-    that only active/trialing keep paid entitlements.
+    ``cancelled`` and ``past_due`` keep paid entitlements until ``period_end``
+    (cancel turns off auto-renew but does not cut access early).
 
     Args:
         subscription: Active estate subscription row, or None.
@@ -62,7 +82,9 @@ def resolve_entitlements(
         return _access_entitlements(access_tier)
 
     status = (subscription.get("status") or "").lower()
-    if status not in ACTIVE_STATUSES:
+    if status not in PAID_ACCESS_STATUSES or not _period_still_valid(
+        subscription
+    ):
         return _access_entitlements(access_tier)
 
     if not tier:

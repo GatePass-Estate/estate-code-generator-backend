@@ -48,8 +48,48 @@ def test_expired_falls_back_to_access():
     assert result["visit_access_history"] == 7
 
 
-def test_past_due_falls_back_to_access():
-    sub = {"status": "past_due", "entitlements": None}
+def test_past_due_keeps_tier_until_period_end():
+    from datetime import datetime, timedelta, timezone
+
+    sub = {
+        "status": "past_due",
+        "entitlements": None,
+        "period_end": (
+            datetime.now(tz=timezone.utc) + timedelta(days=5)
+        ).isoformat(),
+    }
+    result = resolve_entitlements(
+        subscription=sub, tier=WATCH, access_tier=ACCESS
+    )
+    assert result["broadcasts_announcements"] is True
+
+
+def test_cancelled_keeps_tier_until_period_end():
+    from datetime import datetime, timedelta, timezone
+
+    sub = {
+        "status": "cancelled",
+        "entitlements": None,
+        "period_end": (
+            datetime.now(tz=timezone.utc) + timedelta(days=10)
+        ).isoformat(),
+    }
+    result = resolve_entitlements(
+        subscription=sub, tier=WATCH, access_tier=ACCESS
+    )
+    assert result["broadcasts_announcements"] is True
+
+
+def test_cancelled_after_period_end_falls_back():
+    from datetime import datetime, timedelta, timezone
+
+    sub = {
+        "status": "cancelled",
+        "entitlements": None,
+        "period_end": (
+            datetime.now(tz=timezone.utc) - timedelta(days=1)
+        ).isoformat(),
+    }
     result = resolve_entitlements(
         subscription=sub, tier=WATCH, access_tier=ACCESS
     )

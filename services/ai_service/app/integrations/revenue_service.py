@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 #: Seeded AI catalog key for visitor/resident anomaly detection.
 ANOMALY_FEATURE_KEY = "visitor_resident_anomaly_detection"
+#: Seeded AI catalog key for paid incident LLM summary.
+INCIDENT_SUMMARY_FEATURE_KEY = "incident_summary_basic"
 
 
 def _revenue_url(settings: Settings, path: str) -> str:

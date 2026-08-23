@@ -7,7 +7,14 @@ from fastapi.responses import JSONResponse
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.db_revenue import DbRevenueRepository
-from app.schemas.checkout import QuoteRequest, QuoteResponse
+from app.schemas.checkout import (
+    AiCheckoutRequest,
+    QuoteRequest,
+    QuoteResponse,
+    SeatApplyRequest,
+    SeatProrateRequest,
+    SeatProrateResponse,
+)
 from app.services.checkout_service import CheckoutService
 
 logger = logging.getLogger(__name__)
@@ -49,6 +56,69 @@ async def quote(
             request.period_months,
             request.ai_feature_keys,
             entitlement_keys,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post("/seats/prorate", response_model=SeatProrateResponse)
+async def prorate_seats(
+    request: SeatProrateRequest,
+    service: CheckoutService = Depends(get_service),
+):
+    """Quote mid-period seat add (remaining days × daily seat rate; AI excluded)."""
+    try:
+        return await service.prorate_seats(request.model_dump())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Seat prorate failed estate_id=%s seats_added=%s",
+            request.estate_id,
+            request.seats_added,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post("/seats/apply")
+async def apply_seats(
+    request: SeatApplyRequest,
+    service: CheckoutService = Depends(get_service),
+):
+    """Apply seat add after charge success (Paystack not required in Phase 1)."""
+    try:
+        return await service.apply_seat_add(request.model_dump())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Seat apply failed estate_id=%s seats_added=%s",
+            request.estate_id,
+            request.seats_added,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post("/ai/quote")
+async def quote_ai(
+    request: AiCheckoutRequest,
+    service: CheckoutService = Depends(get_service),
+):
+    """Quote standalone AI feature purchase (flat monthly × months)."""
+    try:
+        return await service.quote_ai_features(request.model_dump())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "AI quote failed estate_id=%s keys=%s",
+            request.estate_id,
+            request.ai_feature_keys,
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"

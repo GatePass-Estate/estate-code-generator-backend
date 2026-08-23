@@ -20,10 +20,13 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
-from app.core.exceptions import IncidentReportError
-from app.integrations.db_service_estate import fetch_estate_payment_active
+from app.core.exceptions import EntitlementDeniedError, IncidentReportError
 from app.integrations.db_service_incident_reports import (
     load_incident_reports_for_estate,
+)
+from app.integrations.revenue_service import (
+    INCIDENT_SUMMARY_FEATURE_KEY,
+    check_ai_feature_allowed,
 )
 from app.models.incident_schemas import (
     IncidentStructuredSummary,
@@ -69,8 +72,9 @@ class IncidentReportOrchestrator:
         """
         Load estate incidents once, then run topic modelling for all tiers.
 
-        Paid estates (``fetch_estate_payment_active``) also receive ``summary``
-        with EDA and LLM/heuristic fields; free estates get empty ``summary``.
+        Paid estates (``incident_summary_basic`` AI grant installed + allowed)
+        also receive ``summary`` with EDA and LLM/heuristic fields; free
+        estates get empty ``summary``.
         """
         records = await load_incident_reports_for_estate(
             client,
@@ -86,10 +90,15 @@ class IncidentReportOrchestrator:
                 status_code=422,
             )
 
-        payment_active = await fetch_estate_payment_active(
-            client, settings, estate_id
-        )
-
+        try:
+            payment_active = await check_ai_feature_allowed(
+                client,
+                settings,
+                estate_id=estate_id,
+                feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+            )
+        except EntitlementDeniedError:
+            payment_active = False
         modelled = discover_incident_topics(records, n_topics=n_topics)
         topics_section = {
             "method": modelled.get("method", "tfidf_nmf"),

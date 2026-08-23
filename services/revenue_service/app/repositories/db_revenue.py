@@ -139,7 +139,10 @@ class DbRevenueRepository:
 
     async def get_active_subscription(self, estate_id: str) -> dict | None:
         """
-        Return the first subscription in active/trialing/past_due for an estate.
+        Return the current subscription for entitlement / billing lookups.
+
+        Prefers healthy statuses, then cancelled/past_due (access may continue
+        until period_end).
 
         Args:
             estate_id: Estate UUID string.
@@ -147,7 +150,7 @@ class DbRevenueRepository:
         Returns:
             Subscription row, or None if none match.
         """
-        for status in ("active", "trialing", "past_due"):
+        for status in ("active", "trialing", "past_due", "cancelled"):
             items = await self._search(
                 self.estate_subscription,
                 {"estate_id": estate_id, "status": status, "limit": 1},
@@ -188,4 +191,57 @@ class DbRevenueRepository:
                 "is_active": True,
                 "limit": 500,
             },
+        )
+
+    async def create_estate_subscription(self, payload: dict) -> dict:
+        """POST a new estate_subscription row."""
+        response = await self.client.async_post(
+            self.estate_subscription, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to create estate_subscription"
+            )
+        return response
+
+    async def update_estate_subscription(
+        self, subscription_id: str, payload: dict
+    ) -> dict:
+        """PATCH an estate_subscription by id."""
+        url = f"{self.estate_subscription}/{subscription_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update estate_subscription"
+            )
+        return response
+
+    async def create_estate_ai_feature(self, payload: dict) -> dict:
+        """POST a new estate_ai_feature grant."""
+        response = await self.client.async_post(
+            self.estate_ai_feature, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to create estate_ai_feature"
+            )
+        return response
+
+    async def update_estate_ai_feature(
+        self, grant_id: str, payload: dict
+    ) -> dict:
+        """PATCH an estate_ai_feature grant by id."""
+        url = f"{self.estate_ai_feature}/{grant_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update estate_ai_feature"
+            )
+        return response
+
+    async def list_estate_subscriptions(self, estate_id: str) -> list[dict]:
+        """List subscriptions for an estate (any status)."""
+        return await self._search(
+            self.estate_subscription,
+            {"estate_id": estate_id, "limit": 50},
         )

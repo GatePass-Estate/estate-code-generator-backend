@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.config import settings
+from app.libs.period_dating import compute_period_end
 from app.repositories.db_revenue import DbRevenueRepository
+from app.services.ai_grant_sync import provision_standalone_ai_grant
 from app.services.entitlement_resolver import (
-    ACTIVE_STATUSES,
+    PAID_ACCESS_STATUSES,
     check_service_entitlement,
     resolve_entitlements,
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_ACTIVE_USERS_KEY = "max_active_users"
 
 
 class EntitlementService:
@@ -54,7 +59,7 @@ class EntitlementService:
 
         status = ((subscription or {}).get("status") or "").lower()
         needs_access_fallback = (
-            not subscription or status not in ACTIVE_STATUSES or not tier
+            not subscription or status not in PAID_ACCESS_STATUSES or not tier
         )
 
         access_tier = None
@@ -81,6 +86,9 @@ class EntitlementService:
         """
         Check whether an estate may use a catalog service_key.
 
+        ``max_active_users`` uses ``covered_users`` on the subscription as the
+        seat cap when present.
+
         Args:
             estate_id: Estate UUID string.
             service_key: Service catalog key to evaluate.
@@ -98,11 +106,27 @@ class EntitlementService:
             )
         ctx = await self._load_context(estate_id)
         limit_type = catalog[service_key].get("limit_type")
-        result = check_service_entitlement(
-            ctx["entitlements"], service_key, limit_type
-        )
         sub = ctx["subscription"]
         tier = ctx["tier"]
+
+        if service_key == MAX_ACTIVE_USERS_KEY and sub is not None:
+            covered = sub.get("covered_users")
+            if covered is not None:
+                limit = int(covered)
+                result = {
+                    "allowed": limit > 0,
+                    "limit": limit,
+                    "limit_type": limit_type or "count",
+                }
+            else:
+                result = check_service_entitlement(
+                    ctx["entitlements"], service_key, limit_type
+                )
+        else:
+            result = check_service_entitlement(
+                ctx["entitlements"], service_key, limit_type
+            )
+
         return {
             "estate_id": estate_id,
             "service_key": service_key,
@@ -241,3 +265,161 @@ class EntitlementService:
                 }
             )
         return {"estate_id": estate_id, "features": features}
+
+    async def install_ai_feature(
+        self, estate_id: str, feature_key: str
+    ) -> dict[str, Any]:
+        """
+        Set ``is_installed=true`` for an AI grant (create row if missing).
+
+        Does not change billing ``status``, ``expires_at``, or payment linkage.
+        """
+        catalog = await self.repo.get_ai_feature_map()
+        feature = catalog.get(feature_key)
+        if not feature:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown feature_key '{feature_key}'"
+            )
+        feature_id = str(feature["id"])
+        is_free = bool(feature.get("is_free"))
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant = next(
+            (g for g in grants if str(g.get("ai_feature_id")) == feature_id),
+            None,
+        )
+        if grant:
+            updated = await self.repo.update_estate_ai_feature(
+                str(grant["id"]), {"is_installed": True}
+            )
+        else:
+            updated = await self.repo.create_estate_ai_feature(
+                {
+                    "estate_id": estate_id,
+                    "ai_feature_id": feature_id,
+                    "source": "free_install" if is_free else "admin_grant",
+                    "is_installed": True,
+                    "status": "active",
+                    "is_free": is_free,
+                    "auto_renew": False,
+                    "starts_at": datetime.now(tz=timezone.utc).isoformat(),
+                }
+            )
+        return {
+            "estate_id": estate_id,
+            "feature_key": feature_key,
+            "is_installed": True,
+            "grant": updated,
+        }
+
+    async def uninstall_ai_feature(
+        self, estate_id: str, feature_key: str
+    ) -> dict[str, Any]:
+        """
+        Set ``is_installed=false`` only; preserve expiry and billing fields.
+        """
+        catalog = await self.repo.get_ai_feature_map()
+        feature = catalog.get(feature_key)
+        if not feature:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown feature_key '{feature_key}'"
+            )
+        feature_id = str(feature["id"])
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant = next(
+            (g for g in grants if str(g.get("ai_feature_id")) == feature_id),
+            None,
+        )
+        if not grant:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No AI grant for feature_key '{feature_key}'",
+            )
+        updated = await self.repo.update_estate_ai_feature(
+            str(grant["id"]), {"is_installed": False}
+        )
+        return {
+            "estate_id": estate_id,
+            "feature_key": feature_key,
+            "is_installed": False,
+            "grant": updated,
+        }
+
+    async def activate_ai_features(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Provision standalone AI grants after charge success (no Paystack).
+
+        Extends ``expires_at`` by period_months using dating rules when a
+        prior paid grant exists.
+        """
+        estate_id = request["estate_id"]
+        feature_keys = list(request.get("ai_feature_keys") or [])
+        if not feature_keys:
+            raise HTTPException(
+                status_code=400, detail="ai_feature_keys required"
+            )
+        period_months = int(request.get("period_months") or 1)
+        paid_at_raw = request.get("paid_at")
+        if paid_at_raw:
+            paid_at = datetime.fromisoformat(
+                str(paid_at_raw).replace("Z", "+00:00")
+            )
+        else:
+            paid_at = datetime.now(tz=timezone.utc)
+        if paid_at.tzinfo is None:
+            paid_at = paid_at.replace(tzinfo=timezone.utc)
+
+        duration = timedelta(days=30 * period_months)
+        grants_out: list[dict] = []
+        existing = await self.repo.list_estate_ai_features(estate_id)
+        catalog = await self.repo.get_ai_feature_map()
+
+        for feature_key in feature_keys:
+            feature = catalog.get(feature_key)
+            if not feature:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Unknown feature_key '{feature_key}'",
+                )
+            feature_id = str(feature["id"])
+            prior = next(
+                (
+                    g
+                    for g in existing
+                    if str(g.get("ai_feature_id")) == feature_id
+                ),
+                None,
+            )
+            old_end = None
+            if prior and prior.get("expires_at"):
+                old_end = datetime.fromisoformat(
+                    str(prior["expires_at"]).replace("Z", "+00:00")
+                )
+            period_end = compute_period_end(
+                paid_at=paid_at,
+                duration=duration,
+                old_period_end=old_end,
+                grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
+            )
+            grant = await provision_standalone_ai_grant(
+                self.repo,
+                estate_id=estate_id,
+                feature=feature,
+                period_end=period_end,
+                existing_grant=prior,
+            )
+            grants_out.append(
+                {
+                    "feature_key": feature_key,
+                    "grant": grant,
+                    "expires_at": period_end.isoformat(),
+                }
+            )
+
+        return {
+            "estate_id": estate_id,
+            "features": grants_out,
+            "status": "activated",
+            "paystack": "stubbed",
+        }

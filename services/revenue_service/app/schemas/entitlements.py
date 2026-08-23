@@ -45,3 +45,11 @@ class EstateAiFeaturesResponse(BaseModel):
 
     estate_id: str
     features: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AiActivateRequest(BaseModel):
+    """Body for standalone AI grant activation after charge success."""
+
+    ai_feature_keys: list[str] = Field(..., min_length=1)
+    period_months: int = Field(1, ge=1)
+    paid_at: str | None = None

@@ -1,44 +1,33 @@
-"""Estate subscription lookups."""
+"""Estate subscription lookups and lifecycle mutations."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 from fastapi import HTTPException
 
+from app.core.config import settings
+from app.libs.period_dating import compute_period_end
 from app.repositories.db_revenue import DbRevenueRepository
+from app.services.ai_grant_sync import (
+    extend_subscription_ai_grants,
+    sync_tier_ai_grants,
+)
 from app.services.entitlement_resolver import (
-    ACTIVE_STATUSES,
+    PAID_ACCESS_STATUSES,
     resolve_entitlements,
 )
 
 
 class SubscriptionService:
-    """Reads estate subscriptions and resolves effective entitlements."""
+    """Reads and mutates estate subscriptions and linked AI grants."""
 
     def __init__(self, repo: DbRevenueRepository):
-        """
-        Bind the db-service revenue repository.
-
-        Args:
-            repo: Repository used for subscription and tier lookups.
-        """
         self.repo = repo
 
     async def get_estate_subscription(self, estate_id: str) -> dict:
-        """
-        Return subscription, tier, and effective entitlements for an estate.
-
-        Resolves by estate subscription first. Loads the Access tier only
-        when falling back (no subscription, inactive status, or missing tier).
-
-        Args:
-            estate_id: Estate UUID string.
-
-        Returns:
-            Payload with subscription, tier, and effective_entitlements.
-
-        Raises:
-            HTTPException: 500 if Access fallback is needed but not seeded.
-        """
+        """Return subscription, tier, and effective entitlements for an estate."""
         subscription = await self.repo.get_active_subscription(estate_id)
         tier = None
         if subscription:
@@ -46,7 +35,7 @@ class SubscriptionService:
 
         status = ((subscription or {}).get("status") or "").lower()
         needs_access_fallback = (
-            not subscription or status not in ACTIVE_STATUSES or not tier
+            not subscription or status not in PAID_ACCESS_STATUSES or not tier
         )
 
         access_tier = None
@@ -67,4 +56,209 @@ class SubscriptionService:
             "subscription": subscription,
             "tier": tier,
             "effective_entitlements": entitlements,
+        }
+
+    async def _latest_subscription(self, estate_id: str) -> dict | None:
+        items = await self.repo.list_estate_subscriptions(estate_id)
+        if not items:
+            return None
+        # Prefer active/trialing/past_due, else most recently created
+        for status in (
+            "active",
+            "trialing",
+            "past_due",
+            "cancelled",
+            "expired",
+        ):
+            for item in items:
+                if (item.get("status") or "").lower() == status:
+                    return item
+        return items[0]
+
+    async def activate(self, request: dict[str, Any]) -> dict:
+        """
+        Activate (or replace) a paid subscription after charge success.
+
+        Writes custom entitlements snapshot when the tier is custom.
+        Syncs tier AI grants onto estate_ai_feature.
+        """
+        estate_id = request["estate_id"]
+        tier_slug = request["tier_slug"]
+        covered_users = int(request["covered_users"])
+        period_months = int(request["period_months"])
+        entitlements = request.get("entitlements")
+        ai_feature_keys = list(request.get("ai_feature_keys") or [])
+
+        tier = await self.repo.get_tier_by_slug(tier_slug)
+        if not tier:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown tier '{tier_slug}'"
+            )
+
+        if tier.get("is_custom"):
+            if entitlements is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Custom tier requires entitlements snapshot",
+                )
+            snapshot = dict(entitlements)
+            # Seat purchase is source of truth for max_active_users.
+            snapshot["max_active_users"] = covered_users
+        else:
+            snapshot = None
+            entitlements = tier.get("entitlements") or {}
+
+        paid_at_raw = request.get("paid_at")
+        if paid_at_raw:
+            paid_at = datetime.fromisoformat(
+                str(paid_at_raw).replace("Z", "+00:00")
+            )
+        else:
+            paid_at = datetime.now(tz=timezone.utc)
+        if paid_at.tzinfo is None:
+            paid_at = paid_at.replace(tzinfo=timezone.utc)
+
+        duration = timedelta(days=30 * period_months)
+        period_end = compute_period_end(
+            paid_at=paid_at,
+            duration=duration,
+            old_period_end=None,
+            grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
+        )
+
+        existing = await self.repo.get_active_subscription(estate_id)
+        payload = {
+            "estate_id": estate_id,
+            "tier_id": tier["id"],
+            "status": "active",
+            "period_start": paid_at.isoformat(),
+            "period_end": period_end.isoformat(),
+            "auto_renew": True,
+            "covered_users": covered_users,
+            "entitlements": snapshot,
+            "cancelled_at": None,
+        }
+
+        if existing:
+            subscription = await self.repo.update_estate_subscription(
+                str(existing["id"]), payload
+            )
+            subscription_id = str(existing["id"])
+        else:
+            created = await self.repo.create_estate_subscription(payload)
+            subscription_id = str(created["id"])
+            subscription = created
+
+        await sync_tier_ai_grants(
+            self.repo,
+            estate_id=estate_id,
+            subscription_id=subscription_id,
+            tier=tier,
+            period_end=period_end,
+            extra_feature_keys=ai_feature_keys,
+        )
+        return {
+            "estate_id": estate_id,
+            "subscription_id": subscription_id,
+            "subscription": subscription,
+            "tier_slug": tier_slug,
+            "entitlements_snapshot": snapshot,
+            "effective_entitlements": entitlements
+            if snapshot is None
+            else snapshot,
+            "period_end": period_end.isoformat(),
+        }
+
+    async def renew(
+        self,
+        estate_id: str,
+        *,
+        period_months: int = 1,
+        paid_at: datetime | None = None,
+    ) -> dict:
+        """Renew subscription using dating rules; extend linked paid AI grants."""
+        subscription = await self._latest_subscription(estate_id)
+        if not subscription:
+            raise HTTPException(
+                status_code=404, detail="No subscription found for estate"
+            )
+
+        paid = paid_at or datetime.now(tz=timezone.utc)
+        if paid.tzinfo is None:
+            paid = paid.replace(tzinfo=timezone.utc)
+
+        old_end_raw = subscription.get("period_end")
+        old_end = None
+        if old_end_raw:
+            old_end = datetime.fromisoformat(
+                str(old_end_raw).replace("Z", "+00:00")
+            )
+
+        duration = timedelta(days=30 * period_months)
+        new_end = compute_period_end(
+            paid_at=paid,
+            duration=duration,
+            old_period_end=old_end,
+            grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
+        )
+
+        updated = await self.repo.update_estate_subscription(
+            str(subscription["id"]),
+            {
+                "status": "active",
+                "period_end": new_end.isoformat(),
+                "auto_renew": True,
+                "cancelled_at": None,
+            },
+        )
+        await extend_subscription_ai_grants(
+            self.repo,
+            estate_id=estate_id,
+            subscription_id=str(subscription["id"]),
+            new_period_end=new_end,
+        )
+        return {
+            "estate_id": estate_id,
+            "subscription": updated,
+            "period_end": new_end.isoformat(),
+        }
+
+    async def cancel(self, estate_id: str) -> dict:
+        """Cancel auto-renew; keep period_end / AI expires_at unchanged."""
+        subscription = await self.repo.get_active_subscription(estate_id)
+        if not subscription:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        now = datetime.now(tz=timezone.utc)
+        updated = await self.repo.update_estate_subscription(
+            str(subscription["id"]),
+            {
+                "auto_renew": False,
+                "status": "cancelled",
+                "cancelled_at": now.isoformat(),
+            },
+        )
+        return {"estate_id": estate_id, "subscription": updated}
+
+    async def apply_seat_add(self, estate_id: str, seats_added: int) -> dict:
+        """Bump covered_users after a successful mid-period seat purchase."""
+        if seats_added < 1:
+            raise HTTPException(
+                status_code=400, detail="seats_added must be >= 1"
+            )
+        subscription = await self.repo.get_active_subscription(estate_id)
+        if not subscription:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        current = int(subscription.get("covered_users") or 0)
+        updated = await self.repo.update_estate_subscription(
+            str(subscription["id"]),
+            {"covered_users": current + seats_added},
+        )
+        return {
+            "estate_id": estate_id,
+            "covered_users": current + seats_added,
+            "subscription": updated,
         }

@@ -143,6 +143,7 @@ services:
     depends_on:
       - db-service
       - notification-service
+      - revenue-service
     build:
       context: .
       dockerfile: services/user_profile_service/Dockerfile

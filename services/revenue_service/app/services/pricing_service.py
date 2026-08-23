@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
@@ -10,15 +11,7 @@ ADMIN_FEE_KEY = "administrative_fee"
 
 
 def _to_decimal(value: Any) -> Decimal:
-    """
-    Coerce a numeric-like value to Decimal.
-
-    Args:
-        value: Decimal, int, float, or string amount.
-
-    Returns:
-        Decimal representation of value.
-    """
+    """Coerce a numeric-like value to Decimal."""
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
@@ -28,23 +21,7 @@ def compute_price_per_seat(
     feature_prices: Mapping[str, Any],
     included_service_keys: Iterable[str],
 ) -> dict[str, Any]:
-    """
-    Compute seat price from included product features plus admin fee.
-
-    price_per_seat = sum(product features excluding administrative_fee)
-                     + administrative_fee
-
-    Args:
-        feature_prices: Map of service_key -> unit price.
-        included_service_keys: Service keys included in the quote.
-
-    Returns:
-        Breakdown with sum_of_included_features, administrative_fee,
-        price_per_seat, and line_items.
-
-    Raises:
-        ValueError: If a required service_key has no unit price.
-    """
+    """Compute seat price from included product features plus admin fee."""
     included = set(included_service_keys)
     line_items: list[dict[str, Any]] = []
     product_sum = Decimal("0")
@@ -75,9 +52,6 @@ def compute_price_per_seat(
                 }
             )
 
-    # Admin fee always applied when priced (even if not in included keys,
-    # callers should include it for paid tiers). If present in prices map
-    # but not included, do not add.
     price_per_seat = product_sum + admin_fee
     return {
         "sum_of_included_features": product_sum,
@@ -91,19 +65,7 @@ def compute_ai_monthly(
     ai_prices: Mapping[str, Any],
     ai_feature_keys: Iterable[str],
 ) -> dict[str, Any]:
-    """
-    Sum flat monthly AI feature prices (not × seats).
-
-    Args:
-        ai_prices: Map of AI feature_key -> monthly unit price.
-        ai_feature_keys: AI feature keys included in the quote.
-
-    Returns:
-        Dict with ai_price_per_month and line_items.
-
-    Raises:
-        ValueError: If a required AI feature_key has no unit price.
-    """
+    """Sum flat monthly AI feature prices (not × seats)."""
     total = Decimal("0")
     line_items: list[dict[str, Any]] = []
     for key in sorted(set(ai_feature_keys)):
@@ -124,23 +86,7 @@ def compute_client_total(
     ai_price_per_month: Any,
     period_months: int,
 ) -> dict[str, Any]:
-    """
-    Compute the client total for a billing period.
-
-    client_total = (price_per_seat * seats + ai_monthly) * months
-
-    Args:
-        price_per_seat: Per-seat monthly price.
-        seats: Number of covered users / seats.
-        ai_price_per_month: Flat AI monthly add-on total.
-        period_months: Billing period length in months.
-
-    Returns:
-        Totals breakdown including monthly_subtotal and client_total.
-
-    Raises:
-        ValueError: If seats < 0 or period_months < 1.
-    """
+    """client_total = (price_per_seat * seats + ai_monthly) * months"""
     if seats < 0:
         raise ValueError("seats must be >= 0")
     if period_months < 1:
@@ -172,25 +118,7 @@ def quote_pricing(
     currency_code: str,
     country_code: str,
 ) -> dict[str, Any]:
-    """
-    Build a full quote breakdown from seat and AI pricing inputs.
-
-    Args:
-        service_prices: Map of service_key -> unit price.
-        ai_prices: Map of AI feature_key -> monthly unit price.
-        included_service_keys: Product service keys included in the seat price.
-        ai_feature_keys: AI features included as flat monthly add-ons.
-        seats: Number of covered users / seats.
-        period_months: Billing period length in months.
-        currency_code: Currency for the quote (e.g. NGN).
-        country_code: Country used to select prices.
-
-    Returns:
-        Full quote dict with totals, fees, currency, and line_items.
-
-    Raises:
-        ValueError: If pricing inputs are invalid or prices are missing.
-    """
+    """Build a full quote breakdown from seat and AI pricing inputs."""
     seat = compute_price_per_seat(service_prices, included_service_keys)
     ai = compute_ai_monthly(ai_prices, ai_feature_keys)
     totals = compute_client_total(
@@ -206,4 +134,62 @@ def quote_pricing(
         "currency_code": currency_code,
         "country_code": country_code,
         "line_items": seat["line_items"] + ai["line_items"],
+    }
+
+
+def compute_seat_proration(
+    *,
+    period_seat_price: Any,
+    seats_added: int,
+    period_start: datetime,
+    period_end: datetime,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """
+    Prorate a mid-period seat add for the remainder of the billing period.
+
+    ``period_seat_price`` is the full-period price for one seat
+    (``price_per_seat × period_months``). AI flats are not included.
+    """
+    if seats_added < 1:
+        raise ValueError("seats_added must be >= 1")
+
+    start = period_start
+    end = period_end
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    else:
+        start = start.astimezone(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    else:
+        end = end.astimezone(timezone.utc)
+    now = as_of or datetime.now(tz=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    period_days = (end.date() - start.date()).days + 1
+    if period_days < 1:
+        raise ValueError("period_end must be on or after period_start")
+
+    remaining_days = (end.date() - now.date()).days + 1
+    if remaining_days < 0:
+        remaining_days = 0
+    if remaining_days > period_days:
+        remaining_days = period_days
+
+    psp = _to_decimal(period_seat_price)
+    daily_seat_rate = psp / Decimal(period_days)
+    prorated_charge = (
+        daily_seat_rate * Decimal(remaining_days) * Decimal(seats_added)
+    )
+    return {
+        "period_seat_price": psp,
+        "seats_added": seats_added,
+        "period_days": period_days,
+        "remaining_days": remaining_days,
+        "daily_seat_rate": daily_seat_rate,
+        "prorated_charge": prorated_charge,
     }
