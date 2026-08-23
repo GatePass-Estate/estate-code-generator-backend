@@ -178,7 +178,7 @@ class SpatialAnomalyOrchestrator:
             "is_anomalous": focal_is_anomalous,
             "transparency": transparency.model_dump(),
         }
-        await upsert_focal_engineered_features(
+        prediction_result_id = await upsert_focal_engineered_features(
             client,
             settings,
             code_validation=code_validation,
@@ -188,6 +188,7 @@ class SpatialAnomalyOrchestrator:
             is_anomalous=focal_is_anomalous,
             prediction_result=out,
         )
+        out["prediction_result_id"] = prediction_result_id
         return out
 
 

@@ -54,7 +54,10 @@ class CodeService:
         )
 
     async def validate(
-        self, code: str, user_details: dict | None = None
+        self,
+        code: str,
+        user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> GetResponseResident | GetResponseVisitor:
         """
         Get an item by ID.
@@ -62,11 +65,14 @@ class CodeService:
         Arguments:
             code: The generated access code to be validated.
             user_details: The details of the user making the request.
+            auth_token: Bearer token forwarded to ai-service for anomaly check.
 
         Returns:
             A GetResponse object after retrieving the item by id.
         """
-        return await self.repository.get(code=code, user_details=user_details)
+        return await self.repository.get(
+            code=code, user_details=user_details, auth_token=auth_token
+        )
 
     async def get_items_by_user(
         self,

@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import UUID4
 
 from app.core.exceptions import NotFoundError, ScheduleError
@@ -27,6 +28,7 @@ from app.services.code_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_bearer = HTTPBearer()
 
 
 def get_service(
@@ -126,16 +128,24 @@ async def generate(
         404: {"description": "Item not found"},
         200: {"description": "Retrieved the item"},
     },
-    description="Get an item by ID",
+    description=(
+        "Validate an access code at the gate. Persists a visitor/resident "
+        "log entry and best-effort triggers spatial anomaly analysis."
+    ),
 )
 async def validate(
     code: str,
     background_tasks: BackgroundTasks,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> GetResponseResident | GetResponseVisitor:
     """
-    Get an item by its unique ID from the database.
+    Validate an access code (security scan at the gate).
+
+    On success this persists a visitor or resident log row, then triggers
+    spatial anomaly analysis best-effort. Anomaly runs only here because a
+    real visit/access event was recorded — listing codes does not.
 
     Arguments:
         code: The generated access code to be validated.
@@ -168,7 +178,11 @@ async def validate(
         )
 
     try:
-        result = await service.validate(code=code, user_details=user_details)
+        result = await service.validate(
+            code=code,
+            user_details=user_details,
+            auth_token=credentials.credentials,
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
     except Exception as e:
@@ -224,7 +238,10 @@ async def validate(
         404: {"description": "Item not found"},
         200: {"description": "Retrieved items"},
     },
-    description="Get items by user ID",
+    description=(
+        "List access codes for a user. Read-only: does not persist logs or "
+        "trigger spatial anomaly analysis (that happens on validate only)."
+    ),
 )
 async def get_all_codes_by_user(
     user_id: UUID4,
@@ -234,17 +251,21 @@ async def get_all_codes_by_user(
     current_user: dict = Depends(get_current_user),
 ) -> ListResponse | GetResponseResident:
     """
-    Get all items linked to a given user ID.
+    List access codes linked to a user (management / history view).
+
+    This is a read-only listing. It does not write visitor/resident log rows
+    and therefore does not trigger spatial anomaly analysis — anomaly is
+    tied to gate validation (``GET /{code}``), which records a real visit.
 
     Arguments:
         user_id: The user ID to be retrieved for.
-        recevier: The status of the code owner (visitor and resident)
+        receiver: The status of the code owner (visitor and resident)
         upcoming: When true, return only visitor codes whose validity period
             has not started yet. Only valid with receiver=visitor.
 
     Returns:
         A List response model containing reference to the retrieved items if
-        the recever is 'visitor', or a single item if the receiver is
+        the receiver is 'visitor', or a single item if the receiver is
         'resident'.
 
     Raises:

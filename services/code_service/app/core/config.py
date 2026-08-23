@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     REVENUE_SERVICE_URL: str = os.getenv(
         "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
     )
+    AI_SERVICE_URL: str = os.getenv(
+        "AI_SERVICE_URL", "http://ai-service:9036/"
+    )
 
 
 settings = Settings()

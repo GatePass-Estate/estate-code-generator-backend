@@ -56,4 +56,10 @@ class SpatialAnalyzeResponse(BaseModel):
             "threshold (same flag persisted on the focal feature-store row)."
         ),
     )
+    prediction_result_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of the persisted core.predictionresult row for this analyze."
+        ),
+    )
     transparency: AnalysisTransparency

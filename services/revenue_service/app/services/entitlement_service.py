@@ -139,8 +139,9 @@ class EntitlementService:
         """
         Check whether an estate may use an AI feature grant.
 
-        Free grants skip expiry; paid grants require active status and
-        a non-expired expires_at when present.
+        Free grants skip expiry. Paid grants stay allowed while installed
+        until ``expires_at`` (or status ``expired``), including
+        ``cancelled`` and ``past_due``. Uninstalled grants are always denied.
 
         Args:
             estate_id: Estate UUID string.
@@ -182,12 +183,14 @@ class EntitlementService:
         status = (grant.get("status") or "").lower()
         expires_at = grant.get("expires_at")
 
-        # Free grants skip expiry; paid grants require active + not expired.
         if not is_installed:
             allowed = False
         elif is_free:
             allowed = True
+        elif status == "expired":
+            allowed = False
         else:
+            # active / cancelled / past_due: allowed until expires_at.
             not_expired = True
             if expires_at:
                 try:
@@ -197,7 +200,7 @@ class EntitlementService:
                     not_expired = exp > datetime.now(tz=timezone.utc)
                 except Exception:
                     not_expired = True
-            allowed = status == "active" and not_expired
+            allowed = not_expired
 
         return {
             "estate_id": estate_id,

@@ -30,5 +30,7 @@ class LogFeatureEngineeringService:
         return BatchLookupResponse(items=items)
 
     async def upsert(self, request: UpsertRequest) -> UpsertResponse:
-        row_id = await self.repository.upsert(request)
-        return UpsertResponse(id=row_id)
+        row_id, prediction_result_id = await self.repository.upsert(request)
+        return UpsertResponse(
+            id=row_id, prediction_result_id=prediction_result_id
+        )

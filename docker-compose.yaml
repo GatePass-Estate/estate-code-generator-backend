@@ -114,6 +114,7 @@ services:
       - db-service
       - notification-service
       - revenue-service
+      - ai-service
     build:
       context: .
       dockerfile: services/code_service/Dockerfile
