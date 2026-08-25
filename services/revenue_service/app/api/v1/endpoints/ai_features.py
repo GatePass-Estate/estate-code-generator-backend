@@ -62,7 +62,7 @@ async def list_ai_features(
     estate_id: str,
     service: EntitlementService = Depends(get_service),
 ):
-    """List AI feature grants for an estate."""
+    """List AI feature grants for an estate (orphans marked catalog_deleted)."""
     try:
         return await service.list_ai_features(estate_id)
     except HTTPException:

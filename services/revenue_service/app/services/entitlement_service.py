@@ -263,6 +263,10 @@ class EntitlementService:
         """
         List AI feature grants for an estate with resolved feature_keys.
 
+        Grants whose catalog row is gone are still returned with
+        ``feature_key=null`` and ``catalog_deleted=true`` so callers can
+        distinguish orphans from a mapping bug and decide how to manage them.
+
         Args:
             estate_id: Estate UUID string.
 
@@ -276,14 +280,22 @@ class EntitlementService:
         for g in grants:
             fid = str(g.get("ai_feature_id"))
             key = id_to_key.get(fid)
+            catalog_deleted = key is None
             features.append(
                 {
                     **g,
                     "feature_key": key,
+                    "catalog_deleted": catalog_deleted,
                     "is_free": bool(
                         g.get("is_free")
                         if g.get("is_free") is not None
-                        else catalog.get(key or "", {}).get("is_free", False)
+                        else (
+                            False
+                            if catalog_deleted
+                            else catalog.get(key or "", {}).get(
+                                "is_free", False
+                            )
+                        )
                     ),
                 }
             )
