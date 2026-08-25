@@ -83,7 +83,7 @@ async def install_ai_feature(
     request: AiFeatureKeyRequest,
     service: EntitlementService = Depends(get_service),
 ):
-    """Set is_installed=true for a feature (create grant row if needed)."""
+    """Set is_installed=true; create grant only for free features."""
     try:
         return await service.install_ai_feature(estate_id, request.feature_key)
     except HTTPException:

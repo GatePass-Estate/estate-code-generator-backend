@@ -293,9 +293,12 @@ class EntitlementService:
         self, estate_id: str, feature_key: str
     ) -> dict[str, Any]:
         """
-        Set ``is_installed=true`` for an AI grant (create row if missing).
+        Set ``is_installed=true`` for an AI grant.
 
-        Does not change billing ``status``, ``expires_at``, or payment linkage.
+        Free features may create a grant row on install. Paid features require
+        an existing purchased grant (from checkout/activate); otherwise 403.
+        Does not change billing ``status``, ``expires_at``, or payment linkage
+        when updating an existing row.
         """
         catalog = await self.repo.get_ai_feature_map()
         feature = catalog.get(feature_key)
@@ -314,18 +317,26 @@ class EntitlementService:
             updated = await self.repo.update_estate_ai_feature(
                 str(grant["id"]), {"is_installed": True}
             )
-        else:
+        elif is_free:
             updated = await self.repo.create_estate_ai_feature(
                 {
                     "estate_id": estate_id,
                     "ai_feature_id": feature_id,
-                    "source": "free_install" if is_free else "admin_grant",
+                    "source": "free_install",
                     "is_installed": True,
                     "status": "active",
-                    "is_free": is_free,
+                    "is_free": True,
                     "auto_renew": False,
                     "starts_at": datetime.now(tz=timezone.utc).isoformat(),
                 }
+            )
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Feature '{feature_key}' has not been purchased; "
+                    "complete checkout before installing"
+                ),
             )
         return {
             "estate_id": estate_id,
