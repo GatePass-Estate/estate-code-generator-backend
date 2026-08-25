@@ -16,9 +16,9 @@ from app.libs.period_dating import (
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import provision_standalone_ai_grant
 from app.services.entitlement_resolver import (
-    PAID_ACCESS_STATUSES,
     check_service_entitlement,
     resolve_entitlements,
+    uses_access_fallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,10 +60,7 @@ class EntitlementService:
         if subscription:
             tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
 
-        status = ((subscription or {}).get("status") or "").lower()
-        needs_access_fallback = (
-            not subscription or status not in PAID_ACCESS_STATUSES or not tier
-        )
+        needs_access_fallback = uses_access_fallback(subscription, tier)
 
         access_tier = None
         if needs_access_fallback:
@@ -83,6 +80,7 @@ class EntitlementService:
             "tier": tier,
             "access_tier": access_tier,
             "entitlements": entitlements,
+            "uses_access_fallback": needs_access_fallback,
         }
 
     async def check(self, estate_id: str, service_key: str) -> dict[str, Any]:
@@ -91,6 +89,10 @@ class EntitlementService:
 
         ``max_active_users`` uses ``covered_users`` on the subscription as the
         seat cap when present.
+
+        When the estate has fallen back to Access and the subscription has
+        ``over_cap_locked`` (set by the expiry sweep), returns a locked denial
+        so UPS can block non-primary-admin logins.
 
         Args:
             estate_id: Estate UUID string.
@@ -111,6 +113,24 @@ class EntitlementService:
         limit_type = catalog[service_key].get("limit_type")
         sub = ctx["subscription"]
         tier = ctx["tier"]
+
+        if (
+            ctx.get("uses_access_fallback")
+            and sub is not None
+            and bool(sub.get("over_cap_locked"))
+        ):
+            return {
+                "estate_id": estate_id,
+                "service_key": service_key,
+                "allowed": False,
+                "locked": True,
+                "reason": "over_cap",
+                "limit": None,
+                "limit_type": limit_type,
+                "covered_users": sub.get("covered_users"),
+                "subscription_status": sub.get("status"),
+                "tier_slug": (ctx.get("access_tier") or {}).get("slug"),
+            }
 
         if service_key == MAX_ACTIVE_USERS_KEY and sub is not None:
             covered = sub.get("covered_users")
@@ -134,6 +154,8 @@ class EntitlementService:
             "estate_id": estate_id,
             "service_key": service_key,
             **result,
+            "locked": False,
+            "reason": None,
             "covered_users": (sub or {}).get("covered_users"),
             "subscription_status": (sub or {}).get("status"),
             "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),

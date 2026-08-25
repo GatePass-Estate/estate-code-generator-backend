@@ -35,7 +35,7 @@ def _access_entitlements(
     return dict(access_tier.get("entitlements") or {})
 
 
-def _period_still_valid(subscription: Mapping[str, Any]) -> bool:
+def period_still_valid(subscription: Mapping[str, Any]) -> bool:
     """Return True when period_end is missing or still in the future."""
     raw = subscription.get("period_end")
     if not raw:
@@ -47,6 +47,28 @@ def _period_still_valid(subscription: Mapping[str, Any]) -> bool:
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
     return end > datetime.now(tz=timezone.utc)
+
+
+def uses_access_fallback(
+    subscription: Mapping[str, Any] | None,
+    tier: Mapping[str, Any] | None,
+) -> bool:
+    """
+    Return True when effective entitlements should come from the Access tier.
+
+    Happens when there is no subscription, status is outside the paid-access
+    set, the billing period has ended, or the tier row is missing.
+    """
+    if not subscription:
+        return True
+    status = (subscription.get("status") or "").lower()
+    if status not in PAID_ACCESS_STATUSES:
+        return True
+    if not period_still_valid(subscription):
+        return True
+    if not tier:
+        return True
+    return False
 
 
 def resolve_entitlements(
@@ -78,16 +100,7 @@ def resolve_entitlements(
     Raises:
         ValueError: If fallback is needed but access_tier was not provided.
     """
-    if not subscription:
-        return _access_entitlements(access_tier)
-
-    status = (subscription.get("status") or "").lower()
-    if status not in PAID_ACCESS_STATUSES or not _period_still_valid(
-        subscription
-    ):
-        return _access_entitlements(access_tier)
-
-    if not tier:
+    if uses_access_fallback(subscription, tier):
         return _access_entitlements(access_tier)
 
     if tier.get("is_custom"):

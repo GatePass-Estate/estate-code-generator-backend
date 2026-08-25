@@ -44,6 +44,10 @@ class EstateSubscriptionBase(BaseModel):
     period_end: datetime = Field(..., description="Period end")
     auto_renew: bool = Field(default=True, description="Auto renew flag")
     covered_users: int = Field(default=1, description="Seat count")
+    over_cap_locked: bool = Field(
+        default=False,
+        description="True when estate exceeds Access seat cap after expiry",
+    )
     entitlements: dict | None = Field(
         None, description="Custom entitlements snapshot"
     )
@@ -52,6 +56,9 @@ class EstateSubscriptionBase(BaseModel):
     )
     paystack_customer_code: str | None = Field(
         None, description="Paystack customer code"
+    )
+    renew_attempt_count: int = Field(
+        default=0, description="Consecutive renewal attempt count"
     )
     last_renewal_failure_at: datetime | None = Field(
         None, description="Last renewal failure time"
@@ -107,6 +114,10 @@ class UpdateRequest(BaseModel):
         default=None, description="Auto renew flag"
     )
     covered_users: int | None = Field(default=None, description="Seat count")
+    over_cap_locked: bool | None = Field(
+        default=None,
+        description="True when estate exceeds Access seat cap after expiry",
+    )
     entitlements: dict | None = Field(
         default=None, description="Custom entitlements snapshot"
     )
@@ -115,6 +126,9 @@ class UpdateRequest(BaseModel):
     )
     paystack_customer_code: str | None = Field(
         default=None, description="Paystack customer code"
+    )
+    renew_attempt_count: int | None = Field(
+        default=None, description="Consecutive renewal attempt count"
     )
     last_renewal_failure_at: datetime | None = Field(
         default=None, description="Last renewal failure time"

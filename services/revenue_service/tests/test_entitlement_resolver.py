@@ -48,6 +48,20 @@ def test_expired_falls_back_to_access():
     assert result["visit_access_history"] == 7
 
 
+def test_uses_access_fallback_when_expired():
+    from app.services.entitlement_resolver import uses_access_fallback
+
+    sub = {"status": "expired", "over_cap_locked": True}
+    assert uses_access_fallback(sub, WATCH) is True
+
+
+def test_uses_access_fallback_false_when_active():
+    from app.services.entitlement_resolver import uses_access_fallback
+
+    sub = {"status": "active", "over_cap_locked": False}
+    assert uses_access_fallback(sub, WATCH) is False
+
+
 def test_past_due_keeps_tier_until_period_end():
     from datetime import datetime, timedelta, timezone
 

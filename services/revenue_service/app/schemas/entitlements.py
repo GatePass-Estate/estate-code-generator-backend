@@ -13,6 +13,8 @@ class EntitlementCheckResponse(BaseModel):
     allowed: bool
     limit: Any = None
     limit_type: str | None = None
+    locked: bool = False
+    reason: str | None = None
     covered_users: int | None = None
     subscription_status: str | None = None
     tier_slug: str | None = None

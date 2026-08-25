@@ -142,7 +142,7 @@ class DbRevenueRepository:
         Return the current subscription for entitlement / billing lookups.
 
         Prefers healthy statuses, then cancelled/past_due (access may continue
-        until period_end).
+        until period_end), then expired (needed for over_cap_locked checks).
 
         Args:
             estate_id: Estate UUID string.
@@ -150,7 +150,13 @@ class DbRevenueRepository:
         Returns:
             Subscription row, or None if none match.
         """
-        for status in ("active", "trialing", "past_due", "cancelled"):
+        for status in (
+            "active",
+            "trialing",
+            "past_due",
+            "cancelled",
+            "expired",
+        ):
             items = await self._search(
                 self.estate_subscription,
                 {"estate_id": estate_id, "status": status, "limit": 1},
