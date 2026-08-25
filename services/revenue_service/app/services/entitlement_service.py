@@ -9,7 +9,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.libs.period_dating import compute_period_end
+from app.libs.period_dating import (
+    compute_period_end,
+    paid_feature_access_valid,
+)
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import provision_standalone_ai_grant
 from app.services.entitlement_resolver import (
@@ -164,8 +167,11 @@ class EntitlementService:
         Check whether an estate may use an AI feature grant.
 
         Free grants skip expiry. Paid grants stay allowed while installed
-        until ``expires_at`` (or status ``expired``), including
-        ``cancelled`` and ``past_due``. Uninstalled grants are always denied.
+        until access ends (or status ``expired``). For ``active`` grants,
+        access continues through ``expires_at + RENEWAL_GRACE_PERIOD_DAYS``
+        while auto-renew retries run. ``cancelled`` and ``past_due`` keep
+        access only until ``expires_at`` (no grace). Uninstalled grants are
+        always denied.
 
         Args:
             estate_id: Estate UUID string.
@@ -214,17 +220,12 @@ class EntitlementService:
         elif status == "expired":
             allowed = False
         else:
-            # active / cancelled / past_due: allowed until expires_at.
-            not_expired = True
-            if expires_at:
-                try:
-                    exp = datetime.fromisoformat(
-                        str(expires_at).replace("Z", "+00:00")
-                    )
-                    not_expired = exp > datetime.now(tz=timezone.utc)
-                except Exception:
-                    not_expired = True
-            allowed = not_expired
+            # active: expires_at + grace; cancelled/past_due: expires_at only.
+            allowed = paid_feature_access_valid(
+                status=status,
+                expires_at=expires_at,
+                grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
+            )
 
         return {
             "estate_id": estate_id,
