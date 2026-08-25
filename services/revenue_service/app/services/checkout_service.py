@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from app.libs.entitlement_validation import validate_entitlements
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.pricing_service import (
-    ADMIN_FEE_KEY,
     compute_ai_monthly,
     compute_seat_proration,
     quote_pricing,
@@ -67,8 +66,8 @@ class CheckoutService:
         Produce a checkout quote for an estate subscription purchase.
 
         Resolves country pricing, validates entitlements against the catalog,
-        applies administrative-fee rules for paid tiers, and returns a
-        float-serialized breakdown.
+        includes administrative_fee when the entitlements map sets it True,
+        and returns a float-serialized breakdown.
 
         Args:
             request: Quote request dict (estate_id, covered_users,
@@ -122,26 +121,14 @@ class CheckoutService:
         limit_map = {k: v["limit_type"] for k, v in catalog.items()}
         validate_entitlements(entitlements, limit_map)
 
-        # Included product keys: enabled booleans / positive limits
+        # Included product keys: enabled booleans / positive limits.
+        # administrative_fee is keyed in entitlements (True/False), not tier slug.
         included_keys: list[str] = []
         for key, value in entitlements.items():
-            if key == ADMIN_FEE_KEY:
-                continue
             if isinstance(value, bool) and value:
                 included_keys.append(key)
             elif isinstance(value, int) and value > 0:
                 included_keys.append(key)
-
-        # Paid tiers include administrative_fee when true or when not Access
-        if entitlements.get(ADMIN_FEE_KEY) is True or (
-            tier_slug and tier_slug != "access"
-        ):
-            if ADMIN_FEE_KEY not in included_keys:
-                included_keys.append(ADMIN_FEE_KEY)
-
-        # Access: no admin fee / zero prices expected
-        if tier_slug == "access":
-            included_keys = [k for k in included_keys if k != ADMIN_FEE_KEY]
 
         try:
             breakdown = quote_pricing(
@@ -231,15 +218,10 @@ class CheckoutService:
         service_prices, _ai_prices, currency = await self._price_maps(country)
         included_keys: list[str] = []
         for key, value in entitlements.items():
-            if key == ADMIN_FEE_KEY:
-                continue
             if isinstance(value, bool) and value:
                 included_keys.append(key)
             elif isinstance(value, int) and value > 0:
                 included_keys.append(key)
-        if tier.get("slug") != "access":
-            if ADMIN_FEE_KEY not in included_keys:
-                included_keys.append(ADMIN_FEE_KEY)
 
         # Infer period_months from the subscription window (~30-day months).
         period_days = (period_end.date() - period_start.date()).days + 1
