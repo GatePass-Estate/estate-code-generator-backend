@@ -132,7 +132,10 @@ class DbRevenueRepository:
             tier_id: Tier UUID string.
 
         Returns:
-            Tier payload, or None if the request failed / not found.
+            Tier payload, or None if not found (404).
+
+        Raises:
+            HTTPException: Upstream failures (network / non-404 HTTP errors).
         """
         url = f"{self.subscription_tier}/{tier_id}"
         return await self.client.async_get(url)
