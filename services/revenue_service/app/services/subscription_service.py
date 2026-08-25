@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,6 +19,94 @@ from app.services.entitlement_resolver import (
     PAID_ACCESS_STATUSES,
     resolve_entitlements,
 )
+
+logger = logging.getLogger(__name__)
+
+# Subscription writes and AI grant sync are separate HTTP calls to db-service
+# (no distributed transaction). activate/renew compensate on grant-sync failure
+# and grant sync itself is idempotent for safe retry before Paystack goes live.
+_SUBSCRIPTION_ROLLBACK_FIELDS = (
+    "tier_id",
+    "status",
+    "period_start",
+    "period_end",
+    "auto_renew",
+    "covered_users",
+    "entitlements",
+    "cancelled_at",
+)
+
+
+def _subscription_rollback_payload(subscription: dict) -> dict[str, Any]:
+    return {
+        field: subscription.get(field)
+        for field in _SUBSCRIPTION_ROLLBACK_FIELDS
+    }
+
+
+async def _compensate_subscription_write(
+    repo: DbRevenueRepository,
+    *,
+    estate_id: str,
+    subscription_id: str,
+    created_new: bool,
+    prior_state: dict[str, Any] | None,
+    operation: str,
+) -> None:
+    """Best-effort undo of a subscription row written before grant sync failed."""
+    prior_tier_id = (prior_state or {}).get("tier_id")
+    logger.warning(
+        "Compensating subscription write operation=%s estate_id=%s "
+        "subscription_id=%s created_new=%s prior_tier_id=%s "
+        "prior_status=%s prior_period_end=%s",
+        operation,
+        estate_id,
+        subscription_id,
+        created_new,
+        prior_tier_id,
+        (prior_state or {}).get("status"),
+        (prior_state or {}).get("period_end"),
+    )
+    try:
+        if created_new:
+            await repo.delete_estate_subscription(subscription_id)
+            logger.info(
+                "Rolled back created estate_subscription id=%s "
+                "estate_id=%s operation=%s",
+                subscription_id,
+                estate_id,
+                operation,
+            )
+            return
+        if prior_state:
+            await repo.update_estate_subscription(
+                subscription_id,
+                _subscription_rollback_payload(prior_state),
+            )
+            logger.info(
+                "Restored estate_subscription id=%s estate_id=%s "
+                "operation=%s prior_tier_id=%s",
+                subscription_id,
+                estate_id,
+                operation,
+                prior_tier_id,
+            )
+    except Exception:
+        logger.exception(
+            "Subscription compensation failed operation=%s estate_id=%s "
+            "subscription_id=%s created_new=%s prior_tier_id=%s "
+            "prior_state=%s",
+            operation,
+            estate_id,
+            subscription_id,
+            created_new,
+            prior_tier_id,
+            {
+                field: (prior_state or {}).get(field)
+                for field in _SUBSCRIPTION_ROLLBACK_FIELDS
+            },
+        )
+        raise
 
 
 class SubscriptionService:
@@ -81,6 +170,10 @@ class SubscriptionService:
 
         Writes custom entitlements snapshot when the tier is custom.
         Syncs tier AI grants onto estate_ai_feature.
+
+        Subscription and grant sync are separate db-service calls; grant sync
+        rolls back its own partial writes and the subscription write is
+        compensated if grant sync still fails (both are safe to retry).
         """
         estate_id = request["estate_id"]
         tier_slug = request["tier_slug"]
@@ -127,6 +220,8 @@ class SubscriptionService:
         )
 
         existing = await self.repo.get_active_subscription(estate_id)
+        prior_state = dict(existing) if existing else None
+        created_new = False
         payload = {
             "estate_id": estate_id,
             "tier_id": tier["id"],
@@ -148,15 +243,61 @@ class SubscriptionService:
             created = await self.repo.create_estate_subscription(payload)
             subscription_id = str(created["id"])
             subscription = created
+            created_new = True
 
-        await sync_tier_ai_grants(
-            self.repo,
-            estate_id=estate_id,
-            subscription_id=subscription_id,
-            tier=tier,
-            period_end=period_end,
-            extra_feature_keys=ai_feature_keys,
-        )
+        try:
+            await sync_tier_ai_grants(
+                self.repo,
+                estate_id=estate_id,
+                subscription_id=subscription_id,
+                tier=tier,
+                period_end=period_end,
+                extra_feature_keys=ai_feature_keys,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Activate grant sync failed; compensating subscription "
+                "estate_id=%s subscription_id=%s tier_id=%s tier_slug=%s "
+                "created_new=%s",
+                estate_id,
+                subscription_id,
+                tier.get("id"),
+                tier_slug,
+                created_new,
+            )
+            try:
+                await _compensate_subscription_write(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=subscription_id,
+                    created_new=created_new,
+                    prior_state=prior_state,
+                    operation="activate",
+                )
+            except Exception as compensation_exc:
+                logger.exception(
+                    "Activate compensation failed estate_id=%s "
+                    "subscription_id=%s tier_id=%s created_new=%s",
+                    estate_id,
+                    subscription_id,
+                    tier.get("id"),
+                    created_new,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Subscription activation updated AI grants incompletely "
+                        "and automatic rollback failed; retry grant sync or "
+                        "repair manually before billing goes live."
+                    ),
+                ) from compensation_exc
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Subscription activation rolled back because AI grant sync "
+                    "failed; retry the activation once db-service is healthy."
+                ),
+            ) from exc
         return {
             "estate_id": estate_id,
             "subscription_id": subscription_id,
@@ -176,7 +317,11 @@ class SubscriptionService:
         period_months: int = 1,
         paid_at: datetime | None = None,
     ) -> dict:
-        """Renew subscription using dating rules; extend linked paid AI grants."""
+        """Renew subscription using dating rules; extend linked paid AI grants.
+
+        Rolls back the subscription period update if linked grant extension fails.
+        Grant extension is idempotent and safe to retry.
+        """
         subscription = await self._latest_subscription(estate_id)
         if not subscription:
             raise HTTPException(
@@ -202,21 +347,68 @@ class SubscriptionService:
             grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
         )
 
-        updated = await self.repo.update_estate_subscription(
-            str(subscription["id"]),
-            {
-                "status": "active",
-                "period_end": new_end.isoformat(),
-                "auto_renew": True,
-                "cancelled_at": None,
-            },
-        )
-        await extend_subscription_ai_grants(
-            self.repo,
-            estate_id=estate_id,
-            subscription_id=str(subscription["id"]),
-            new_period_end=new_end,
-        )
+        prior_state = dict(subscription)
+        subscription_id = str(subscription["id"])
+        try:
+            updated = await self.repo.update_estate_subscription(
+                subscription_id,
+                {
+                    "status": "active",
+                    "period_end": new_end.isoformat(),
+                    "auto_renew": True,
+                    "cancelled_at": None,
+                },
+            )
+            await extend_subscription_ai_grants(
+                self.repo,
+                estate_id=estate_id,
+                subscription_id=subscription_id,
+                new_period_end=new_end,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Renew grant sync failed; compensating subscription "
+                "estate_id=%s subscription_id=%s tier_id=%s "
+                "prior_period_end=%s attempted_period_end=%s",
+                estate_id,
+                subscription_id,
+                subscription.get("tier_id"),
+                prior_state.get("period_end"),
+                new_end.isoformat(),
+            )
+            try:
+                await _compensate_subscription_write(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=subscription_id,
+                    created_new=False,
+                    prior_state=prior_state,
+                    operation="renew",
+                )
+            except Exception as compensation_exc:
+                logger.exception(
+                    "Renew compensation failed estate_id=%s "
+                    "subscription_id=%s tier_id=%s prior_period_end=%s",
+                    estate_id,
+                    subscription_id,
+                    subscription.get("tier_id"),
+                    prior_state.get("period_end"),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Subscription renewal updated AI grants incompletely "
+                        "and automatic rollback failed; retry grant extension "
+                        "or repair manually before billing goes live."
+                    ),
+                ) from compensation_exc
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Subscription renewal rolled back because AI grant sync "
+                    "failed; retry the renewal once db-service is healthy."
+                ),
+            ) from exc
         return {
             "estate_id": estate_id,
             "subscription": updated,

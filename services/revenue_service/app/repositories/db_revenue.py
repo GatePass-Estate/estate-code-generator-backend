@@ -239,6 +239,16 @@ class DbRevenueRepository:
             )
         return response
 
+    async def delete_estate_subscription(self, subscription_id: str) -> None:
+        """Soft-delete an estate_subscription by id."""
+        url = f"{self.estate_subscription}/{subscription_id}"
+        await self.client.async_delete(url)
+
+    async def delete_estate_ai_feature(self, grant_id: str) -> None:
+        """Soft-delete an estate_ai_feature grant by id."""
+        url = f"{self.estate_ai_feature}/{grant_id}"
+        await self.client.async_delete(url)
+
     async def list_estate_subscriptions(self, estate_id: str) -> list[dict]:
         """List subscriptions for an estate (any status)."""
         return await self._search(
