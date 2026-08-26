@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.config import settings
+from app.libs.transient_retry import retry_transient
 from app.repositories.db_revenue import DbRevenueRepository
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,12 @@ class GrantSyncRollback:
         }
 
     async def apply(self, repo: DbRevenueRepository) -> None:
-        """Best-effort undo of grant rows touched during a failed sync."""
+        """
+        Undo grant rows touched during a failed sync.
+
+        Retries each restore/delete on transient failures. Raises if any
+        grant still cannot be rolled back after retries.
+        """
         logger.warning(
             "Rolling back AI grant sync operation=%s estate_id=%s "
             "subscription_id=%s created_grant_ids=%s updated_grant_ids=%s",
@@ -57,9 +64,22 @@ class GrantSyncRollback:
             self.created_grant_ids,
             list(self.updated_grants.keys()),
         )
+        failed: list[str] = []
+
         for grant_id, snapshot in self.updated_grants.items():
             try:
-                await repo.update_estate_ai_feature(grant_id, snapshot)
+                await retry_transient(
+                    lambda gid=grant_id, snap=snapshot: (
+                        repo.update_estate_ai_feature(gid, snap)
+                    ),
+                    attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                    base_delay_seconds=(
+                        settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                    ),
+                    operation_name=(
+                        f"rollback_grant_update:{grant_id}:{self.operation}"
+                    ),
+                )
                 logger.info(
                     "Rolled back estate_ai_feature update grant_id=%s "
                     "estate_id=%s subscription_id=%s operation=%s",
@@ -69,6 +89,7 @@ class GrantSyncRollback:
                     self.operation,
                 )
             except Exception:
+                failed.append(grant_id)
                 logger.exception(
                     "Failed to rollback estate_ai_feature update "
                     "grant_id=%s estate_id=%s subscription_id=%s "
@@ -79,9 +100,19 @@ class GrantSyncRollback:
                     self.operation,
                     snapshot,
                 )
+
         for grant_id in reversed(self.created_grant_ids):
             try:
-                await repo.delete_estate_ai_feature(grant_id)
+                await retry_transient(
+                    lambda gid=grant_id: repo.delete_estate_ai_feature(gid),
+                    attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                    base_delay_seconds=(
+                        settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                    ),
+                    operation_name=(
+                        f"rollback_grant_create:{grant_id}:{self.operation}"
+                    ),
+                )
                 logger.info(
                     "Rolled back estate_ai_feature create grant_id=%s "
                     "estate_id=%s subscription_id=%s operation=%s",
@@ -91,6 +122,7 @@ class GrantSyncRollback:
                     self.operation,
                 )
             except Exception:
+                failed.append(grant_id)
                 logger.exception(
                     "Failed to rollback estate_ai_feature create "
                     "grant_id=%s estate_id=%s subscription_id=%s "
@@ -100,6 +132,14 @@ class GrantSyncRollback:
                     self.subscription_id,
                     self.operation,
                 )
+
+        if failed:
+            raise RuntimeError(
+                "AI grant rollback incomplete after retries "
+                f"operation={self.operation} estate_id={self.estate_id} "
+                f"subscription_id={self.subscription_id} "
+                f"failed_grant_ids={failed}"
+            )
 
 
 async def sync_tier_ai_grants(
@@ -190,7 +230,17 @@ async def sync_tier_ai_grants(
             keys,
             rollback.touched_ids(),
         )
-        await rollback.apply(repo)
+        try:
+            await rollback.apply(repo)
+        except Exception:
+            logger.exception(
+                "AI grant sync rollback failed after retries "
+                "estate_id=%s subscription_id=%s tier_id=%s touched=%s",
+                estate_id,
+                subscription_id,
+                tier_id,
+                rollback.touched_ids(),
+            )
         raise
 
 
@@ -236,7 +286,16 @@ async def extend_subscription_ai_grants(
             end_iso,
             rollback.touched_ids(),
         )
-        await rollback.apply(repo)
+        try:
+            await rollback.apply(repo)
+        except Exception:
+            logger.exception(
+                "AI grant extend rollback failed after retries "
+                "estate_id=%s subscription_id=%s touched=%s",
+                estate_id,
+                subscription_id,
+                rollback.touched_ids(),
+            )
         raise
 
 

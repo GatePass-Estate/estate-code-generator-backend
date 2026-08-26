@@ -16,6 +16,7 @@ pydantic-settings = "^2.6.1"
 httpx = "^0.28.1"
 pyjwt = "^2.9.0"
 load-dotenv = "^0.1.0"
+tenacity = "^9.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"

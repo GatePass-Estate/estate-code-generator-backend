@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.core.config import settings
 from app.libs.period_dating import compute_period_end
+from app.libs.transient_retry import retry_transient
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import (
     extend_subscription_ai_grants,
@@ -23,8 +24,9 @@ from app.services.entitlement_resolver import (
 logger = logging.getLogger(__name__)
 
 # Subscription writes and AI grant sync are separate HTTP calls to db-service
-# (no distributed transaction). activate/renew compensate on grant-sync failure
-# and grant sync itself is idempotent for safe retry before Paystack goes live.
+# (no distributed transaction). activate/renew retry grant sync on transient
+# failures, then compensate on persistent failure. Compensation is also
+# retried; grant sync itself is idempotent for safe retry.
 _SUBSCRIPTION_ROLLBACK_FIELDS = (
     "tier_id",
     "status",
@@ -53,7 +55,7 @@ async def _compensate_subscription_write(
     prior_state: dict[str, Any] | None,
     operation: str,
 ) -> None:
-    """Best-effort undo of a subscription row written before grant sync failed."""
+    """Undo a subscription row written before grant sync failed (with retries)."""
     prior_tier_id = (prior_state or {}).get("tier_id")
     logger.warning(
         "Compensating subscription write operation=%s estate_id=%s "
@@ -67,9 +69,27 @@ async def _compensate_subscription_write(
         (prior_state or {}).get("status"),
         (prior_state or {}).get("period_end"),
     )
-    try:
+
+    async def _do_compensate() -> None:
         if created_new:
             await repo.delete_estate_subscription(subscription_id)
+            return
+        if prior_state:
+            await repo.update_estate_subscription(
+                subscription_id,
+                _subscription_rollback_payload(prior_state),
+            )
+
+    try:
+        await retry_transient(
+            _do_compensate,
+            attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+            base_delay_seconds=(
+                settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+            ),
+            operation_name=f"compensate_subscription:{operation}",
+        )
+        if created_new:
             logger.info(
                 "Rolled back created estate_subscription id=%s "
                 "estate_id=%s operation=%s",
@@ -77,12 +97,7 @@ async def _compensate_subscription_write(
                 estate_id,
                 operation,
             )
-            return
-        if prior_state:
-            await repo.update_estate_subscription(
-                subscription_id,
-                _subscription_rollback_payload(prior_state),
-            )
+        elif prior_state:
             logger.info(
                 "Restored estate_subscription id=%s estate_id=%s "
                 "operation=%s prior_tier_id=%s",
@@ -172,8 +187,9 @@ class SubscriptionService:
         Syncs tier AI grants onto estate_ai_feature.
 
         Subscription and grant sync are separate db-service calls; grant sync
-        rolls back its own partial writes and the subscription write is
-        compensated if grant sync still fails (both are safe to retry).
+        is retried on transient failures, rolls back its own partial writes,
+        and the subscription write is compensated (also with retries) if grant
+        sync still fails. Both sync and compensate are safe to retry.
         """
         estate_id = request["estate_id"]
         tier_slug = request["tier_slug"]
@@ -246,13 +262,20 @@ class SubscriptionService:
             created_new = True
 
         try:
-            await sync_tier_ai_grants(
-                self.repo,
-                estate_id=estate_id,
-                subscription_id=subscription_id,
-                tier=tier,
-                period_end=period_end,
-                extra_feature_keys=ai_feature_keys,
+            await retry_transient(
+                lambda: sync_tier_ai_grants(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=subscription_id,
+                    tier=tier,
+                    period_end=period_end,
+                    extra_feature_keys=ai_feature_keys,
+                ),
+                attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                base_delay_seconds=(
+                    settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                ),
+                operation_name="activate_sync_tier_ai_grants",
             )
         except Exception as exc:
             logger.exception(
@@ -359,11 +382,18 @@ class SubscriptionService:
                     "cancelled_at": None,
                 },
             )
-            await extend_subscription_ai_grants(
-                self.repo,
-                estate_id=estate_id,
-                subscription_id=subscription_id,
-                new_period_end=new_end,
+            await retry_transient(
+                lambda: extend_subscription_ai_grants(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=subscription_id,
+                    new_period_end=new_end,
+                ),
+                attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                base_delay_seconds=(
+                    settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                ),
+                operation_name="renew_extend_subscription_ai_grants",
             )
         except Exception as exc:
             logger.exception(

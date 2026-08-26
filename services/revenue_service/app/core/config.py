@@ -25,6 +25,14 @@ class Settings(BaseSettings):
         os.getenv("RENEWAL_GRACE_PERIOD_DAYS", "7")
     )
 
+    # Bounded retries for grant sync + compensation across db-service calls.
+    REVENUE_TRANSIENT_RETRY_ATTEMPTS: int = int(
+        os.getenv("REVENUE_TRANSIENT_RETRY_ATTEMPTS", "3")
+    )
+    REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS: float = float(
+        os.getenv("REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS", "0.2")
+    )
+
     # Unused in Phase 1 (Paystack stubbed)
     PAYSTACK_SECRET_KEY: str = os.getenv("PAYSTACK_SECRET_KEY", "")
 
