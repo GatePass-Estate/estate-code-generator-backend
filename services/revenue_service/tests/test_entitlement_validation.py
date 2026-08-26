@@ -1,11 +1,16 @@
 import pytest
 
-from app.libs.entitlement_validation import validate_entitlements
+from app.libs.entitlement_validation import (
+    ensure_admin_fee_entitlement,
+    validate_entitlements,
+)
+from app.services.pricing_service import ADMIN_FEE_KEY
 
 CATALOG = {
     "broadcasts_announcements": "boolean",
     "visit_access_history": "duration_days",
     "max_active_users": "count",
+    "administrative_fee": "boolean",
 }
 
 
@@ -41,3 +46,14 @@ def test_negative_count():
 def test_bool_rejected_for_count():
     with pytest.raises(ValueError):
         validate_entitlements({"max_active_users": True}, CATALOG)
+
+
+def test_ensure_admin_fee_defaults_true_when_missing():
+    result = ensure_admin_fee_entitlement({"broadcasts_announcements": True})
+    assert result[ADMIN_FEE_KEY] is True
+    assert result["broadcasts_announcements"] is True
+
+
+def test_ensure_admin_fee_preserves_explicit_false():
+    result = ensure_admin_fee_entitlement({ADMIN_FEE_KEY: False})
+    assert result[ADMIN_FEE_KEY] is False

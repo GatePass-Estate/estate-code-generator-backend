@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.libs.entitlement_validation import ensure_admin_fee_entitlement
 from app.libs.period_dating import compute_period_end
 from app.libs.transient_retry import retry_transient
 from app.repositories.db_revenue import DbRevenueRepository
@@ -210,7 +211,7 @@ class SubscriptionService:
                     status_code=400,
                     detail="Custom tier requires entitlements snapshot",
                 )
-            snapshot = dict(entitlements)
+            snapshot = ensure_admin_fee_entitlement(dict(entitlements))
             # Seat purchase is source of truth for max_active_users.
             snapshot["max_active_users"] = covered_users
         else:

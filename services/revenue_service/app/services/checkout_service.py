@@ -8,7 +8,10 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.libs.entitlement_validation import validate_entitlements
+from app.libs.entitlement_validation import (
+    ensure_admin_fee_entitlement,
+    validate_entitlements,
+)
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.pricing_service import (
     compute_ai_monthly,
@@ -113,7 +116,7 @@ class CheckoutService:
                 if not ai_keys:
                     ai_keys = list(tier.get("included_ai_features") or [])
             else:
-                entitlements = entitlements or {}
+                entitlements = ensure_admin_fee_entitlement(entitlements or {})
         else:
             entitlements = entitlements or {}
 
@@ -211,7 +214,9 @@ class CheckoutService:
             )
 
         if tier.get("is_custom"):
-            entitlements = dict(subscription.get("entitlements") or {})
+            entitlements = ensure_admin_fee_entitlement(
+                dict(subscription.get("entitlements") or {})
+            )
         else:
             entitlements = dict(tier.get("entitlements") or {})
 

@@ -4,7 +4,27 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-__all__ = ["validate_entitlements"]
+from app.services.pricing_service import ADMIN_FEE_KEY
+
+__all__ = ["ensure_admin_fee_entitlement", "validate_entitlements"]
+
+
+def ensure_admin_fee_entitlement(
+    entitlements: Mapping[str, Any],
+    *,
+    default: bool = True,
+) -> dict[str, Any]:
+    """
+    Ensure ``administrative_fee`` is present on a custom entitlements map.
+
+    Custom snapshots may omit the key; default it (True for paid custom) so
+    pricing and entitlement checks always see an explicit boolean.
+    Does not overwrite an existing value.
+    """
+    out = dict(entitlements)
+    if ADMIN_FEE_KEY not in out:
+        out[ADMIN_FEE_KEY] = default
+    return out
 
 
 def validate_entitlements(
