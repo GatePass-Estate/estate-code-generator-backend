@@ -165,6 +165,10 @@ class EntitlementService:
         """
         Return the full effective entitlements map for an estate.
 
+        When the estate has fallen back to Access and ``over_cap_locked`` is
+        set, includes ``locked=true`` / ``reason=over_cap`` (same signal as
+        ``/entitlements/check``) so callers can detect lock without a key.
+
         Args:
             estate_id: Estate UUID string.
 
@@ -174,9 +178,16 @@ class EntitlementService:
         ctx = await self._load_context(estate_id)
         sub = ctx["subscription"]
         tier = ctx["tier"]
+        locked = bool(
+            ctx.get("uses_access_fallback")
+            and sub is not None
+            and bool(sub.get("over_cap_locked"))
+        )
         return {
             "estate_id": estate_id,
             "entitlements": ctx["entitlements"],
+            "locked": locked,
+            "reason": "over_cap" if locked else None,
             "covered_users": (sub or {}).get("covered_users"),
             "subscription_status": (sub or {}).get("status"),
             "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),

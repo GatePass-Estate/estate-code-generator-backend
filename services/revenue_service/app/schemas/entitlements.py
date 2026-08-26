@@ -25,6 +25,8 @@ class EstateEntitlementsResponse(BaseModel):
 
     estate_id: str
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    locked: bool = False
+    reason: str | None = None
     covered_users: int | None = None
     subscription_status: str | None = None
     tier_slug: str | None = None
