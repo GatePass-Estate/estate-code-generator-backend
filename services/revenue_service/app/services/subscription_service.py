@@ -373,16 +373,16 @@ class SubscriptionService:
 
         prior_state = dict(subscription)
         subscription_id = str(subscription["id"])
+        updated = await self.repo.update_estate_subscription(
+            subscription_id,
+            {
+                "status": "active",
+                "period_end": new_end.isoformat(),
+                "auto_renew": True,
+                "cancelled_at": None,
+            },
+        )
         try:
-            updated = await self.repo.update_estate_subscription(
-                subscription_id,
-                {
-                    "status": "active",
-                    "period_end": new_end.isoformat(),
-                    "auto_renew": True,
-                    "cancelled_at": None,
-                },
-            )
             await retry_transient(
                 lambda: extend_subscription_ai_grants(
                     self.repo,
