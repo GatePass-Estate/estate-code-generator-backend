@@ -74,6 +74,7 @@ class VisitorLogRepository:
         hashed_code: str,
         user_id: UUID4 | str | None = None,
         estate_id: UUID4 | str | None = None,
+        from_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
     ) -> dict:
@@ -95,4 +96,6 @@ class VisitorLogRepository:
             params["user_id"] = str(user_id)
         if estate_id is not None:
             params["estate_id"] = str(estate_id)
+        if from_date is not None:
+            params["from_date"] = from_date.isoformat()
         return await self.ahttp_client.async_get(self.endpoint, params=params)

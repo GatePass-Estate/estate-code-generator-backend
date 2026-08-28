@@ -104,10 +104,33 @@ def _history_window_from_anchor(
     anchor: dict[str, Any],
 ) -> tuple[datetime, datetime]:
     """
-    ``(from_date, to_date)`` for search: one month **back from** the anchor row's
-    recorded event time (not from wall-clock now).
+    ``(from_date, to_date)`` for search: one month **back from** the anchor row.
+
+    Upper bound is the later of event time (visit/access) and ``created_at``.
+    db-service search filters on ``created_at``, while validation often stamps
+    ``access_time``/``visit_time`` just before the insert — so ending the
+    window at event time alone can exclude the brand-new anchor row.
     """
     end = _record_event_time_or_none(anchor)
+    created = None
+    raw_created = anchor.get("created_at")
+    if isinstance(raw_created, datetime):
+        created = (
+            raw_created
+            if raw_created.tzinfo
+            else raw_created.replace(tzinfo=timezone.utc)
+        )
+    elif isinstance(raw_created, str):
+        try:
+            created = datetime.fromisoformat(
+                raw_created.replace("Z", "+00:00")
+            )
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+        except ValueError:
+            created = None
+    if created is not None:
+        end = created if end is None else max(end, created)
     if end is None:
         raise LogHistoryError(
             "Anchor log row has no parseable visit_time, access_time, or "
@@ -319,12 +342,18 @@ async def load_log_records_for_analysis(
             _format_query_datetime(to_dt),
         )
         if not records:
+            logger.debug(
+                "visitor log search empty for window; using anchor only "
+                "anchor_id=%s",
+                anchor.get("id"),
+            )
+        merged_raw = _merge_anchor_and_sort(records, anchor)
+        if not merged_raw:
             raise LogHistoryError(
                 "No log rows returned for the one-month window ending at the "
                 "anchor visit/access time; analysis cannot proceed.",
                 status_code=422,
             )
-        merged_raw = _merge_anchor_and_sort(records, anchor)
         cleaned_merged = await wrangle_visit_records(merged_raw)
         return _split_visitor_log_cleaned(cleaned_merged, anchor, payload)
 
@@ -350,12 +379,18 @@ async def load_log_records_for_analysis(
             _format_query_datetime(to_dt),
         )
         if not records:
+            logger.debug(
+                "resident log search empty for window; using anchor only "
+                "anchor_id=%s",
+                anchor.get("id"),
+            )
+        merged_raw = _merge_anchor_and_sort(records, anchor)
+        if not merged_raw:
             raise LogHistoryError(
                 "No log rows returned for the one-month window ending at the "
                 "anchor visit/access time; analysis cannot proceed.",
                 status_code=422,
             )
-        merged_raw = _merge_anchor_and_sort(records, anchor)
         cleaned_merged = await wrangle_visit_records(merged_raw)
         return _split_resident_log_cleaned(cleaned_merged, anchor, payload)
 

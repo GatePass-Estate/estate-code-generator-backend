@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.exceptions import EntitlementDeniedError
 from app.pipeline.incident_report_orchestrator import (
     IncidentReportOrchestrator,
 )
@@ -52,7 +53,7 @@ async def test_analyze_payment_active_runs_summary_and_topics():
             return_value=_SAMPLE_RECORDS,
         ),
         patch(
-            "app.pipeline.incident_report_orchestrator.fetch_estate_payment_active",
+            "app.pipeline.incident_report_orchestrator.check_ai_feature_allowed",
             new_callable=AsyncMock,
             return_value=True,
         ),
@@ -96,9 +97,9 @@ async def test_analyze_payment_inactive_empty_summary():
             return_value=_SAMPLE_RECORDS,
         ),
         patch(
-            "app.pipeline.incident_report_orchestrator.fetch_estate_payment_active",
+            "app.pipeline.incident_report_orchestrator.check_ai_feature_allowed",
             new_callable=AsyncMock,
-            return_value=False,
+            side_effect=EntitlementDeniedError("denied", status_code=403),
         ),
         patch(
             "app.pipeline.incident_report_orchestrator.summarize_incidents_with_llm",

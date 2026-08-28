@@ -44,6 +44,7 @@ from app.libs.password_utils import (
     generate_random_password,
     hash_password,
 )
+from app.libs.revenue_entitlements import assert_seat_available
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,21 @@ class UserService:
                     status_code=400,
                     detail="A primary admin already exists for this estate.",
                 )
+
+        # Enforce covered seat / max_active_users before creating the account
+        active_users = await self.repository.search_users(
+            SearchUserRequest(
+                estate_id=request.estate_id,
+                status=True,
+                page=1,
+                limit=1,
+            )
+        )
+        await assert_seat_available(
+            self.repository.client,
+            estate_id=str(request.estate_id),
+            current_active_users=int(active_users.total or 0),
+        )
 
         # Generate random password for new user
         raw_password = generate_random_password()

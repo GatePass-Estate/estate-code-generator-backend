@@ -80,12 +80,41 @@ services:
     ports:
       - "9035:9035"
 
+  revenue-service:
+    container_name: revenue-service
+    depends_on:
+      - db-service
+    build:
+      context: .
+      dockerfile: services/revenue_service/Dockerfile
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9037",
+        "--reload",
+      ]
+    volumes:
+      - ./services/revenue_service/app:/src/service/app
+      - ./shared/gatepass_auth:/shared/gatepass_auth
+    env_file:
+      - ./.env.secrets
+      - ./services/revenue_service/.env.secrets
+      - ./services/revenue_service/.env.localdocker
+    ports:
+      - "9037:9037"
+
   code-service:
     container_name: code-service
     depends_on:
       - cache-service
       - db-service
       - notification-service
+      - revenue-service
+      - ai-service
     build:
       context: .
       dockerfile: services/code_service/Dockerfile
@@ -114,6 +143,7 @@ services:
     depends_on:
       - db-service
       - notification-service
+      - revenue-service
     build:
       context: .
       dockerfile: services/user_profile_service/Dockerfile
@@ -142,6 +172,7 @@ services:
     container_name: ai-service
     depends_on:
       - db-service
+      - revenue-service
     build:
       context: .
       dockerfile: services/ai_service/Dockerfile

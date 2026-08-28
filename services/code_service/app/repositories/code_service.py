@@ -9,6 +9,7 @@ from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
 from app.libs.auth import get_user_details
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
+from app.libs.spatial_anomaly import trigger_spatial_anomaly_check
 from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
@@ -647,7 +648,10 @@ class CodeServiceRepository:
             raise DatabaseError(message) from e
 
     async def get(
-        self, code: str, user_details: dict | None = None
+        self,
+        code: str,
+        user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> GetResponseVisitor | GetResponseResident:
         """
         Validate an access code and persist a visitor or resident log entry.
@@ -657,6 +661,9 @@ class CodeServiceRepository:
         code's estate. Log rows are written with denormalized resident names
         (``full_name`` on resident logs, ``resident_fullname`` on visitor
         logs) resolved at validation time.
+
+        After a successful log persist, spatial anomaly analysis is triggered
+        best-effort (not subscribed → silent; other failures → logged).
         """
         try:
             # Get the record from the database
@@ -712,6 +719,18 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting visitor's record to DB"
                     ) from persist_exception
+                anomaly = await trigger_spatial_anomaly_check(
+                    anomaly_type="visitor",
+                    record=record,
+                    log_id=str((persist_response or {}).get("id") or ""),
+                    security_id=str(user_details.get("id")),
+                    auth_token=auth_token,
+                )
+                if anomaly:
+                    record["prediction_result_id"] = anomaly[
+                        "prediction_result_id"
+                    ]
+                    record["is_anomalous"] = anomaly["is_anomalous"]
                 # Convert the record to a GET schema model
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
@@ -747,6 +766,18 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting resident's record to DB"
                     ) from persist_exception
+                anomaly = await trigger_spatial_anomaly_check(
+                    anomaly_type="resident",
+                    record=record,
+                    log_id=str((persist_response or {}).get("id") or ""),
+                    security_id=str(user_details.get("id")),
+                    auth_token=auth_token,
+                )
+                if anomaly:
+                    record["prediction_result_id"] = anomaly[
+                        "prediction_result_id"
+                    ]
+                    record["is_anomalous"] = anomaly["is_anomalous"]
                 return GetResponseResident.model_validate(
                     record, from_attributes=True
                 )

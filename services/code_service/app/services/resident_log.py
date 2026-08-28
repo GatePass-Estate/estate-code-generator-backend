@@ -4,6 +4,10 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from app.libs.http_handler import AsyncHttpHandler
+from app.libs.revenue_entitlements import (
+    RESIDENT_LOG_RETENTION_KEY,
+    resolve_retention_from_date,
+)
 from app.libs.role_permissions import get_role_permissions
 from app.repositories.resident_log import (
     ResidentLogRepository as Repository,
@@ -32,6 +36,9 @@ class ResidentLogService:
     endpoints require ``can_view_other_user_logs`` (admin/security within
     estate; root globally). Each entry carries the resident's denormalized
     ``full_name``.
+
+    History windows are clamped by revenue-service
+    ``resident_log_retention_days`` when an estate_id is known.
     """
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
@@ -66,6 +73,21 @@ class ResidentLogService:
                 detail="No estate is associated with your account.",
             )
         return str(estate_id)
+
+    async def _apply_retention(
+        self,
+        estate_id: str | None,
+        from_date: datetime | None,
+    ) -> datetime | None:
+        """Clamp from_date using resident_log_retention_days when estate is known."""
+        if not estate_id:
+            return from_date
+        return await resolve_retention_from_date(
+            self.ahttp_client,
+            estate_id=str(estate_id),
+            service_key=RESIDENT_LOG_RETENTION_KEY,
+            from_date=from_date,
+        )
 
     @staticmethod
     def _reject_personal_for_security(requester: dict) -> None:
@@ -125,9 +147,13 @@ class ResidentLogService:
         ``code_deleted``. Security accounts are rejected.
         """
         self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None, from_date
+        )
         result = await self.repository.unique_history(
             user_id=requester["id"],
-            from_date=from_date,
+            from_date=effective_from,
             to_date=to_date,
             page=page,
             limit=limit,
@@ -148,9 +174,14 @@ class ResidentLogService:
         first) and code lifecycle metadata. Security accounts are rejected.
         """
         self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None, None
+        )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
             user_id=requester["id"],
+            from_date=effective_from,
             page=page,
             limit=limit,
         )
@@ -171,9 +202,10 @@ class ResidentLogService:
         ``code_deleted``. Requires permission to view other users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(estate_scope, from_date)
         result = await self.repository.unique_history(
             estate_id=estate_scope,
-            from_date=from_date,
+            from_date=effective_from,
             to_date=to_date,
             page=page,
             limit=limit,
@@ -195,9 +227,11 @@ class ResidentLogService:
         users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(estate_scope, None)
         result = await self.repository.code_history(
             hashed_code=hashed_code,
             estate_id=estate_scope,
+            from_date=effective_from,
             page=page,
             limit=limit,
         )

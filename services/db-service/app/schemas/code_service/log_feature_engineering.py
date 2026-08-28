@@ -141,8 +141,12 @@ class UpsertRequest(BaseModel):
 
 
 class UpsertResponse(BaseModel):
-    """Echo the stored row id after upsert."""
+    """Echo the stored feature-log id and optional prediction-result id."""
 
     model_config = model_config
 
     id: UUID4
+    prediction_result_id: UUID4 | None = Field(
+        default=None,
+        description="Id of the upserted core.predictionresult row, if any.",
+    )

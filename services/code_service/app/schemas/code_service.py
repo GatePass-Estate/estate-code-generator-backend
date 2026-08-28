@@ -231,6 +231,26 @@ class GetResponseVisitor(VisitorData):
     household_name: str | None = Field(
         default=None, description="Display name of the resident's household"
     )
+    prediction_result_id: UUID4 | None = Field(
+        default=None,
+        description=(
+            "Persisted predictionresult id from spatial anomaly analyze, "
+            "when the estate is entitled and analysis succeeded."
+        ),
+    )
+    is_anomalous: bool | None = Field(
+        default=None,
+        description=(
+            "Spatial anomaly flag for this validation; null when analysis "
+            "was skipped or failed."
+        ),
+    )
+
+    @field_serializer("prediction_result_id")
+    def serialize_prediction_result_id(
+        self, value: UUID4 | None
+    ) -> str | None:
+        return str(value) if value else None
 
 
 class GetResponseResident(ResidentData):
@@ -252,6 +272,26 @@ class GetResponseResident(ResidentData):
     household_name: str | None = Field(
         default=None, description="Display name of the resident's household"
     )
+    prediction_result_id: UUID4 | None = Field(
+        default=None,
+        description=(
+            "Persisted predictionresult id from spatial anomaly analyze, "
+            "when the estate is entitled and analysis succeeded."
+        ),
+    )
+    is_anomalous: bool | None = Field(
+        default=None,
+        description=(
+            "Spatial anomaly flag for this validation; null when analysis "
+            "was skipped or failed."
+        ),
+    )
+
+    @field_serializer("prediction_result_id")
+    def serialize_prediction_result_id(
+        self, value: UUID4 | None
+    ) -> str | None:
+        return str(value) if value else None
 
 
 class ExtendResponse(BaseModel):

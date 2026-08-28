@@ -70,13 +70,17 @@ class LogFeatureEngineeringRepository:
             logger.exception("batch_lookup log feature engineering")
             raise DatabaseError("Database error in batch_lookup") from e
 
-    async def upsert(self, request: UpsertRequest) -> UUID:
+    async def upsert(self, request: UpsertRequest) -> tuple[UUID, UUID | None]:
         """
         Insert or update the single active row for (log id, anomaly_type).
 
         Feature JSON columns are updated only when the request field is not
         ``None``. If ``prediction_type`` + ``prediction_result`` are supplied,
         upsert one ``core.predictionresult`` row for the same feature-log id.
+
+        Returns:
+            ``(feature_log_id, prediction_result_id)`` — prediction id is
+            ``None`` when no prediction payload was supplied.
         """
         try:
             if request.visitor_log_id is not None:
@@ -137,6 +141,8 @@ class LogFeatureEngineeringRepository:
                     row.is_anomalous = request.is_anomalous
             await self.session.flush()
             await self.session.refresh(row)
+
+            prediction_id: UUID | None = None
             if (
                 request.prediction_type is not None
                 and request.prediction_result is not None
@@ -163,7 +169,10 @@ class LogFeatureEngineeringRepository:
                     prediction_result.visitor_log_id = request.visitor_log_id
                     prediction_result.resident_log_id = request.resident_log_id
                     prediction_result.result = request.prediction_result
-            return row.id
+                await self.session.flush()
+                await self.session.refresh(prediction_result)
+                prediction_id = prediction_result.id
+            return row.id, prediction_id
         except SQLAlchemyError as e:
             logger.exception("upsert log feature engineering")
             raise DatabaseError("Database error in upsert") from e

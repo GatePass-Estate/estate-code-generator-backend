@@ -92,13 +92,19 @@ async def upsert_focal_engineered_features(
     log_kind: LogKind,
     is_anomalous: bool,
     prediction_result: dict[str, Any],
-) -> None:
+) -> str | None:
     """
     POST ``/logfeatureengineering/upsert`` for the focal log anchor.
 
     Merges per-scope feature dicts into feature JSON columns and stores a
     prediction payload under ``prediction_result`` as ``{"result": ...}``.
-    Raises :class:`FeatureStoreError` on failure.
+
+    Returns:
+        The persisted ``prediction_result`` id as a string, or ``None`` if
+        the upsert response did not include one.
+
+    Raises:
+        FeatureStoreError: On failure.
     """
     url = _db_url(settings, "api/v1/codeservice/logfeatureengineering/upsert")
     body: dict[str, Any] = {
@@ -128,3 +134,8 @@ async def upsert_focal_engineered_features(
             f"db-service feature upsert HTTP error: {exc}",
             status_code=502,
         ) from exc
+    data = response.json() if response.content else {}
+    pred_id = (
+        data.get("prediction_result_id") if isinstance(data, dict) else None
+    )
+    return str(pred_id) if pred_id else None

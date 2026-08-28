@@ -56,6 +56,11 @@ class Settings(BaseSettings):
         "FRONTEND_BASE_URL", "https://app.gatepassng.com"
     )
 
+    # Revenue / billing entitlements
+    REVENUE_SERVICE_URL: str = os.getenv(
+        "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
+    )
+
     # Email / SMTP configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
