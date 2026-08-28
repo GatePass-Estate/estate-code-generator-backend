@@ -17,6 +17,7 @@ from app.services.pricing_service import (
     compute_ai_monthly,
     compute_seat_proration,
     quote_pricing,
+    round_charge,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -243,7 +244,9 @@ class CheckoutService:
                 currency_code=currency,
                 country_code=country,
             )
-            period_seat_price = full_quote["price_per_seat"] * period_months
+            period_seat_price = round_charge(
+                full_quote["price_per_seat"] * period_months
+            )
             prorated = compute_seat_proration(
                 period_seat_price=period_seat_price,
                 seats_added=seats_added,
@@ -312,7 +315,8 @@ class CheckoutService:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        monthly = float(ai["ai_price_per_month"])
+        monthly = float(round_charge(ai["ai_price_per_month"]))
+        total = round_charge(ai["ai_price_per_month"] * period_months)
         return {
             "estate_id": estate_id,
             "country_code": country,
@@ -320,7 +324,7 @@ class CheckoutService:
             "ai_feature_keys": feature_keys,
             "period_months": period_months,
             "ai_price_per_month": monthly,
-            "client_total": monthly * period_months,
+            "client_total": float(total),
             "line_items": [
                 {**li, "unit_price": float(li["unit_price"])}
                 for li in ai["line_items"]

@@ -9,6 +9,7 @@ from app.services.pricing_service import (
     compute_client_total,
     compute_price_per_seat,
     quote_pricing,
+    round_charge,
 )
 
 
@@ -46,6 +47,22 @@ def test_ai_monthly_not_seat_scaled():
         ["visitor_resident_anomaly_detection", "incident_summary_basic"],
     )
     assert ai["ai_price_per_month"] == Decimal("1000")
+
+
+def test_client_total_rounds_up_to_two_decimals():
+    totals = compute_client_total(
+        price_per_seat=Decimal("33.333"),
+        seats=1,
+        ai_price_per_month=0,
+        period_months=1,
+    )
+    assert totals["client_total"] == Decimal("33.34")
+
+
+def test_round_charge_up_to_two_decimals():
+    assert round_charge("10.001") == Decimal("10.01")
+    assert round_charge("10.000") == Decimal("10.00")
+    assert round_charge("10.999") == Decimal("11.00")
 
 
 def test_client_total_formula():

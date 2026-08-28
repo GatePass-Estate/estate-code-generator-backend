@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 from typing import Any, Iterable, Mapping
 
 
 ADMIN_FEE_KEY = "administrative_fee"
+MONEY_QUANT = Decimal("0.01")
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -15,6 +16,11 @@ def _to_decimal(value: Any) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def round_charge(amount: Any) -> Decimal:
+    """Round a billable total up to two decimal places."""
+    return _to_decimal(amount).quantize(MONEY_QUANT, rounding=ROUND_UP)
 
 
 def compute_price_per_seat(
@@ -32,7 +38,7 @@ def compute_price_per_seat(
             raise ValueError(
                 f"Missing feature_unit_price for service_key '{key}'"
             )
-        amount = _to_decimal(feature_prices[key])
+        amount = round_charge(_to_decimal(feature_prices[key]))
         if key == ADMIN_FEE_KEY:
             admin_fee = amount
             line_items.append(
@@ -52,10 +58,10 @@ def compute_price_per_seat(
                 }
             )
 
-    price_per_seat = product_sum + admin_fee
+    price_per_seat = round_charge(product_sum + admin_fee)
     return {
-        "sum_of_included_features": product_sum,
-        "administrative_fee": admin_fee,
+        "sum_of_included_features": round_charge(product_sum),
+        "administrative_fee": round_charge(admin_fee),
         "price_per_seat": price_per_seat,
         "line_items": line_items,
     }
@@ -73,10 +79,13 @@ def compute_ai_monthly(
             raise ValueError(
                 f"Missing feature_unit_price for ai feature_key '{key}'"
             )
-        amount = _to_decimal(ai_prices[key])
+        amount = round_charge(_to_decimal(ai_prices[key]))
         total += amount
         line_items.append({"key": key, "kind": "ai", "unit_price": amount})
-    return {"ai_price_per_month": total, "line_items": line_items}
+    return {
+        "ai_price_per_month": round_charge(total),
+        "line_items": line_items,
+    }
 
 
 def compute_client_total(
@@ -92,11 +101,11 @@ def compute_client_total(
     if period_months < 1:
         raise ValueError("period_months must be >= 1")
 
-    pps = _to_decimal(price_per_seat)
-    ai = _to_decimal(ai_price_per_month)
+    pps = round_charge(price_per_seat)
+    ai = round_charge(ai_price_per_month)
     seat_cost = pps * Decimal(seats)
-    monthly_subtotal = seat_cost + ai
-    client_total = monthly_subtotal * Decimal(period_months)
+    monthly_subtotal = round_charge(seat_cost + ai)
+    client_total = round_charge(monthly_subtotal * Decimal(period_months))
     return {
         "price_per_seat": pps,
         "seats": seats,
@@ -180,9 +189,9 @@ def compute_seat_proration(
     if remaining_days > period_days:
         remaining_days = period_days
 
-    psp = _to_decimal(period_seat_price)
-    daily_seat_rate = psp / Decimal(period_days)
-    prorated_charge = (
+    psp = round_charge(period_seat_price)
+    daily_seat_rate = round_charge(psp / Decimal(period_days))
+    prorated_charge = round_charge(
         daily_seat_rate * Decimal(remaining_days) * Decimal(seats_added)
     )
     return {

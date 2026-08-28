@@ -25,7 +25,44 @@ def test_seat_proration_half_period():
     assert result["prorated_charge"] == Decimal("3000")
 
 
-def test_seat_proration_rejects_zero_seats():
+def test_seat_proration_rounds_charge_up_to_two_decimals():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 30, tzinfo=timezone.utc)
+    as_of = datetime(2026, 1, 16, tzinfo=timezone.utc)
+    result = compute_seat_proration(
+        period_seat_price=1000,
+        seats_added=1,
+        period_start=start,
+        period_end=end,
+        as_of=as_of,
+    )
+    # daily = round_up(1000/30)=33.34; charge = 33.34 * 15 = 500.10
+    assert result["daily_seat_rate"] == Decimal("33.34")
+    assert result["prorated_charge"] == Decimal("500.10")
+
+    result = compute_seat_proration(
+        period_seat_price=1000,
+        seats_added=1,
+        period_start=start,
+        period_end=end,
+        as_of=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    # 29 remaining days: daily = round_up(1000/30)=33.34; charge = 33.34*29
+    assert result["daily_seat_rate"] == Decimal("33.34")
+    assert result["prorated_charge"] == Decimal("966.86")
+
+
+def test_seat_proration_daily_rate_rounds_up():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 30, tzinfo=timezone.utc)
+    result = compute_seat_proration(
+        period_seat_price=1000,
+        seats_added=1,
+        period_start=start,
+        period_end=end,
+        as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert result["daily_seat_rate"] == Decimal("33.34")
     with pytest.raises(ValueError, match="seats_added"):
         compute_seat_proration(
             period_seat_price=100,
