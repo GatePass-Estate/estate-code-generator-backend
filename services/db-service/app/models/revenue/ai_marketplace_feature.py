@@ -19,3 +19,7 @@ class AiMarketplaceFeature(BaseModelDB):
     category = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, server_default="true")
     tiers = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    display_picture_path = Column(Text, nullable=True)
+    display_picture_content_type = Column(String, nullable=True)
+    explanatory_video_path = Column(Text, nullable=True)
+    explanatory_video_content_type = Column(String, nullable=True)

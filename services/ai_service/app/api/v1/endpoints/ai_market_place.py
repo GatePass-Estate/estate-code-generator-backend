@@ -1,6 +1,7 @@
 """HTTP routes for the estate-scoped AI marketplace."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from app.core.auth import get_current_user
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -54,6 +55,25 @@ async def list_features(
         category=category,
         page=page,
         limit=limit,
+    )
+
+
+@router.get("/picture")
+async def view_feature_picture(
+    path: str = Query(..., min_length=1, description="GCS object path"),
+    current_user: dict = Depends(get_current_user),
+    service: AiMarketPlaceService = Depends(get_service),
+):
+    """Stream a display picture by GCS object path. JWT only; no extra RBAC."""
+    result = await service.stream_picture(path)
+    return Response(
+        content=result["content"],
+        media_type=result["media_type"],
+        headers={
+            "Content-Disposition": f'inline; filename="{result["filename"]}"',
+            "Cache-Control": "private, no-store",
+            "Content-Length": str(len(result["content"])),
+        },
     )
 
 

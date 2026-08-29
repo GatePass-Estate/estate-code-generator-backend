@@ -1,12 +1,16 @@
 """HTTP access to db-service catalog/ratings and revenue-service billing."""
 
+import logging
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler
+
+logger = logging.getLogger(__name__)
 
 
 class AiMarketPlaceRepository:
@@ -215,3 +219,33 @@ class AiMarketPlaceRepository:
         if not response:
             raise HTTPException(status_code=502, detail="AI install failed")
         return response
+
+    async def get_picture_bytes(self, gcs_path: str) -> tuple[bytes, str]:
+        """GET picture bytes from db-service for a catalog GCS path."""
+        url = (
+            f"{self.marketplace}/picture/stream"
+            f"?{urlencode({'path': gcs_path})}"
+        )
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as http_client:
+            try:
+                response = await http_client.get(url)
+                response.raise_for_status()
+                media_type = response.headers.get("content-type", "image/jpeg")
+                return response.content, media_type
+            except httpx.HTTPStatusError as e:
+                detail = e.response.text
+                try:
+                    detail = e.response.json().get("detail", detail)
+                except ValueError:
+                    pass
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=detail,
+                ) from e
+            except httpx.RequestError as e:
+                logger.exception("Marketplace picture fetch failed")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Picture stream unavailable",
+                ) from e

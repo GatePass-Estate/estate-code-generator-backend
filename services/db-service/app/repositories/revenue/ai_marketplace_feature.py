@@ -179,6 +179,25 @@ class AiMarketplaceFeatureRepository:
             logger.exception(message)
             raise DatabaseError(message) from e
 
+    async def get_by_display_picture_path(
+        self, path: str
+    ) -> GetResponse | None:
+        """Return the catalog row whose display picture is this GCS path."""
+        query = select(TableModel).where(
+            TableModel.is_deleted == False,  # noqa E712
+            TableModel.display_picture_path == path,
+        )
+        try:
+            result = await self.session.execute(query)
+            record = result.unique().scalars().first()
+            if record is None:
+                return None
+            return GetResponse.model_validate(record, from_attributes=True)
+        except SQLAlchemyError as e:
+            message = "Database error in looking up display picture path"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
     async def update(
         self, id: UUID4, request: UpdateRequest
     ) -> UpdateResponse:

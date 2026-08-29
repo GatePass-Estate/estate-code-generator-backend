@@ -2,6 +2,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import NotFoundError
 from app.repositories.revenue.ai_marketplace_feature import (
     AiMarketplaceFeatureRepository as Repository,
 )
@@ -53,3 +54,10 @@ class AiMarketplaceFeatureService:
         return await self.repository.search(
             request=request, page=page, limit=limit
         )
+
+    async def get_picture(self, path: str) -> GetResponse:
+        """Return the catalog row for a display-picture GCS path."""
+        record = await self.repository.get_by_display_picture_path(path)
+        if record is None or not record.display_picture_path:
+            raise NotFoundError("Display picture not found")
+        return record

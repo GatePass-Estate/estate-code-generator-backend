@@ -286,6 +286,8 @@ class AiMarketPlaceService:
             rating_samples=rating_row.get("rating_samples")
             or _parse_samples(None),
             tiers=tiers,
+            display_picture_url=product.get("display_picture_path"),
+            video_url=product.get("explanatory_video_path"),
         )
 
     async def rate(
@@ -391,3 +393,12 @@ class AiMarketPlaceService:
             quote=quote,
             activation=activation,
         )
+
+    async def stream_picture(self, gcs_path: str) -> dict[str, Any]:
+        """Fetch display picture bytes from db-service by GCS object path."""
+        content, media_type = await self.repository.get_picture_bytes(gcs_path)
+        return {
+            "media_type": media_type,
+            "filename": "picture",
+            "content": content,
+        }

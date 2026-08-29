@@ -36,6 +36,18 @@ class AiMarketplaceFeatureBase(BaseModel):
         description="Child ai_feature tiers, e.g. "
         "[{tier, ai_feature_id}, ...]",
     )
+    display_picture_path: str | None = Field(
+        None, description="GCS object path for the display picture"
+    )
+    display_picture_content_type: str | None = Field(
+        None, description="MIME type of the display picture"
+    )
+    explanatory_video_path: str | None = Field(
+        None, description="GCS object path for the explanatory video"
+    )
+    explanatory_video_content_type: str | None = Field(
+        None, description="MIME type of the explanatory video"
+    )
 
     model_config = model_config
 
@@ -74,6 +86,18 @@ class UpdateRequest(BaseModel):
     tiers: Any | None = Field(
         default=None, description="Child ai_feature tiers"
     )
+    display_picture_path: str | None = Field(
+        default=None, description="GCS object path for the display picture"
+    )
+    display_picture_content_type: str | None = Field(
+        default=None, description="MIME type of the display picture"
+    )
+    explanatory_video_path: str | None = Field(
+        default=None, description="GCS object path for the explanatory video"
+    )
+    explanatory_video_content_type: str | None = Field(
+        default=None, description="MIME type of the explanatory video"
+    )
 
     model_config = model_config
 
@@ -107,6 +131,9 @@ class SearchRequest(BaseSearchRequest):
     )
     is_active: Optional[bool] = Field(
         None, description="Whether product is active"
+    )
+    display_picture_path: Optional[str] = Field(
+        None, description="GCS object path for the display picture"
     )
 
     @field_validator("category", mode="before")

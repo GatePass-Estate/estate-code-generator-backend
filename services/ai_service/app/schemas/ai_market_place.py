@@ -54,7 +54,7 @@ class MarketplaceTier(BaseModel):
 
 
 class MarketplaceDetailResponse(BaseModel):
-    """Parent product overview plus child tiers and rating summary."""
+    """Parent product overview plus child tiers, rating summary, and GCS media paths."""
 
     id: str
     name: str
@@ -64,6 +64,8 @@ class MarketplaceDetailResponse(BaseModel):
     rating_count: int = 0
     rating_samples: dict[str, list[RatingSample]] = Field(default_factory=dict)
     tiers: list[MarketplaceTier] = Field(default_factory=list)
+    display_picture_url: str | None = None
+    video_url: str | None = None
 
 
 class RatingRequest(BaseModel):

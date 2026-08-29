@@ -2,11 +2,14 @@ import datetime
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
+from google.cloud.exceptions import NotFound as GCSNotFound
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db_session
+from app.libs import gcs_storage
 from app.schemas.revenue.ai_marketplace_feature import (
     CreateRequest,
     CreateResponse,
@@ -133,6 +136,7 @@ async def search(
     name: str | None = None,
     category: list[str] | None = Query(None),
     is_active: bool | None = None,
+    display_picture_path: str | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
@@ -147,6 +151,43 @@ async def search(
         logger.exception(
             "An unexpected error happened while searching for matches"
         )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/picture/stream",
+    status_code=status.HTTP_200_OK,
+    description="Stream a display picture from GCS by object path",
+)
+async def stream_picture(
+    path: str = Query(..., min_length=1, description="GCS object path"),
+    service: Service = Depends(get_service),
+):
+    """Stream display picture bytes for a catalog GCS object path."""
+    try:
+        record = await service.get_picture(path=path)
+        data = await gcs_storage.download_object(record.display_picture_path)
+        content_type = record.display_picture_content_type or "image/jpeg"
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": 'inline; filename="picture"',
+                "Content-Length": str(len(data)),
+            },
+        )
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail="Display picture not found"
+        ) from e
+    except GCSNotFound as e:
+        raise HTTPException(
+            status_code=404, detail="Display picture not found"
+        ) from e
+    except Exception as e:
+        logger.exception("Marketplace picture stream failed path=%s", path)
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
