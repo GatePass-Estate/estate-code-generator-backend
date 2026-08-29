@@ -1,8 +1,11 @@
-"""API v1: spatial/temporal anomaly detection, incident report intelligence, and volume forecasting."""
+"""API v1: anomaly, incident, volume forecast, and AI marketplace."""
 
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.incident_report import router as incident_router
+from app.api.v1.endpoints.ai_market_place import (
+    router as ai_market_place_router,
+)
 from app.api.v1.endpoints.spatial_anomaly import (
     router as spatial_anomaly_router,
 )
@@ -33,4 +36,9 @@ api_router.include_router(
     volume_forecast_router,
     prefix="/volume-forecast",
     tags=["Volume forecast (ARIMA)"],
+)
+api_router.include_router(
+    ai_market_place_router,
+    prefix="/ai-marketplace",
+    tags=["AI Marketplace"],
 )
