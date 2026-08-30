@@ -51,6 +51,8 @@ async def _get_json(
     settings: Settings,
     path: str,
     params: dict[str, Any],
+    *,
+    not_found_detail: str = "Estate not found.",
 ) -> dict[str, Any]:
     """GET ``path`` on db-service and return the JSON object body."""
     url = _db_url(settings, path)
@@ -65,9 +67,7 @@ async def _get_json(
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         if status == 404:
-            raise ResultPageError(
-                "Estate not found.", status_code=404
-            ) from exc
+            raise ResultPageError(not_found_detail, status_code=404) from exc
         raise ResultPageError(
             f"db-service prediction lookup HTTP error: {exc}",
             status_code=502,
@@ -139,3 +139,118 @@ async def fetch_predictions(
             limit=limit,
         ),
     )
+
+
+async def fetch_case_demographic(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    prediction_id: UUID,
+    estate_id: UUID,
+    display_name: str | None,
+    from_date: datetime | None,
+    to_date: datetime | None,
+) -> dict[str, Any]:
+    """GET db-service case demographic for one prediction."""
+    return await _get_json(
+        client,
+        settings,
+        f"api/v1/codeservice/predictionresult/{prediction_id}/demographic",
+        _params(
+            estate_id=estate_id,
+            display_name=display_name,
+            from_date=from_date,
+            to_date=to_date,
+        ),
+        not_found_detail="Prediction not found.",
+    )
+
+
+async def fetch_case_history(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    prediction_id: UUID,
+    estate_id: UUID,
+    display_name: str | None,
+    history_limit: int,
+) -> dict[str, Any]:
+    """GET db-service prediction history for the same named person."""
+    return await _get_json(
+        client,
+        settings,
+        f"api/v1/codeservice/predictionresult/{prediction_id}/history",
+        _params(
+            estate_id=estate_id,
+            display_name=display_name,
+            history_limit=history_limit,
+        ),
+        not_found_detail="Prediction not found.",
+    )
+
+
+async def fetch_case_detail(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    prediction_id: UUID,
+    estate_id: UUID,
+    from_date: datetime | None,
+    to_date: datetime | None,
+) -> dict[str, Any]:
+    """GET selected payload, cached summary, sample, and period maxes."""
+    return await _get_json(
+        client,
+        settings,
+        f"api/v1/codeservice/predictionresult/{prediction_id}/case",
+        _params(
+            estate_id=estate_id,
+            from_date=from_date,
+            to_date=to_date,
+        ),
+        not_found_detail="Prediction not found.",
+    )
+
+
+async def patch_ai_summary(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    prediction_id: UUID,
+    tier1: dict[str, Any] | None = None,
+    tier2: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """PATCH cached ``tier1`` / ``tier2`` summaries onto the row."""
+    url = _db_url(
+        settings,
+        f"api/v1/codeservice/predictionresult/{prediction_id}/ai-summary",
+    )
+    body: dict[str, Any] = {}
+    if tier1 is not None:
+        body["tier1"] = tier1
+    if tier2 is not None:
+        body["tier2"] = tier2
+    try:
+        response = await client.patch(url, json=body)
+        response.raise_for_status()
+    except httpx.RequestError as exc:
+        raise ResultPageError(
+            f"db-service summary cache failed: {exc}",
+            status_code=502,
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise ResultPageError(
+                "Prediction not found.", status_code=404
+            ) from exc
+        raise ResultPageError(
+            f"db-service summary cache HTTP error: {exc}",
+            status_code=502,
+        ) from exc
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ResultPageError(
+            "db-service returned a non-object payload.",
+            status_code=502,
+        )
+    return data

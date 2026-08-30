@@ -52,3 +52,5 @@ class PredictionResult(BaseModelDB):
     )
     # Stored as {"result": <prediction payload>} to keep room for metadata.
     result = Column(JSONB, nullable=False)
+    # Cached summaries: {"tier1": in-house report, "tier2": LLM report}.
+    ai_summary = Column(JSONB, nullable=True)
