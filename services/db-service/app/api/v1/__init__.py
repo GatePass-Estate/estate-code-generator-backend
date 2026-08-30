@@ -9,6 +9,9 @@ from app.api.v1.endpoints.user_profile.incident_report import (
 from app.api.v1.endpoints.code_service.log_feature_engineering import (
     router as logfeatureengineering_router,
 )
+from app.api.v1.endpoints.code_service.prediction_result import (
+    router as predictionresult_router,
+)
 from app.api.v1.endpoints.code_service.resident_log import (
     router as residentlog_router,
 )
@@ -99,6 +102,12 @@ api_router.include_router(
     logfeatureengineering_router,
     prefix="/codeservice/logfeatureengineering",
     tags=["LogFeatureEngineering"],
+)
+
+api_router.include_router(
+    predictionresult_router,
+    prefix="/codeservice/predictionresult",
+    tags=["PredictionResult"],
 )
 
 api_router.include_router(

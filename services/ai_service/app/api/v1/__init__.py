@@ -6,6 +6,9 @@ from app.api.v1.endpoints.incident_report import router as incident_router
 from app.api.v1.endpoints.spatial_anomaly import (
     router as spatial_anomaly_router,
 )
+from app.api.v1.endpoints.spatial_anomaly_resultpage import (
+    router as spatial_anomaly_resultpage_router,
+)
 from app.api.v1.endpoints.temporal_anomaly import (
     router as temporal_anomaly_router,
 )
@@ -18,6 +21,11 @@ api_router.include_router(
     spatial_anomaly_router,
     prefix="/spatial-anomaly",
     tags=["Spatial Anomaly"],
+)
+api_router.include_router(
+    spatial_anomaly_resultpage_router,
+    prefix="/spatial-anomaly/result-page",
+    tags=["Spatial Anomaly Result Page"],
 )
 api_router.include_router(
     temporal_anomaly_router,
