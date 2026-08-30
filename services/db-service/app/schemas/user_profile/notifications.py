@@ -60,6 +60,7 @@ class NotificationType(str, Enum):
     # Household management
     HOUSEHOLD_HEAD_ASSIGNED = "HOUSEHOLD_HEAD_ASSIGNED"
     HOUSEHOLD_NEEDS_HEAD = "HOUSEHOLD_NEEDS_HEAD"
+    SPATIAL_ANOMALY_DETECTED = "SPATIAL_ANOMALY_DETECTED"
 
 
 class DevicePlatform(str, Enum):

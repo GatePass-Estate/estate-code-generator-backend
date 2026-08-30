@@ -42,7 +42,8 @@ async def internal_notify(
     Fire-and-forget notification dispatch.
 
     Protected by X-Internal-Key header. Returns 202 immediately and
-    processes fan-out in a background task.
+    processes fan-out in a background task. Recipients are either an
+    explicit ``recipient_user_ids`` list or a ``fan_out`` of estate roles.
     """
     service = NotificationService(ahttp_client)
     background_tasks.add_task(service.process, payload)

@@ -66,6 +66,7 @@ class CodeService:
             code: The generated access code to be validated.
             user_details: The details of the user making the request.
             auth_token: Bearer token forwarded to ai-service for anomaly check.
+                Anomalous results also notify estate admins.
 
         Returns:
             A GetResponse object after retrieving the item by id.
