@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -452,7 +452,8 @@ class AccessCodeRepository:
 
         Reads ``accesscode`` rows (each row is already unique), joins
         ``users`` for ``full_name``, and left-correlates ``residentlog`` for
-        ``usage_count`` plus the latest validation metadata.
+        ``usage_count`` plus the latest validation metadata. ``code_deleted``
+        is true when the row is soft-deleted or ``valid_until`` has passed.
         """
         log_match = (
             func.lower(ResidentLogModel.hashed_code)
@@ -510,7 +511,10 @@ class AccessCodeRepository:
                     TableModel.user_id,
                     TableModel.estate_id,
                     TableModel.hashed_code,
-                    TableModel.is_deleted.label("code_deleted"),
+                    or_(
+                        TableModel.is_deleted.is_(True),
+                        TableModel.valid_until < datetime.now(timezone.utc),
+                    ).label("code_deleted"),
                     full_name.label("full_name"),
                     func.coalesce(usage_count, 0).label("usage_count"),
                     func.coalesce(

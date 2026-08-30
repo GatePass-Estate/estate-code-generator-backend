@@ -278,7 +278,11 @@ class HistoryItemResponse(BaseModel):
         default=None, description="Resident full name from users"
     )
     code_deleted: bool = Field(
-        ..., description="Whether the access-code row is soft-deleted"
+        ...,
+        description=(
+            "True when the access-code row is soft-deleted or past "
+            "``valid_until``"
+        ),
     )
     usage_count: int = Field(
         default=0,

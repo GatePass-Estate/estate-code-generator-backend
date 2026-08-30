@@ -37,6 +37,8 @@ class VisitorLogEntry(BaseModel):
             resident (``user_id``).
         usage_count (int): Total validations for this code; set on first-level
             unique history only.
+        code_deleted (bool): Whether the visitor code is missing from cache
+            or past ``valid_until``; set after history retrieval.
     """
 
     id: UUID4 = Field(..., description="Unique identifier for the log entry")
@@ -68,6 +70,12 @@ class VisitorLogEntry(BaseModel):
     usage_count: int | None = Field(
         default=None,
         description="Total validations for this code (first-level only)",
+    )
+    code_deleted: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the visitor code is expired or no longer in cache"
+        ),
     )
 
     model_config = model_config

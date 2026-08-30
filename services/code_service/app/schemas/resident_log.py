@@ -33,8 +33,8 @@ class ResidentLogEntry(BaseModel):
         full_name (str): Denormalized full name of the resident (``user_id``).
         usage_count (int): Total validations for this code; set on first-level
             unique history only.
-        code_deleted (bool): Whether the resident access code is soft-deleted;
-            set on first-level unique history only.
+        code_deleted (bool): Whether the resident access code is soft-deleted
+            or past ``valid_until``; set on first-level unique history only.
     """
 
     id: UUID4 = Field(..., description="Unique identifier for the log entry")
@@ -61,7 +61,8 @@ class ResidentLogEntry(BaseModel):
     code_deleted: bool | None = Field(
         default=None,
         description=(
-            "Whether the resident access code is soft-deleted (first-level)"
+            "Whether the resident access code is soft-deleted or expired "
+            "(first-level)"
         ),
     )
 
@@ -100,7 +101,8 @@ class CodeHistoryListResponse(ListResponse):
     code_deleted: bool = Field(
         ...,
         description=(
-            "True when the access-code row for this code is soft-deleted"
+            "True when the access-code row is soft-deleted or past "
+            "``valid_until``"
         ),
     )
     code_created_at: datetime | None = Field(
@@ -109,7 +111,7 @@ class CodeHistoryListResponse(ListResponse):
     )
     code_deleted_at: datetime | None = Field(
         default=None,
-        description="When the access code became inactive (if deleted)",
+        description="When the access code became inactive (deleted or expired)",
     )
 
     model_config = model_config

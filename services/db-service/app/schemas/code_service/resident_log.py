@@ -200,7 +200,8 @@ class GetResponse(SharedModel, ResidentLogBase):
         usage_count (int): Number of validations for this code; set on unique
             search results only.
         code_deleted (bool): Whether the linked access-code row is
-            soft-deleted; set on unique search results only.
+            soft-deleted or past ``valid_until``; set on unique search
+            results only.
     """
 
     usage_count: int | None = Field(
@@ -210,7 +211,8 @@ class GetResponse(SharedModel, ResidentLogBase):
     code_deleted: bool | None = Field(
         default=None,
         description=(
-            "Whether the resident access code is soft-deleted (unique search)"
+            "Whether the resident access code is soft-deleted or expired "
+            "(unique search)"
         ),
     )
 

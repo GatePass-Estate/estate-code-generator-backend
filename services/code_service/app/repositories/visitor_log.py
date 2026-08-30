@@ -1,9 +1,10 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import UUID4
 
 from app.core.config import settings
+from app.core.exceptions import NotFoundError
 from app.libs.http_handler import AsyncHttpHandler
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class VisitorLogRepository:
         self.endpoint = (
             f"{settings.DB_SERVICE_URL}api/v1/codeservice/visitorlog/search"
         )
+        self.cache_raw_endpoint = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice/cachehandler"
+        )
 
     async def unique_history(
         self,
@@ -42,7 +46,8 @@ class VisitorLogRepository:
     ) -> dict:
         """
         First-level visitor history: one entry per unique code with
-        ``usage_count``, latest first.
+        ``usage_count``, latest first. The BFF service layer may attach
+        ``code_deleted`` from cache expiry after this call.
 
         Backed by db-service ``visitorlog/search`` with ``unique=true``. The
         db-service sets ``created_at`` from the earliest log row per code so
@@ -99,3 +104,41 @@ class VisitorLogRepository:
         if from_date is not None:
             params["from_date"] = from_date.isoformat()
         return await self.ahttp_client.async_get(self.endpoint, params=params)
+
+    @staticmethod
+    def _is_visitor_code_expired(record: dict) -> bool:
+        """Return True when the cached visitor code is past its validity end."""
+        period = record.get("validity_period") or {}
+        end = period.get("end") or record.get("valid_until")
+        if not end:
+            return False
+        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S.%f%z")
+        return datetime.now(timezone.utc) > end_dt
+
+    async def is_code_inactive(self, hashed_code: str) -> bool:
+        """
+        Whether a visitor code is no longer active.
+
+        Looks up the raw cache record. Missing keys (expired TTL or deleted)
+        and records whose ``valid_until`` / period end has passed count as
+        inactive. Frozen or out-of-window codes still in cache are active
+        for history purposes. Cache lookup failures are treated as active
+        so a downstream outage does not mark codes deleted.
+        """
+        url = f"{self.cache_raw_endpoint}/{hashed_code}/raw"
+        try:
+            record = await self.ahttp_client.async_get(url)
+        except NotFoundError:
+            return True
+        except Exception:
+            logger.exception(
+                "Failed to resolve visitor code expiry for %s", hashed_code
+            )
+            return False
+        try:
+            return self._is_visitor_code_expired(record)
+        except (TypeError, ValueError):
+            logger.exception(
+                "Invalid expiry metadata on visitor code %s", hashed_code
+            )
+            return False

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -402,7 +402,8 @@ class ResidentLogRepository:
         Keeps the most recent row per code, attaches ``usage_count`` (total
         validations per code within the filtered set), and left-joins the
         earliest ``accesscode`` row per hash (including soft-deleted) for
-        ``code_deleted``, then paginates by ``created_at``.
+        ``code_deleted`` (soft-deleted or past ``valid_until``), then
+        paginates by ``created_at``.
         """
         filtered = query.subquery("filtered")
         row_num = (
@@ -441,10 +442,19 @@ class ResidentLogRepository:
             select(
                 access_ranked.c.hashed_code,
                 access_ranked.c.is_deleted,
+                access_ranked.c.valid_until,
             )
             .where(access_ranked.c.ac_rn == 1)
             .subquery("access_earliest")
         )
+        now = datetime.now(timezone.utc)
+        code_deleted = func.coalesce(
+            or_(
+                access_earliest.c.is_deleted.is_(True),
+                access_earliest.c.valid_until < now,
+            ),
+            False,
+        ).label("code_deleted")
         count_query = (
             select(func.count()).select_from(ranked).where(ranked.c.rn == 1)
         )
@@ -452,9 +462,7 @@ class ResidentLogRepository:
         records_query = (
             select(
                 ranked,
-                func.coalesce(access_earliest.c.is_deleted, False).label(
-                    "code_deleted"
-                ),
+                code_deleted,
             )
             .select_from(ranked)
             .outerjoin(
