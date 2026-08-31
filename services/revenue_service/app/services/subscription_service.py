@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.integrations.paystack_client import PaystackClient
 from app.libs.entitlement_validation import ensure_admin_fee_entitlement
 from app.libs.period_dating import compute_period_end
 from app.libs.transient_retry import retry_transient
@@ -128,8 +129,13 @@ async def _compensate_subscription_write(
 class SubscriptionService:
     """Reads and mutates estate subscriptions and linked AI grants."""
 
-    def __init__(self, repo: DbRevenueRepository):
+    def __init__(
+        self,
+        repo: DbRevenueRepository,
+        paystack_client: PaystackClient | None = None,
+    ):
         self.repo = repo
+        self._paystack = paystack_client
 
     async def get_estate_subscription(self, estate_id: str) -> dict:
         """Return subscription, tier, and effective entitlements for an estate."""
@@ -310,16 +316,17 @@ class SubscriptionService:
                 raise HTTPException(
                     status_code=502,
                     detail=(
-                        "Subscription activation updated AI grants incompletely "
-                        "and automatic rollback failed; retry grant sync or "
-                        "repair manually before billing goes live."
+                        "Subscription activation updated AI grants "
+                        "incompletely and automatic rollback failed; "
+                        "retry grant sync or repair manually before "
+                        "billing goes live."
                     ),
                 ) from compensation_exc
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Subscription activation rolled back because AI grant sync "
-                    "failed; retry the activation once db-service is healthy."
+                    "Subscription activation rolled back because AI grant sync"
+                    " failed; retry the activation once db-service is healthy."
                 ),
             ) from exc
         return {
@@ -343,7 +350,8 @@ class SubscriptionService:
     ) -> dict:
         """Renew subscription using dating rules; extend linked paid AI grants.
 
-        Rolls back the subscription period update if linked grant extension fails.
+        Rolls back the subscription period update if
+        linked grant extension fails.
         Grant extension is idempotent and safe to retry.
         """
         subscription = await self._latest_subscription(estate_id)
@@ -446,8 +454,18 @@ class SubscriptionService:
             "period_end": new_end.isoformat(),
         }
 
-    async def cancel(self, estate_id: str) -> dict:
-        """Cancel auto-renew; keep period_end / AI expires_at unchanged."""
+    async def cancel(
+        self, estate_id: str, *, call_paystack: bool = True
+    ) -> dict:
+        """Cancel auto-renew; keep period_end / AI expires_at unchanged.
+
+        Args:
+            estate_id: Estate whose subscription to cancel.
+            call_paystack: When True (default), also disables the Paystack
+                recurring subscription so no further charges fire. Pass
+                False when called from the ``subscription.disable`` webhook
+                handler — Paystack already disabled it on their side.
+        """
         subscription = await self.repo.get_active_subscription(estate_id)
         if not subscription:
             raise HTTPException(
@@ -462,6 +480,37 @@ class SubscriptionService:
                 "cancelled_at": now.isoformat(),
             },
         )
+
+        if call_paystack:
+            sub_code = subscription.get("paystack_subscription_code")
+            if sub_code and self._paystack:
+                try:
+                    await self._paystack.disable_subscription(sub_code)
+                    logger.info(
+                        "Paystack subscription disabled estate_id=%s "
+                        "subscription_code=%s",
+                        estate_id,
+                        sub_code,
+                    )
+                except Exception:
+                    # DB is already updated — log and continue. Ops must
+                    # manually disable the Paystack subscription to stop
+                    # further charges.
+                    logger.exception(
+                        "Failed to disable Paystack subscription "
+                        "estate_id=%s subscription_code=%s — "
+                        "cancelled in DB but Paystack may still charge",
+                        estate_id,
+                        sub_code,
+                    )
+            elif not sub_code:
+                logger.warning(
+                    "cancel estate_id=%s has no "
+                    "paystack_subscription_code — cannot disable "
+                    "Paystack subscription; it may continue charging",
+                    estate_id,
+                )
+
         return {"estate_id": estate_id, "subscription": updated}
 
     async def apply_seat_add(self, estate_id: str, seats_added: int) -> dict:
@@ -474,6 +523,16 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(
                 status_code=404, detail="No active subscription for estate"
+            )
+        status = (subscription.get("status") or "").lower()
+        if status not in ("active", "trialing"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot add seats to a subscription with "
+                    f"status '{status}'. Only active or trialing "
+                    "subscriptions allow mid-period seat additions."
+                ),
             )
         current = int(subscription.get("covered_users") or 0)
         updated = await self.repo.update_estate_subscription(

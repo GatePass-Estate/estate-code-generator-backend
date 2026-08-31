@@ -33,8 +33,19 @@ class Settings(BaseSettings):
         os.getenv("REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS", "0.2")
     )
 
-    # Unused in Phase 1 (Paystack stubbed)
     PAYSTACK_SECRET_KEY: str = os.getenv("PAYSTACK_SECRET_KEY", "")
+    PAYSTACK_PUBLIC_KEY: str = os.getenv("PAYSTACK_PUBLIC_KEY", "")
+    PAYSTACK_BASE_URL: str = os.getenv(
+        "PAYSTACK_BASE_URL", "https://api.paystack.co"
+    )
+    PAYSTACK_TIMEOUT_SECONDS: float = float(
+        os.getenv("PAYSTACK_TIMEOUT_SECONDS", "30.0")
+    )
+    PAYSTACK_CALLBACK_URL: str = os.getenv("PAYSTACK_CALLBACK_URL", "")
+
+    CHECKOUT_TOKEN_EXPIRY_SECONDS: int = int(
+        os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
+    )
 
 
 settings = Settings()

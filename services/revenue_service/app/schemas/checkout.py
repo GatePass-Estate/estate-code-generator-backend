@@ -1,8 +1,8 @@
 """Request/response schemas for checkout quote APIs."""
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class QuoteRequest(BaseModel):
@@ -13,11 +13,11 @@ class QuoteRequest(BaseModel):
     entitlements: dict[str, Any] | None = None
     ai_feature_keys: list[str] | None = None
     covered_users: int = Field(..., ge=1)
-    period_months: int = Field(..., ge=1)
+    period_months: Literal[1, 3, 6, 12]
 
     @model_validator(mode="after")
     def require_tier_or_custom(self):
-        """Require either a tier_slug or an entitlements map for custom quotes."""
+        """Require either a tier_slug or entitlements map for custom quotes."""
         if not self.tier_slug and self.entitlements is None:
             raise ValueError(
                 "Provide tier_slug or entitlements (custom quote)"
@@ -70,19 +70,12 @@ class SeatProrateResponse(BaseModel):
     period_end: str
 
 
-class SeatApplyRequest(BaseModel):
-    """Apply mid-period seats after charge success (Paystack stub companion)."""
-
-    estate_id: str
-    seats_added: int = Field(..., ge=1)
-
-
 class AiCheckoutRequest(BaseModel):
     """Standalone AI feature quote body."""
 
     estate_id: str
     ai_feature_keys: list[str] = Field(..., min_length=1)
-    period_months: int = Field(1, ge=1)
+    period_months: Literal[1, 3, 6, 12] = 1
     paid_at: str | None = None
 
 
@@ -103,3 +96,101 @@ class RenewSubscriptionRequest(BaseModel):
 
     period_months: int = Field(1, ge=1)
     paid_at: str | None = None
+
+
+class CheckoutInitializeRequest(BaseModel):
+    """Body for POST /checkout/initialize."""
+
+    estate_id: str
+    customer_email: EmailStr
+    checkout_kind: Literal["tier", "custom", "seat_add", "ai_only"]
+    tier_slug: str | None = None
+    entitlements: dict[str, Any] | None = None
+    ai_feature_keys: list[str] | None = None
+    covered_users: int | None = Field(None, ge=1)
+    seats_added: int | None = Field(None, ge=1)
+    period_months: Literal[1, 3, 6, 12] = 1
+
+    @model_validator(mode="after")
+    def validate_kind_fields(self):
+        """Enforce required and reject irrelevant fields per checkout_kind."""
+        kind = self.checkout_kind
+
+        # Required fields per kind
+        if kind in ("tier", "custom") and self.covered_users is None:
+            raise ValueError(
+                f"covered_users is required for checkout_kind={kind!r}"
+            )
+        if kind == "tier" and not self.tier_slug:
+            raise ValueError("tier_slug is required for checkout_kind='tier'")
+        if kind == "custom" and self.entitlements is None:
+            raise ValueError(
+                "entitlements is required for checkout_kind='custom'"
+            )
+        if kind == "seat_add" and self.seats_added is None:
+            raise ValueError(
+                "seats_added is required for checkout_kind='seat_add'"
+            )
+        if kind == "ai_only" and not self.ai_feature_keys:
+            raise ValueError(
+                "ai_feature_keys is required for checkout_kind='ai_only'"
+            )
+
+        # seat_add has no billing period — reject if explicitly provided.
+        # period_months has a default (1) so we use model_fields_set to
+        # distinguish an explicit value from the default.
+        if kind == "seat_add" and "period_months" in self.model_fields_set:
+            raise ValueError(
+                "period_months is not allowed for checkout_kind='seat_add'"
+            )
+
+        # Reject fields that don't belong to this kind.
+        # ai_feature_keys is allowed on tier/custom (bundles AI with sub).
+        forbidden_map: dict[str, set[str]] = {
+            "tier": {"seats_added", "entitlements"},
+            "custom": {"seats_added", "tier_slug"},
+            "seat_add": {
+                "tier_slug",
+                "entitlements",
+                "covered_users",
+                "ai_feature_keys",
+            },
+            "ai_only": {
+                "tier_slug",
+                "entitlements",
+                "covered_users",
+                "seats_added",
+            },
+        }
+        forbidden = [
+            f
+            for f in forbidden_map.get(kind, set())
+            if getattr(self, f) is not None
+        ]
+        if forbidden:
+            fields = ", ".join(sorted(forbidden))
+            verb = "is" if len(forbidden) == 1 else "are"
+            raise ValueError(
+                f"{fields} {verb} not allowed for" f" checkout_kind={kind!r}"
+            )
+
+        return self
+
+
+class CheckoutInitializeResponse(BaseModel):
+    """Response for POST /checkout/initialize."""
+
+    checkout_session_id: str
+    paystack_reference: str
+    authorization_url: str
+    checkout_token: str
+
+
+class CheckoutStatusResponse(BaseModel):
+    """Response for GET /checkout/status/{reference}."""
+
+    paystack_reference: str
+    status: str
+    checkout_kind: str
+    paid_at: str | None = None
+    estate_id_masked: str
