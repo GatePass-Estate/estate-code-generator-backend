@@ -34,6 +34,11 @@ class DbRevenueRepository:
         self.subscription_tier = f"{base}api/v1/revenue/subscriptiontier"
         self.estate_subscription = f"{base}api/v1/revenue/estatesubscription"
         self.estate_ai_feature = f"{base}api/v1/revenue/estateaifeature"
+        self.payment_checkout_session = (
+            f"{base}api/v1/revenue/paymentcheckoutsession"
+        )
+        self.payment_event = f"{base}api/v1/revenue/paymentevent"
+        self.payment_transaction = f"{base}api/v1/revenue/paymenttransaction"
 
     async def _search(
         self, endpoint: str, params: dict[str, Any]
@@ -264,3 +269,104 @@ class DbRevenueRepository:
             self.estate_subscription,
             {"estate_id": estate_id, "limit": 50},
         )
+
+    async def get_subscription_by_paystack_subscription_code(
+        self, subscription_code: str
+    ) -> dict | None:
+        """Return a subscription by paystack_subscription_code, or None."""
+        items = await self._search(
+            self.estate_subscription,
+            {"paystack_subscription_code": subscription_code, "limit": 1},
+        )
+        return items[0] if items else None
+
+    # ------------------------------------------------------------------ #
+    # Payment checkout session
+    # ------------------------------------------------------------------ #
+
+    async def create_checkout_session(self, payload: dict) -> dict:
+        """POST a new payment_checkout_session row."""
+        response = await self.client.async_post(
+            self.payment_checkout_session, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create checkout session",
+            )
+        return response
+
+    async def get_checkout_session_by_idempotency_key(
+        self, key: str
+    ) -> dict | None:
+        """Return a checkout session by idempotency_key, or None."""
+        items = await self._search(
+            self.payment_checkout_session,
+            {"idempotency_key": key, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def get_checkout_session_by_reference(
+        self, reference: str
+    ) -> dict | None:
+        """Return a checkout session by paystack_reference, or None."""
+        items = await self._search(
+            self.payment_checkout_session,
+            {"paystack_reference": reference, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def update_checkout_session(
+        self, session_id: str, payload: dict
+    ) -> dict:
+        """PATCH a payment_checkout_session by id."""
+        url = f"{self.payment_checkout_session}/{session_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to update checkout session",
+            )
+        return response
+
+    # ------------------------------------------------------------------ #
+    # Payment event (webhook dedup ledger)
+    # ------------------------------------------------------------------ #
+
+    async def get_payment_event_by_event_id(
+        self, event_id: str
+    ) -> dict | None:
+        """Return a payment_event by provider event_id, or None."""
+        items = await self._search(
+            self.payment_event,
+            {"event_id": event_id, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def create_payment_event(self, payload: dict) -> dict:
+        """POST a new payment_event row."""
+        response = await self.client.async_post(
+            self.payment_event, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment event",
+            )
+        return response
+
+    # ------------------------------------------------------------------ #
+    # Payment transaction (audit ledger)
+    # ------------------------------------------------------------------ #
+
+    async def create_payment_transaction(self, payload: dict) -> dict:
+        """POST a new payment_transaction row."""
+        response = await self.client.async_post(
+            self.payment_transaction, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment transaction",
+            )
+        return response
