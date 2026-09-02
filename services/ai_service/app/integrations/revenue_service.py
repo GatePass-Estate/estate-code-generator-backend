@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 ANOMALY_FEATURE_KEY = "visitor_resident_anomaly_detection"
 #: Seeded AI catalog key for paid incident LLM summary.
 INCIDENT_SUMMARY_FEATURE_KEY = "incident_summary_basic"
+#: In-house formatted summary for a selected anomaly case.
+ANOMALY_SUMMARY_TIER2_KEY = "visitor_resident_anomaly_detection_tier2"
+#: LLM summary for a selected anomaly case (includes in-house).
+ANOMALY_SUMMARY_TIER3_KEY = "visitor_resident_anomaly_detection_tier3"
 
 
 def _revenue_url(settings: Settings, path: str) -> str:
@@ -92,3 +96,24 @@ async def check_ai_feature_allowed(
             status_code=403,
         )
     return True
+
+
+async def is_ai_feature_allowed(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    estate_id: UUID | str,
+    feature_key: str,
+) -> bool:
+    """Return whether the estate may use ``feature_key``; False on 403/404."""
+    try:
+        return await check_ai_feature_allowed(
+            client,
+            settings,
+            estate_id=estate_id,
+            feature_key=feature_key,
+        )
+    except EntitlementDeniedError as exc:
+        if exc.status_code in (403, 404):
+            return False
+        raise

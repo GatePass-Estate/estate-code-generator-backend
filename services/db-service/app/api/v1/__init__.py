@@ -9,6 +9,9 @@ from app.api.v1.endpoints.user_profile.incident_report import (
 from app.api.v1.endpoints.code_service.log_feature_engineering import (
     router as logfeatureengineering_router,
 )
+from app.api.v1.endpoints.code_service.prediction_result import (
+    router as predictionresult_router,
+)
 from app.api.v1.endpoints.code_service.resident_log import (
     router as residentlog_router,
 )
@@ -59,6 +62,12 @@ from app.api.v1.endpoints.revenue.service_catalog import (
 from app.api.v1.endpoints.revenue.ai_feature import (
     router as aifeature_router,
 )
+from app.api.v1.endpoints.revenue.ai_marketplace_feature import (
+    router as aimarketplacefeature_router,
+)
+from app.api.v1.endpoints.revenue.ai_marketplace_feature_rating import (
+    router as aimarketplacefeaturerating_router,
+)
 from app.api.v1.endpoints.revenue.feature_unit_price import (
     router as featureunitprice_router,
 )
@@ -99,6 +108,12 @@ api_router.include_router(
     logfeatureengineering_router,
     prefix="/codeservice/logfeatureengineering",
     tags=["LogFeatureEngineering"],
+)
+
+api_router.include_router(
+    predictionresult_router,
+    prefix="/codeservice/predictionresult",
+    tags=["PredictionResult"],
 )
 
 api_router.include_router(
@@ -207,6 +222,18 @@ api_router.include_router(
     aifeature_router,
     prefix="/revenue/aifeature",
     tags=["AiFeature"],
+)
+
+api_router.include_router(
+    aimarketplacefeature_router,
+    prefix="/revenue/aimarketplacefeature",
+    tags=["AiMarketplaceFeature"],
+)
+
+api_router.include_router(
+    aimarketplacefeaturerating_router,
+    prefix="/revenue/aimarketplacefeaturerating",
+    tags=["AiMarketplaceFeatureRating"],
 )
 
 api_router.include_router(
