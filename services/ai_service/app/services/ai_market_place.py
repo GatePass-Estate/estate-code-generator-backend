@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.libs.ai_grant_entitlement import is_purchased as _is_purchased
 from app.repositories.ai_market_place import AiMarketPlaceRepository
 from app.schemas.ai_market_place import (
     MarketplaceDetailResponse,
@@ -62,11 +63,6 @@ def _grant_map(grants: list[dict]) -> dict[str, dict]:
     return {
         str(g["ai_feature_id"]): g for g in grants if g.get("ai_feature_id")
     }
-
-
-def _is_purchased(feature_ids: list[str], grants: dict[str, dict]) -> bool:
-    """True if the estate has a grant for any child ``ai_feature_id``."""
-    return any(fid in grants for fid in feature_ids)
 
 
 def _tier_status(grant: dict | None) -> str:
