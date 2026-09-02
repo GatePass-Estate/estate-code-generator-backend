@@ -95,6 +95,19 @@ async def delete_object(
     await asyncio.to_thread(_delete)
 
 
+async def download_object(
+    object_path: str,
+    *,
+    client: storage.Client | None = None,
+) -> bytes:
+    """Download an object from GCS as bytes."""
+
+    def _download() -> bytes:
+        return _get_blob(object_path, client=client).download_as_bytes()
+
+    return await asyncio.to_thread(_download)
+
+
 async def stream_object(signed_url: str) -> AsyncIterator[bytes]:
     """Stream object bytes from GCS via an internal signed URL."""
     async with httpx.AsyncClient(

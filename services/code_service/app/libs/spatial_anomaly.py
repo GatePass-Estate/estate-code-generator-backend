@@ -34,7 +34,8 @@ async def trigger_spatial_anomaly_check(
 
     Returns:
         ``{"prediction_result_id": str, "is_anomalous": bool}`` on success,
-        otherwise ``None``.
+        otherwise ``None``. Callers notify estate admins when
+        ``is_anomalous`` is true.
     """
     estate_id = record.get("estate_id")
     if not estate_id or not log_id:

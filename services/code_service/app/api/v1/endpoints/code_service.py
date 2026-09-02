@@ -145,7 +145,8 @@ async def validate(
 
     On success this persists a visitor or resident log row, then triggers
     spatial anomaly analysis best-effort. Anomaly runs only here because a
-    real visit/access event was recorded — listing codes does not.
+    real visit/access event was recorded — listing codes does not. Flagged
+    events notify estate admins and primary admins.
 
     Arguments:
         code: The generated access code to be validated.
