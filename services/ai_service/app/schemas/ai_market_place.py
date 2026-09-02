@@ -4,13 +4,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+
 
 class RatingSample(BaseModel):
     """One bounded sample from the rating summary (up to 5 per score)."""
 
     user_id: str
     score: int
-    comment: str | None = None
+    comment: str | None = Field(
+        None, max_length=settings.RATING_COMMENT_MAX_LENGTH
+    )
     created_at: str | None = None
 
 
@@ -72,7 +76,9 @@ class RatingRequest(BaseModel):
     """Body for creating or updating a user's product rating."""
 
     score: int = Field(..., ge=1, le=5)
-    comment: str | None = None
+    comment: str | None = Field(
+        None, max_length=settings.RATING_COMMENT_MAX_LENGTH
+    )
 
 
 class UserRating(BaseModel):
@@ -81,7 +87,9 @@ class UserRating(BaseModel):
     id: str
     user_id: str
     score: int
-    comment: str | None = None
+    comment: str | None = Field(
+        None, max_length=settings.RATING_COMMENT_MAX_LENGTH
+    )
     created_at: str | None = None
     updated_at: str | None = None
 

@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.libs.ai_grant_entitlement import grant_is_entitled, is_purchased
 
 _FID = "feature-1"
@@ -62,3 +64,35 @@ def test_is_purchased_true_if_any_child_feature_is_entitled():
 
 def test_grant_is_entitled_false_for_missing_grant():
     assert grant_is_entitled(None) is False
+
+
+def test_rating_request_rejects_oversized_comment():
+    pytest.importorskip("pydantic")
+    pytest.importorskip("pydantic_settings")
+    from pydantic import ValidationError
+
+    from app.core.config import settings
+    from app.schemas.ai_market_place import RatingRequest, RatingSample
+
+    limit = settings.RATING_COMMENT_MAX_LENGTH
+
+    with pytest.raises(ValidationError):
+        RatingRequest(score=5, comment="x" * (limit + 1))
+    with pytest.raises(ValidationError):
+        RatingSample(
+            user_id="u1",
+            score=5,
+            comment="x" * (limit + 1),
+        )
+
+    ok = RatingRequest(score=5, comment="x" * limit)
+    assert ok.comment is not None
+    assert len(ok.comment) == limit
+
+    sample = RatingSample(
+        user_id="u1",
+        score=5,
+        comment="x" * limit,
+    )
+    assert sample.comment is not None
+    assert len(sample.comment) == limit

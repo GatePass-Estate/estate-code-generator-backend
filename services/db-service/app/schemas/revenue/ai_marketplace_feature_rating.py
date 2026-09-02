@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
+from app.core.config import settings
 from app.schemas.base import (
     BaseListResponse,
     BaseSearchRequest,
@@ -33,7 +34,11 @@ class AiMarketplaceFeatureRatingBase(BaseModel):
     )
     user_id: UUID4 = Field(..., description="Rater user ID")
     score: int = Field(..., ge=1, le=5, description="Score from 1 to 5")
-    comment: str | None = Field(None, description="Optional user comment")
+    comment: str | None = Field(
+        None,
+        max_length=settings.RATING_COMMENT_MAX_LENGTH,
+        description="Optional user comment",
+    )
 
     @field_serializer("ai_marketplace_feature_id")
     def serialize_feature_id(self, value):
@@ -73,7 +78,9 @@ class UpdateRequest(BaseModel):
         default=None, ge=1, le=5, description="Score from 1 to 5"
     )
     comment: str | None = Field(
-        default=None, description="Optional user comment"
+        default=None,
+        max_length=settings.RATING_COMMENT_MAX_LENGTH,
+        description="Optional user comment",
     )
     model_config = model_config
 
@@ -119,7 +126,9 @@ class RatingSample(BaseModel):
 
     user_id: str
     score: int
-    comment: str | None = None
+    comment: str | None = Field(
+        None, max_length=settings.RATING_COMMENT_MAX_LENGTH
+    )
     created_at: datetime | None = None
 
     model_config = model_config
