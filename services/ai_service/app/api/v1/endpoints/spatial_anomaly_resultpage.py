@@ -5,50 +5,50 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import ValidationError
 
 from app.core.auth import get_current_user
-from app.core.config import settings
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
-from app.integrations.db_service_prediction_result import (
-    fetch_case_demographic,
-    fetch_case_detail,
-    fetch_case_history,
-    fetch_overview,
-    fetch_predictions,
-    patch_ai_summary,
-)
-from app.integrations.revenue_service import (
-    ANOMALY_SUMMARY_TIER2_KEY,
-    ANOMALY_SUMMARY_TIER3_KEY,
-    is_ai_feature_allowed,
-)
 from app.models.spatial_anomaly_resultpage import (
     CaseDemographic,
-    CaseHistoryItem,
     CaseHistoryResponse,
     CaseResultsResponse,
     CaseSummaryResponse,
-    InhouseSummary,
-    LlmSummary,
     PredictionListResponse,
     ResultPageOverviewResponse,
     Severity,
     UserType,
 )
-from app.pipeline.spatial_anomaly_case_summary import (
-    build_inhouse_summary,
-    summarize_case_with_llm,
-)
-from app.pipeline.spatial_anomaly_resultpage import (
-    case_results_from_db_payload,
-    overview_from_db_payload,
+from app.services.spatial_anomaly_resultpage import (
+    SpatialAnomalyResultPageService,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def get_service() -> SpatialAnomalyResultPageService:
+    """Build a result-page service for the current request."""
+    return SpatialAnomalyResultPageService()
+
+
+def _require_estate_membership(current_user: dict, estate_id: UUID) -> None:
+    """
+    Reject callers whose JWT estate does not match ``estate_id``.
+
+    Membership is an endpoint-layer concern (RBAC will follow later).
+    """
+    user_estate_id = current_user.get("estate_id")
+    if user_estate_id is None or str(user_estate_id) != str(estate_id):
+        raise HTTPException(
+            status_code=403,
+            detail="User does not belong to this estate.",
+        )
+
+
+def _to_http(exc: ResultPageError | EntitlementDeniedError) -> HTTPException:
+    """Map a domain error onto an HTTPException."""
+    return HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
 @router.get(
@@ -60,6 +60,7 @@ async def get_result_page_overview(
     from_date: datetime | None = None,
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> ResultPageOverviewResponse:
     """
     Build the spatial-anomaly result-page overview for one estate.
@@ -115,32 +116,24 @@ async def get_result_page_overview(
         ``demographic``, ``evidence_summary``, and ``anomaly_overview``.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 404 if the estate does
-            not exist; 502 if db-service is unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate; 404 if the estate does not exist;
+            502 if db-service is unreachable or errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page overview caller_id=%s estate_id=%s",
         current_user.get("id"),
         estate_id,
     )
-    timeout = httpx.Timeout(30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            # counts + 30% normal_sample from db-service
-            data = await fetch_overview(
-                client,
-                settings,
-                estate_id=estate_id,
-                from_date=from_date,
-                to_date=to_date,
-            )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    # maps db counts → demographic / evidence_summary;
-    # averages normal_sample → anomaly_overview
-    return overview_from_db_payload(data)
+    try:
+        return await service.get_overview(
+            estate_id=estate_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ResultPageError as e:
+        raise _to_http(e) from e
 
 
 @router.get(
@@ -158,6 +151,7 @@ async def list_result_page_predictions(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1),
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> PredictionListResponse:
     """
     List prediction rows for an estate, newest first by default.
@@ -193,43 +187,30 @@ async def list_result_page_predictions(
         not the summary body).
 
     Raises:
-        HTTPException: 401 if unauthenticated; 502 if db-service is
-            unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate; 502 if db-service is unreachable
+            or errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page predictions caller_id=%s estate_id=%s",
         current_user.get("id"),
         estate_id,
     )
-    timeout = httpx.Timeout(30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            data = await fetch_predictions(
-                client,
-                settings,
-                estate_id=estate_id,
-                severity=([s.value for s in severity] if severity else None),
-                gender=gender,
-                user_type=(
-                    [u.value for u in user_type] if user_type else None
-                ),
-                sort_order=sort_order,
-                from_date=from_date,
-                to_date=to_date,
-                page=page,
-                limit=limit,
-            )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    return PredictionListResponse(
-        items=data.get("items") or [],
-        total=int(data.get("total") or 0),
-        page=int(data.get("page") or page),
-        limit=int(data.get("limit") or limit),
-        sort_order=sort_order,
-    )
+    try:
+        return await service.list_predictions(
+            estate_id=estate_id,
+            severity=severity,
+            gender=gender,
+            user_type=user_type,
+            sort_order=sort_order,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+    except ResultPageError as e:
+        raise _to_http(e) from e
 
 
 @router.get(
@@ -243,6 +224,7 @@ async def get_case_demographic(
     from_date: datetime | None = None,
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> CaseDemographic:
     """
     Person-level demographic for a selected prediction case.
@@ -264,42 +246,26 @@ async def get_case_demographic(
         not the summary body).
 
     Raises:
-        HTTPException: 401 if unauthenticated; 404 if the prediction is
-            missing; 502 if db-service is unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate; 404 if the prediction is missing;
+            502 if db-service is unreachable or errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case demographic caller_id=%s prediction_id=%s",
         current_user.get("id"),
         prediction_id,
     )
-    timeout = httpx.Timeout(30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            data = await fetch_case_demographic(
-                client,
-                settings,
-                prediction_id=prediction_id,
-                estate_id=estate_id,
-                display_name=display_name,
-                from_date=from_date,
-                to_date=to_date,
-            )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    return CaseDemographic(
-        prediction_id=str(data.get("prediction_id") or prediction_id),
-        display_name=data.get("display_name"),
-        user_type=UserType(data.get("user_type") or UserType.GUEST),
-        user_id=data.get("user_id"),
-        total_entries=int(data.get("total_entries") or 0),
-        average_entry_per_week=float(
-            data.get("average_entry_per_week") or 0.0
-        ),
-        has_tier1_summary=bool(data.get("has_tier1_summary")),
-        has_tier2_summary=bool(data.get("has_tier2_summary")),
-    )
+    try:
+        return await service.get_case_demographic(
+            prediction_id=prediction_id,
+            estate_id=estate_id,
+            display_name=display_name,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ResultPageError as e:
+        raise _to_http(e) from e
 
 
 @router.get(
@@ -312,6 +278,7 @@ async def get_case_history(
     display_name: str | None = None,
     history_limit: int = Query(default=5, ge=1, le=20),
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> CaseHistoryResponse:
     """
     Five most recent predictions for the same visitor or resident name.
@@ -329,35 +296,25 @@ async def get_case_history(
         History items newest-first, selected case first.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 404 if the prediction is
-            missing; 502 if db-service is unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate; 404 if the prediction is missing;
+            502 if db-service is unreachable or errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case history caller_id=%s prediction_id=%s",
         current_user.get("id"),
         prediction_id,
     )
-    timeout = httpx.Timeout(30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            data = await fetch_case_history(
-                client,
-                settings,
-                prediction_id=prediction_id,
-                estate_id=estate_id,
-                display_name=display_name,
-                history_limit=history_limit,
-            )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    items = []
-    for raw in data.get("items") or []:
-        if not isinstance(raw, dict):
-            continue
-        items.append(CaseHistoryItem(**raw))
-    return CaseHistoryResponse(items=items)
+    try:
+        return await service.get_case_history(
+            prediction_id=prediction_id,
+            estate_id=estate_id,
+            display_name=display_name,
+            history_limit=history_limit,
+        )
+    except ResultPageError as e:
+        raise _to_http(e) from e
 
 
 @router.get(
@@ -368,6 +325,7 @@ async def get_case_summary(
     prediction_id: UUID,
     estate_id: UUID,
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> CaseSummaryResponse:
     """
     Entitlement-gated in-house and/or LLM summary for one case.
@@ -388,109 +346,24 @@ async def get_case_summary(
         Entitled tier, cache flag, and the summaries that grant allows.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 403 if neither summary
-            grant is allowed; 404 if the prediction is missing; 502 on
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate or neither summary grant is
+            allowed; 404 if the prediction is missing; 502 on
             downstream errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case summary caller_id=%s prediction_id=%s",
         current_user.get("id"),
         prediction_id,
     )
-    timeout = httpx.Timeout(60.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            # 1. Re-check grants every call. Tier3 implies both; else
-            #    tier2 (in-house only); neither → 403.
-            tier2_ok = await is_ai_feature_allowed(
-                client,
-                settings,
-                estate_id=estate_id,
-                feature_key=ANOMALY_SUMMARY_TIER3_KEY,
-            )
-            tier1_ok = tier2_ok or await is_ai_feature_allowed(
-                client,
-                settings,
-                estate_id=estate_id,
-                feature_key=ANOMALY_SUMMARY_TIER2_KEY,
-            )
-            if not tier1_ok:
-                raise HTTPException(
-                    status_code=403,
-                    detail=("Estate is not entitled to anomaly case summary."),
-                )
-            data = await fetch_case_detail(
-                client,
-                settings,
-                prediction_id=prediction_id,
-                estate_id=estate_id,
-                from_date=None,
-                to_date=None,
-            )
-            cache = data.get("ai_summary") or {}
-            if not isinstance(cache, dict):
-                cache = {}
-            result = data.get("result") or {}
-            if not isinstance(result, dict):
-                result = {}
-
-            # 2. Reuse cached tier1 / tier2 when present; invalid JSON
-            #    is treated as missing.
-            cached_t1 = cache.get("tier1")
-            cached_t2 = cache.get("tier2")
-            inhouse: InhouseSummary | None = None
-            llm: LlmSummary | None = None
-            generated = False
-            if isinstance(cached_t1, dict) and cached_t1:
-                try:
-                    inhouse = InhouseSummary.model_validate(cached_t1)
-                except ValidationError:
-                    inhouse = None
-            if isinstance(cached_t2, dict) and cached_t2:
-                try:
-                    llm = LlmSummary.model_validate(cached_t2)
-                except ValidationError:
-                    llm = None
-
-            # 3. Generate missing tiers, persist, then withhold LLM if
-            #    the estate is only entitled to in-house.
-            patch_t1 = None
-            patch_t2 = None
-            if inhouse is None:
-                inhouse = build_inhouse_summary(result)
-                patch_t1 = inhouse.model_dump()
-                generated = True
-            if tier2_ok and llm is None:
-                llm, _used = await summarize_case_with_llm(
-                    client=client,
-                    settings=settings,
-                    payload=result,
-                    inhouse=inhouse,
-                )
-                patch_t2 = llm.model_dump()
-                generated = True
-            if patch_t1 is not None or patch_t2 is not None:
-                await patch_ai_summary(
-                    client,
-                    settings,
-                    prediction_id=prediction_id,
-                    tier1=patch_t1,
-                    tier2=patch_t2,
-                )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-        except EntitlementDeniedError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    return CaseSummaryResponse(
-        entitled_tier="tier2" if tier2_ok else "tier1",
-        from_cache=not generated,
-        tier1=inhouse,
-        tier2=llm if tier2_ok else None,
-    )
+    try:
+        return await service.get_case_summary(
+            prediction_id=prediction_id,
+            estate_id=estate_id,
+        )
+    except (ResultPageError, EntitlementDeniedError) as e:
+        raise _to_http(e) from e
 
 
 @router.get(
@@ -503,6 +376,7 @@ async def get_case_results(
     from_date: datetime | None = None,
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
+    service: SpatialAnomalyResultPageService = Depends(get_service),
 ) -> CaseResultsResponse:
     """
     Spider plot and contributing factors for the selected prediction.
@@ -524,27 +398,22 @@ async def get_case_results(
         Score, severity, and the case anomaly overview.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 404 if the prediction is
-            missing; 502 if db-service is unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller does
+            not belong to the estate; 404 if the prediction is missing;
+            502 if db-service is unreachable or errors.
     """
+    _require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case results caller_id=%s prediction_id=%s",
         current_user.get("id"),
         prediction_id,
     )
-    timeout = httpx.Timeout(30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            data = await fetch_case_detail(
-                client,
-                settings,
-                prediction_id=prediction_id,
-                estate_id=estate_id,
-                from_date=from_date,
-                to_date=to_date,
-            )
-        except ResultPageError as e:
-            raise HTTPException(
-                status_code=e.status_code, detail=e.message
-            ) from e
-    return case_results_from_db_payload(data, prediction_id=str(prediction_id))
+    try:
+        return await service.get_case_results(
+            prediction_id=prediction_id,
+            estate_id=estate_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except ResultPageError as e:
+        raise _to_http(e) from e
