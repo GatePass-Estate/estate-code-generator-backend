@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 
@@ -25,7 +26,8 @@ class VisitorLogService:
     Two retrieval levels:
 
     * **First level** (``/me``, ``/user``): one entry per unique
-      ``hashed_code`` with ``usage_count``; ``created_at`` is the earliest log
+      ``hashed_code`` with ``usage_count`` and ``code_deleted`` (missing from
+      cache or past ``valid_until``); ``created_at`` is the earliest log
       row per code (db-service ``unique=true``).
     * **Second level** (``/me/{code}``, ``/user/{code}``): every visit for a
       single code, latest first.
@@ -104,6 +106,31 @@ class VisitorLogService:
                 detail="Security accounts have no personal visitor history.",
             )
 
+    async def _enrich_code_deleted(self, result: dict) -> dict:
+        """
+        Set ``code_deleted`` on each history item from cache expiry.
+
+        Visitor codes live in Redis. A code is treated as deleted when it is
+        missing from cache or ``valid_until`` has passed. Unique codes on the
+        page are resolved concurrently.
+        """
+        items = result.get("items") or []
+        codes = list(
+            {
+                item.get("hashed_code")
+                for item in items
+                if item.get("hashed_code")
+            }
+        )
+        statuses = await asyncio.gather(
+            *(self.repository.is_code_inactive(code) for code in codes)
+        )
+        flags = dict(zip(codes, statuses, strict=True))
+        for item in items:
+            hashed_code = item.get("hashed_code")
+            item["code_deleted"] = flags.get(hashed_code, False)
+        return result
+
     async def my_history(
         self,
         requester: dict,
@@ -129,6 +156,7 @@ class VisitorLogService:
             page=page,
             limit=limit,
         )
+        result = await self._enrich_code_deleted(result)
         return ListResponse.model_validate(result)
 
     async def my_history_by_code(
@@ -154,6 +182,7 @@ class VisitorLogService:
             page=page,
             limit=limit,
         )
+        result = await self._enrich_code_deleted(result)
         return ListResponse.model_validate(result)
 
     async def estate_history(
@@ -178,6 +207,7 @@ class VisitorLogService:
             page=page,
             limit=limit,
         )
+        result = await self._enrich_code_deleted(result)
         return ListResponse.model_validate(result)
 
     async def estate_history_by_code(
@@ -200,4 +230,5 @@ class VisitorLogService:
             page=page,
             limit=limit,
         )
+        result = await self._enrich_code_deleted(result)
         return ListResponse.model_validate(result)

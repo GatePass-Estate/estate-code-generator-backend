@@ -519,3 +519,60 @@ def test_build_inhouse_summary_has_executive_and_detail():
     assert "high" in report.executive_summary
     assert "hour of day" in report.detailed_insight.lower()
     assert "visitor" in report.detailed_insight.lower()
+
+
+def test_require_estate_membership_allows_matching_estate():
+    from uuid import UUID
+
+    from app.api.v1.endpoints.spatial_anomaly_resultpage import (
+        _require_estate_membership,
+    )
+
+    estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    _require_estate_membership({"estate_id": str(estate_id)}, estate_id)
+
+
+def test_require_estate_membership_rejects_mismatch_and_missing():
+    from uuid import UUID
+
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.spatial_anomaly_resultpage import (
+        _require_estate_membership,
+    )
+
+    estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    other = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    with pytest.raises(HTTPException) as mismatch:
+        _require_estate_membership({"estate_id": str(other)}, estate_id)
+    assert mismatch.value.status_code == 403
+
+    with pytest.raises(HTTPException) as missing:
+        _require_estate_membership({"estate_id": None}, estate_id)
+    assert missing.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_case_summary_denies_when_estate_has_no_grant(monkeypatch):
+    from uuid import UUID
+
+    from app.core.exceptions import EntitlementDeniedError
+    from app.services.spatial_anomaly_resultpage import (
+        SpatialAnomalyResultPageService,
+    )
+
+    async def _denied(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(
+        "app.services.spatial_anomaly_resultpage.is_ai_feature_allowed",
+        _denied,
+    )
+    service = SpatialAnomalyResultPageService()
+    with pytest.raises(EntitlementDeniedError) as denied:
+        await service.get_case_summary(
+            prediction_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            estate_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        )
+    assert denied.value.status_code == 403
+    assert "not entitled" in denied.value.message.lower()

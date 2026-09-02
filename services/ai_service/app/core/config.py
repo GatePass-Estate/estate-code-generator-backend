@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     REVENUE_SERVICE_URL: str = os.getenv(
         "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
     )
+    #: Max characters allowed on an AI marketplace rating comment.
+    RATING_COMMENT_MAX_LENGTH: int = 1000
     #: Ensemble score at or above this marks the focal row ``is_anomalous`` in the feature store.
     ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.5
 

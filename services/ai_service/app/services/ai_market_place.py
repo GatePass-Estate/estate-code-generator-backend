@@ -4,6 +4,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.config import settings
+from app.libs.ai_grant_entitlement import is_purchased as _is_purchased
 from app.repositories.ai_market_place import AiMarketPlaceRepository
 from app.schemas.ai_market_place import (
     MarketplaceDetailResponse,
@@ -64,11 +66,6 @@ def _grant_map(grants: list[dict]) -> dict[str, dict]:
     }
 
 
-def _is_purchased(feature_ids: list[str], grants: dict[str, dict]) -> bool:
-    """True if the estate has a grant for any child ``ai_feature_id``."""
-    return any(fid in grants for fid in feature_ids)
-
-
 def _tier_status(grant: dict | None) -> str:
     """Map an estate grant to a marketplace tier status label."""
     if not grant:
@@ -89,6 +86,14 @@ def _min_price(
     return min(amounts) if amounts else None
 
 
+def _clip_comment(comment: Any) -> str | None:
+    """Return ``comment`` truncated to the configured rating max length."""
+    if comment is None:
+        return None
+    text = str(comment)
+    return text[: settings.RATING_COMMENT_MAX_LENGTH]
+
+
 def _parse_samples(raw: dict | None) -> dict[str, list[RatingSample]]:
     """Normalize summary samples into score keys ``1``–``5``, max 5 each."""
     samples = {str(score): [] for score in range(1, 6)}
@@ -101,7 +106,7 @@ def _parse_samples(raw: dict | None) -> dict[str, list[RatingSample]]:
             RatingSample(
                 user_id=str(row.get("user_id")),
                 score=int(row.get("score", score)),
-                comment=row.get("comment"),
+                comment=_clip_comment(row.get("comment")),
                 created_at=(
                     str(row["created_at"]) if row.get("created_at") else None
                 ),
@@ -130,7 +135,7 @@ def _user_rating(
         id=str(row["id"]),
         user_id=str(row.get("user_id") or user_id),
         score=int(row.get("score") or score),
-        comment=resolved_comment,
+        comment=_clip_comment(resolved_comment),
         created_at=_as_str(row.get("created_at")),
         updated_at=_as_str(row.get("updated_at")),
     )
