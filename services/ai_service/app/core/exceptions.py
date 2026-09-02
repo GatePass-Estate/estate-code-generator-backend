@@ -46,3 +46,13 @@ class VolumeForecastError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+class ResultPageError(Exception):
+    """Raised when result-page data cannot be loaded from db-service."""
+
+    def __init__(self, message: str, *, status_code: int = 502) -> None:
+        """Store ``message`` and the HTTP status to surface to the client."""
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message

@@ -34,6 +34,10 @@ from app.models.user_profile.users import Users
 # Revenue Service Models
 from app.models.revenue.service_catalog import ServiceCatalog
 from app.models.revenue.ai_feature import AiFeature
+from app.models.revenue.ai_marketplace_feature import AiMarketplaceFeature
+from app.models.revenue.ai_marketplace_feature_rating import (
+    AiMarketplaceFeatureRating,
+)
 from app.models.revenue.feature_unit_price import FeatureUnitPrice
 from app.models.revenue.subscription_tier import SubscriptionTier
 from app.models.revenue.estate_subscription import EstateSubscription
@@ -69,6 +73,8 @@ __all__ = [
     "NotificationPreferences",
     "ServiceCatalog",
     "AiFeature",
+    "AiMarketplaceFeature",
+    "AiMarketplaceFeatureRating",
     "FeatureUnitPrice",
     "SubscriptionTier",
     "EstateSubscription",

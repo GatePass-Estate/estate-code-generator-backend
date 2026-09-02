@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -27,7 +27,7 @@ class ResidentLogService:
     * **First level** (``/me``, ``/user``): one entry per access code from
       ``accesscode/history/search`` (access-code ``created_at``/``updated_at``,
       resident ``full_name`` from ``users``, plus ``usage_count`` and
-      ``code_deleted``).
+      ``code_deleted`` (soft-deleted or past ``valid_until``).
     * **Second level** (``/me/{code}``, ``/user/{code}``): validation events
       for a single code plus access-code lifecycle metadata on
       :class:`CodeHistoryListResponse`.
@@ -106,6 +106,34 @@ class ResidentLogService:
                 detail="Security accounts have no personal access history.",
             )
 
+    @staticmethod
+    def _parse_timestamp(value) -> datetime | None:
+        """
+        Parse an ISO timestamp from db-service.
+
+        Naive values are treated as UTC.
+        """
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @classmethod
+    def _is_past_expiry(cls, valid_until) -> bool:
+        """Return True when ``valid_until`` is present and already past."""
+        try:
+            expiry = cls._parse_timestamp(valid_until)
+        except (TypeError, ValueError):
+            return False
+        if expiry is None:
+            return False
+        return datetime.now(timezone.utc) > expiry
+
     async def _enrich_code_history(
         self,
         result: dict,
@@ -115,8 +143,9 @@ class ResidentLogService:
         Attach access-code lifecycle metadata for code-level history.
 
         Sets ``code_created_at``, ``code_deleted``, and ``code_deleted_at``
-        from the earliest access-code row (including soft-deleted). Does not
-        modify ``items``.
+        from the earliest access-code row (including soft-deleted). A code is
+        treated as deleted when ``is_deleted`` is true or ``valid_until`` has
+        passed. Does not modify ``items``.
         """
         access_code = await self.repository.earliest_access_code(hashed_code)
         if not access_code:
@@ -125,12 +154,16 @@ class ResidentLogService:
             result["code_deleted_at"] = None
             return result
 
-        code_deleted = bool(access_code.get("is_deleted"))
+        expired = self._is_past_expiry(access_code.get("valid_until"))
+        code_deleted = bool(access_code.get("is_deleted")) or expired
         result["code_deleted"] = code_deleted
         result["code_created_at"] = access_code.get("created_at")
-        result["code_deleted_at"] = (
-            access_code.get("deleted_at") if code_deleted else None
-        )
+        if access_code.get("is_deleted"):
+            result["code_deleted_at"] = access_code.get("deleted_at")
+        elif expired:
+            result["code_deleted_at"] = access_code.get("valid_until")
+        else:
+            result["code_deleted_at"] = None
         return result
 
     async def my_history(

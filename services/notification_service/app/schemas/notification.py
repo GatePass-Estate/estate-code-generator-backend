@@ -42,6 +42,7 @@ class NotificationType(str, Enum):
     # Household management
     HOUSEHOLD_HEAD_ASSIGNED = "HOUSEHOLD_HEAD_ASSIGNED"
     HOUSEHOLD_NEEDS_HEAD = "HOUSEHOLD_NEEDS_HEAD"
+    SPATIAL_ANOMALY_DETECTED = "SPATIAL_ANOMALY_DETECTED"
 
 
 # Types for which user preferences are ignored — always delivered
@@ -68,6 +69,7 @@ MANDATORY_TYPES: set[NotificationType] = {
     NotificationType.ESTATE_DEACTIVATED,
     NotificationType.ESTATE_DEACTIVATION_SCHEDULED,
     NotificationType.ESTATE_REACTIVATED,
+    NotificationType.SPATIAL_ANOMALY_DETECTED,
 }
 
 # Types that do NOT create an in-app notification row.
@@ -128,6 +130,7 @@ PUSH_TYPES: set[NotificationType] = {
     NotificationType.EDIT_REQUEST_PENDING,
     NotificationType.HOUSEHOLD_HEAD_ASSIGNED,
     NotificationType.HOUSEHOLD_NEEDS_HEAD,
+    NotificationType.SPATIAL_ANOMALY_DETECTED,
 }
 
 
@@ -183,6 +186,13 @@ class RoleChangeMeta(BaseModel):
 class HouseholdTransferredMeta(BaseModel):
     new_household_id: str
     estate_id: str
+
+
+class SpatialAnomalyDetectedMeta(BaseModel):
+    prediction_result_id: str
+    anomaly_type: str
+    estate_id: str
+    hashed_code: str | None = None
 
 
 # ── User-facing response schemas ─────────────────────────────────────────────

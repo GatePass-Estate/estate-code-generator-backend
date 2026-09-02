@@ -51,7 +51,8 @@ class ResidentLogRepository:
     ) -> dict:
         """
         First-level history: one entry per access code with ``usage_count``,
-        ``code_deleted``, and resident ``full_name``, latest first.
+        ``code_deleted`` (soft-deleted or past ``valid_until``), and resident
+        ``full_name``, latest first.
 
         Backed by db-service ``accesscode/history/search``, which joins
         ``users`` and aggregates ``residentlog`` in a single query. Both
@@ -134,7 +135,7 @@ class ResidentLogRepository:
         Earliest access-code row for ``hashed_code``, including soft-deleted.
 
         Used by the BFF to populate ``code_created_at``, ``code_deleted_at``,
-        and ``code_deleted`` on code-level history.
+        and ``code_deleted`` (soft-deleted or expired) on code-level history.
 
         Returns:
             The first matching access-code dict ordered by ``created_at``, or

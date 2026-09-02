@@ -9,6 +9,7 @@ from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
 from app.libs.auth import get_user_details
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
+from app.libs.notify import fire_notify
 from app.libs.spatial_anomaly import trigger_spatial_anomaly_check
 from app.schemas.code_service import (
     CreateRequestResident,
@@ -647,6 +648,95 @@ class CodeServiceRepository:
             logger.exception(message)
             raise DatabaseError(message) from e
 
+    async def _estate_admin_ids(self, estate_id: str) -> list[str]:
+        """
+        Return active admin and primary-admin user IDs for an estate.
+
+        Uses db-service ``userprofile/users/search``. Failures return an
+        empty list so validation is never blocked.
+        """
+        url = f"{settings.DB_SERVICE_URL}api/v1/userprofile/users/search"
+        try:
+            result = await self.ahttp_client.async_get(
+                url,
+                params={
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                    "status": True,
+                    "limit": 1000,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to list estate admins estate_id=%s", estate_id
+            )
+            return []
+        return [
+            str(user["id"])
+            for user in (result or {}).get("items") or []
+            if user.get("id")
+        ]
+
+    async def _notify_admins_of_anomaly(
+        self,
+        *,
+        estate_id: str,
+        anomaly_type: str,
+        prediction_result_id: str,
+        hashed_code: str | None,
+    ) -> None:
+        """
+        Notify estate admins that a validation was flagged as anomalous.
+
+        Best-effort: missing admins or notify failures are logged only.
+        """
+        if not estate_id:
+            return
+        admin_ids = await self._estate_admin_ids(estate_id)
+        if not admin_ids:
+            logger.warning(
+                "No estate admins to notify estate_id=%s anomaly_type=%s",
+                estate_id,
+                anomaly_type,
+            )
+            return
+        await fire_notify(
+            {
+                "type": "SPATIAL_ANOMALY_DETECTED",
+                "title": "Anomalous access detected",
+                "body": (
+                    f"A {anomaly_type} access event was flagged as anomalous."
+                ),
+                "recipient_user_ids": admin_ids,
+                "metadata": {
+                    "prediction_result_id": prediction_result_id,
+                    "anomaly_type": anomaly_type,
+                    "estate_id": estate_id,
+                    "hashed_code": hashed_code,
+                },
+            }
+        )
+
+    async def _apply_anomaly_result(
+        self,
+        record: dict,
+        anomaly: dict | None,
+        anomaly_type: str,
+    ) -> None:
+        """Attach anomaly metadata and notify admins when flagged."""
+        if not anomaly:
+            return
+        record["prediction_result_id"] = anomaly["prediction_result_id"]
+        record["is_anomalous"] = anomaly["is_anomalous"]
+        if not anomaly["is_anomalous"]:
+            return
+        await self._notify_admins_of_anomaly(
+            estate_id=str(record.get("estate_id") or ""),
+            anomaly_type=anomaly_type,
+            prediction_result_id=anomaly["prediction_result_id"],
+            hashed_code=record.get("hashed_code"),
+        )
+
     async def get(
         self,
         code: str,
@@ -663,7 +753,9 @@ class CodeServiceRepository:
         logs) resolved at validation time.
 
         After a successful log persist, spatial anomaly analysis is triggered
-        best-effort (not subscribed → silent; other failures → logged).
+        best-effort (not subscribed → silent; other failures → logged). When
+        the event is anomalous, estate admins and primary admins are notified
+        via the notification-service internal endpoint.
         """
         try:
             # Get the record from the database
@@ -726,11 +818,7 @@ class CodeServiceRepository:
                     security_id=str(user_details.get("id")),
                     auth_token=auth_token,
                 )
-                if anomaly:
-                    record["prediction_result_id"] = anomaly[
-                        "prediction_result_id"
-                    ]
-                    record["is_anomalous"] = anomaly["is_anomalous"]
+                await self._apply_anomaly_result(record, anomaly, "visitor")
                 # Convert the record to a GET schema model
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
@@ -773,11 +861,7 @@ class CodeServiceRepository:
                     security_id=str(user_details.get("id")),
                     auth_token=auth_token,
                 )
-                if anomaly:
-                    record["prediction_result_id"] = anomaly[
-                        "prediction_result_id"
-                    ]
-                    record["is_anomalous"] = anomaly["is_anomalous"]
+                await self._apply_anomaly_result(record, anomaly, "resident")
                 return GetResponseResident.model_validate(
                     record, from_attributes=True
                 )

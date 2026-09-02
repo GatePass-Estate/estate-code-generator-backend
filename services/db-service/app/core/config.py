@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     GCS_ID_CARD_MAX_BYTES: int = int(
         os.getenv("GCS_ID_CARD_MAX_BYTES", str(10 * 1024 * 1024))
     )
+    #: Max characters allowed on an AI marketplace rating comment.
+    RATING_COMMENT_MAX_LENGTH: int = int(
+        os.getenv("RATING_COMMENT_MAX_LENGTH", "1000")
+    )
 
 
 settings = Settings()
