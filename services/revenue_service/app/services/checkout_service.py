@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -27,6 +28,174 @@ from app.services.pricing_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Per-kind checkout handlers ─────────────────────────────────────────────
+
+
+class CheckoutHandler(ABC):
+    """Abstract base for checkout-kind-specific logic.
+
+    Each concrete handler encapsulates the guard, quote, and metadata
+    logic for one checkout kind so that adding a new kind is a new class
+    rather than a new if/else branch in CheckoutService.initialize().
+    """
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        self._repo = repo
+        self._svc = svc
+
+    @abstractmethod
+    async def guard(self, request: dict[str, Any]) -> None:
+        """Raise HTTPException if this checkout cannot proceed."""
+        ...
+
+    @abstractmethod
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return {amount, currency_code, country_code, snapshot}."""
+        ...
+
+    @abstractmethod
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Build the session_metadata dict for this checkout kind."""
+        ...
+
+
+class SubscriptionCheckoutHandler(CheckoutHandler):
+    """Handles 'tier' and 'custom' subscription checkout kinds."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        active_sub = await self._repo.get_active_subscription(
+            request["estate_id"]
+        )
+        if active_sub and active_sub.get("status") in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Estate already has an active subscription. "
+                    "Wait for it to expire, or cancel it first "
+                    "to subscribe to a different tier."
+                ),
+            )
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote(
+            {
+                "estate_id": request["estate_id"],
+                "tier_slug": request.get("tier_slug"),
+                "entitlements": request.get("entitlements"),
+                "ai_feature_keys": request.get("ai_feature_keys"),
+                "covered_users": request["covered_users"],
+                "period_months": request["period_months"],
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        kind = request["checkout_kind"]
+        meta: dict[str, Any] = {
+            "checkout_kind": kind,
+            "initiated_by_user_id": user_id,
+            "tier_slug": (
+                request.get("tier_slug") if kind == "tier" else "custom"
+            ),
+            "covered_users": request.get("covered_users"),
+            "period_months": request.get("period_months"),
+            "ai_feature_keys": request.get("ai_feature_keys") or [],
+        }
+        if kind == "custom":
+            meta["entitlements"] = request.get("entitlements")
+        return meta
+
+
+class SeatAddCheckoutHandler(CheckoutHandler):
+    """Handles 'seat_add' checkout kind."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        pass  # seat additions are always allowed for active subscriptions
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.prorate_seats(
+            {
+                "estate_id": request["estate_id"],
+                "seats_added": request["seats_added"],
+            }
+        )
+        return {
+            "amount": result["prorated_charge"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "seat_add",
+            "initiated_by_user_id": user_id,
+            "seats_added": request.get("seats_added"),
+        }
+
+
+class AiOnlyCheckoutHandler(CheckoutHandler):
+    """Handles 'ai_only' standalone AI feature checkout kind."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        await self._svc.guard_no_active_ai_grants(
+            estate_id=str(request["estate_id"]),
+            ai_feature_keys=list(request.get("ai_feature_keys") or []),
+        )
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote_ai_features(
+            {
+                "estate_id": request["estate_id"],
+                "ai_feature_keys": request["ai_feature_keys"],
+                "period_months": request.get("period_months", 1),
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "ai_only",
+            "initiated_by_user_id": user_id,
+            "ai_feature_keys": request.get("ai_feature_keys") or [],
+            "period_months": request.get("period_months"),
+        }
+
+
+_HANDLERS: dict[str, type[CheckoutHandler]] = {
+    "tier": SubscriptionCheckoutHandler,
+    "custom": SubscriptionCheckoutHandler,
+    "seat_add": SeatAddCheckoutHandler,
+    "ai_only": AiOnlyCheckoutHandler,
+}
+
+
+# ── Service ────────────────────────────────────────────────────────────────
 
 
 class CheckoutService:
@@ -72,65 +241,6 @@ class CheckoutService:
                 if key:
                     ai_prices[key] = amount
         return service_prices, ai_prices, currency
-
-    async def _get_quote_for_kind(
-        self, request: dict[str, Any]
-    ) -> dict[str, Any]:
-        """
-        Compute a pricing quote for the given checkout_kind.
-
-        Returns a dict with ``amount`` (float), ``currency_code``,
-        ``country_code``, and ``snapshot`` (full quote breakdown dict).
-        """
-        kind = request["checkout_kind"]
-        estate_id = request["estate_id"]
-
-        if kind in ("tier", "custom"):
-            result = await self.quote(
-                {
-                    "estate_id": estate_id,
-                    "tier_slug": request.get("tier_slug"),
-                    "entitlements": request.get("entitlements"),
-                    "ai_feature_keys": request.get("ai_feature_keys"),
-                    "covered_users": request["covered_users"],
-                    "period_months": request["period_months"],
-                }
-            )
-            return {
-                "amount": result["client_total"],
-                "currency_code": result["currency_code"],
-                "country_code": result["country_code"],
-                "snapshot": result,
-            }
-
-        if kind == "seat_add":
-            result = await self.prorate_seats(
-                {
-                    "estate_id": estate_id,
-                    "seats_added": request["seats_added"],
-                }
-            )
-            return {
-                "amount": result["prorated_charge"],
-                "currency_code": result["currency_code"],
-                "country_code": result["country_code"],
-                "snapshot": result,
-            }
-
-        # ai_only
-        result = await self.quote_ai_features(
-            {
-                "estate_id": estate_id,
-                "ai_feature_keys": request["ai_feature_keys"],
-                "period_months": request.get("period_months", 1),
-            }
-        )
-        return {
-            "amount": result["client_total"],
-            "currency_code": result["currency_code"],
-            "country_code": result["country_code"],
-            "snapshot": result,
-        }
 
     async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
         """
@@ -388,6 +498,55 @@ class CheckoutService:
             ],
         }
 
+    async def guard_no_active_ai_grants(
+        self,
+        estate_id: str,
+        ai_feature_keys: list[str],
+    ) -> None:
+        """Raise 409 if any requested feature key already has a live grant.
+
+        A grant is considered live when its status is 'active' and either
+        expires_at is absent or still in the future.
+        """
+        if not ai_feature_keys:
+            return
+        catalog = await self.repo.get_ai_feature_map()
+        key_to_feature_id = {k: str(v["id"]) for k, v in catalog.items()}
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant_by_feature_id = {str(g.get("ai_feature_id")): g for g in grants}
+        now = datetime.now(tz=timezone.utc)
+        conflicting: list[str] = []
+        for key in ai_feature_keys:
+            feature_id = key_to_feature_id.get(key)
+            if not feature_id:
+                continue
+            grant = grant_by_feature_id.get(feature_id)
+            if not grant:
+                continue
+            status = (grant.get("status") or "").lower()
+            if status != "active":
+                continue
+            expires_raw = grant.get("expires_at")
+            if expires_raw:
+                expires_at = datetime.fromisoformat(
+                    str(expires_raw).replace("Z", "+00:00")
+                )
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at <= now:
+                    continue
+            conflicting.append(key)
+        if conflicting:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Estate already has an active grant for: "
+                    f"{', '.join(conflicting)}. "
+                    "Wait for expiry, cancel the existing grant, or "
+                    "upgrade to a higher tier."
+                ),
+            )
+
     async def initialize(
         self,
         request: dict[str, Any],
@@ -443,63 +602,30 @@ class CheckoutService:
                 ),
             }
 
-        # 2. Guard: block new subscription checkout when one is already active.
-        #    seat_add and ai_only are additive — they are always allowed.
+        # 2. Resolve handler for this checkout kind
         kind = request["checkout_kind"]
-        if kind in ("tier", "custom"):
-            active_sub = await self.repo.get_active_subscription(
-                request["estate_id"]
+        handler_cls = _HANDLERS.get(kind)
+        if not handler_cls:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported checkout_kind: {kind!r}",
             )
-            if active_sub and active_sub.get("status") in (
-                "active",
-                "trialing",
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Estate already has an active subscription. "
-                        "Wait for it to expire, or cancel it first "
-                        "to subscribe to a different tier."
-                    ),
-                )
+        handler = handler_cls(self.repo, self)
 
-        # 3. Compute quote
-        quote_result = await self._get_quote_for_kind(request)
+        # 3. Kind-specific guard (raises 409 on conflict)
+        await handler.guard(request)
+
+        # 4. Compute quote
+        quote_result = await handler.get_quote(request)
         amount: float = quote_result["amount"]
         currency: str = quote_result["currency_code"]
         country: str = quote_result["country_code"]
         snapshot: dict = quote_result["snapshot"]
 
-        # 4. Build session_metadata
-        session_metadata: dict[str, Any] = {
-            "checkout_kind": kind,
-            "initiated_by_user_id": current_user_id,
-        }
-        if kind in ("tier", "custom"):
-            session_metadata["tier_slug"] = (
-                request.get("tier_slug") if kind == "tier" else "custom"
-            )
-            session_metadata["covered_users"] = request.get("covered_users")
-            session_metadata["period_months"] = request.get("period_months")
-            session_metadata["ai_feature_keys"] = (
-                request.get("ai_feature_keys") or []
-            )
-            if kind == "custom":
-                session_metadata["entitlements"] = request.get("entitlements")
-        elif kind == "seat_add":
-            session_metadata["seats_added"] = request.get("seats_added")
-        elif kind == "ai_only":
-            session_metadata["ai_feature_keys"] = (
-                request.get("ai_feature_keys") or []
-            )
-            session_metadata["period_months"] = request.get("period_months")
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported checkout_kind: {kind!r}",
-            )
+        # 5. Build session_metadata
+        session_metadata = handler.build_metadata(request, current_user_id)
 
-        # 5. Create pending session (no paystack_reference yet)
+        # 6. Create pending session (no paystack_reference yet)
         session = await self.repo.create_checkout_session(
             {
                 "estate_id": request["estate_id"],
@@ -515,13 +641,13 @@ class CheckoutService:
         )
         session_id = str(session["id"])
 
-        # 6. Stamp the reference (GP-<session_id>)
+        # 7. Stamp the reference (GP-<session_id>)
         paystack_reference = f"GP-{session_id}"
         await self.repo.update_checkout_session(
             session_id, {"paystack_reference": paystack_reference}
         )
 
-        # 7. Call Paystack
+        # 8. Call Paystack
         amount_kobo = round(amount * 100)
         try:
             paystack_data = await self._paystack.initialize_transaction(
@@ -545,7 +671,7 @@ class CheckoutService:
             )
             raise
 
-        # 7. Persist authorization_url for idempotent replays
+        # 9. Persist authorization_url for idempotent replays
         authorization_url: str = paystack_data["authorization_url"]
         await self.repo.update_checkout_session(
             session_id,
@@ -558,7 +684,7 @@ class CheckoutService:
             },
         )
 
-        # 8. Mint checkout token
+        # 10. Mint checkout token
         checkout_token = generate_checkout_token(
             session_id, settings.SECRET_KEY
         )

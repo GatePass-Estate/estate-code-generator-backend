@@ -249,6 +249,30 @@ class WebhookService:
             )
             return
 
+        # Verify the transaction server-side before fulfilling to guard
+        # against replayed or tampered webhook payloads.
+        verified = await self._paystack.verify_transaction(reference)
+        if (verified.get("status") or "").lower() != "success":
+            logger.error(
+                "charge.success reference=%s Paystack status=%s — "
+                "not success; skipping fulfillment",
+                reference,
+                verified.get("status"),
+            )
+            return
+
+        expected_kobo = int(Decimal(str(session["amount"])) * 100)
+        actual_kobo = int(verified.get("amount") or 0)
+        if actual_kobo != expected_kobo:
+            logger.error(
+                "charge.success reference=%s amount mismatch: "
+                "expected_kobo=%s actual_kobo=%s — skipping fulfillment",
+                reference,
+                expected_kobo,
+                actual_kobo,
+            )
+            return
+
         paid_at = datetime.now(tz=timezone.utc)
         metadata: dict[str, Any] = session.get("session_metadata") or {}
         estate_id = str(session["estate_id"])

@@ -55,17 +55,16 @@ async def paystack_webhook(
     event_type: str = payload.get("event", "")
     data: dict = payload.get("data") or {}
 
-    # Build a stable dedup key. Most events carry a numeric ``data.id``;
-    # events that don't (e.g. subscription.disable) get a composite key
-    # from event_type + the most-specific identifier available.
+    # Build a stable dedup key: always scope by event_type so that two
+    # different event types that share a numeric data.id do not collide.
     raw_id = data.get("id")
     if raw_id:
-        event_id = str(raw_id)
+        event_id = f"{event_type}:{raw_id}"
     else:
         ref = data.get("reference") or data.get("subscription_code") or ""
         event_id = f"{event_type}:{ref}" if ref else event_type
 
-    # 2. Dedup: check if we have already processed this event
+    # 2. Dedup: skip events we have already successfully processed.
     existing = await service.repo.get_payment_event_by_event_id(event_id)
     if existing:
         logger.info(
@@ -75,14 +74,19 @@ async def paystack_webhook(
         )
         return {"status": "duplicate", "event_id": event_id}
 
-    # 3. Record the event before processing (idempotency ledger).
-    # NOTE: If the event is recorded but processing below fails, there is
-    # currently no automatic recovery — the event will be skipped on any
-    # Paystack retry (treated as duplicate). Failed events should be
-    # monitored via logs and replayed manually if needed.
-    # TODO: Consider a "processed=False" flag on payment_event that gets
-    # flipped to True only after successful processing, enabling a
-    # background job to replay failed events.
+    # 3. Dispatch first; record only on success so that a processing
+    # failure leaves the event unrecorded and Paystack can retry.
+    try:
+        await service.process_event(event_type, data)
+    except Exception:
+        logger.exception(
+            "Webhook processing error event_type=%s event_id=%s — "
+            "event NOT recorded; Paystack retry will reprocess it",
+            event_type,
+            event_id,
+        )
+        return {"status": "ok"}
+
     await service.repo.create_payment_event(
         {
             "event_id": event_id,
@@ -91,15 +95,5 @@ async def paystack_webhook(
             "processed_at": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
-
-    # 4. Dispatch — always return 200, log processing errors
-    try:
-        await service.process_event(event_type, data)
-    except Exception:
-        logger.exception(
-            "Webhook processing error event_type=%s event_id=%s",
-            event_type,
-            event_id,
-        )
 
     return {"status": "ok"}

@@ -471,6 +471,27 @@ class SubscriptionService:
             raise HTTPException(
                 status_code=404, detail="No active subscription for estate"
             )
+
+        if call_paystack:
+            sub_code = subscription.get("paystack_subscription_code")
+            if sub_code and self._paystack:
+                # Disable Paystack first — if this fails we have not touched
+                # our DB yet, so the caller can safely retry.
+                await self._paystack.disable_subscription(sub_code)
+                logger.info(
+                    "Paystack subscription disabled estate_id=%s "
+                    "subscription_code=%s",
+                    estate_id,
+                    sub_code,
+                )
+            elif not sub_code:
+                logger.warning(
+                    "cancel estate_id=%s has no "
+                    "paystack_subscription_code — cannot disable "
+                    "Paystack subscription; it may continue charging",
+                    estate_id,
+                )
+
         now = datetime.now(tz=timezone.utc)
         updated = await self.repo.update_estate_subscription(
             str(subscription["id"]),
@@ -480,37 +501,6 @@ class SubscriptionService:
                 "cancelled_at": now.isoformat(),
             },
         )
-
-        if call_paystack:
-            sub_code = subscription.get("paystack_subscription_code")
-            if sub_code and self._paystack:
-                try:
-                    await self._paystack.disable_subscription(sub_code)
-                    logger.info(
-                        "Paystack subscription disabled estate_id=%s "
-                        "subscription_code=%s",
-                        estate_id,
-                        sub_code,
-                    )
-                except Exception:
-                    # DB is already updated — log and continue. Ops must
-                    # manually disable the Paystack subscription to stop
-                    # further charges.
-                    logger.exception(
-                        "Failed to disable Paystack subscription "
-                        "estate_id=%s subscription_code=%s — "
-                        "cancelled in DB but Paystack may still charge",
-                        estate_id,
-                        sub_code,
-                    )
-            elif not sub_code:
-                logger.warning(
-                    "cancel estate_id=%s has no "
-                    "paystack_subscription_code — cannot disable "
-                    "Paystack subscription; it may continue charging",
-                    estate_id,
-                )
-
         return {"estate_id": estate_id, "subscription": updated}
 
     async def apply_seat_add(self, estate_id: str, seats_added: int) -> dict:

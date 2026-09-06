@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _assert_estate_member(current_user: dict, estate_id: str) -> None:
+    """Raise 403 if the authenticated user does not belong to estate_id."""
+    user_estate = current_user.get("estate_id")
+    if user_estate is None or str(user_estate) != str(estate_id):
+        raise HTTPException(
+            status_code=403,
+            detail="User does not belong to this estate.",
+        )
+
+
 def get_service(
     http: AsyncHttpHandler = Depends(get_http_handler),
 ) -> SubscriptionService:
@@ -42,10 +52,11 @@ def get_service(
 @router.get("/estate/{estate_id}", response_model=EstateSubscriptionResponse)
 async def get_estate_subscription(
     estate_id: str,
-    _: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
     """Return the active subscription and effective entitlements for an estate."""
+    _assert_estate_member(current_user, estate_id)
     try:
         return await service.get_estate_subscription(estate_id)
     except HTTPException:
@@ -134,10 +145,11 @@ async def renew_subscription(
 )
 async def cancel_subscription(
     estate_id: str,
-    _: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
     """Cancel auto-renew and disable the Paystack subscription."""
+    _assert_estate_member(current_user, estate_id)
     try:
         return await service.cancel(estate_id)
     except HTTPException:

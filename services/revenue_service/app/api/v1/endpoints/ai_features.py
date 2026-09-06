@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.internal_auth import require_internal_key
 from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.entitlements import (
     AiActivateRequest,
@@ -123,7 +124,10 @@ async def uninstall_ai_feature(
         ) from e
 
 
-@router.post("/estate/{estate_id}/activate")
+@router.post(
+    "/estate/{estate_id}/activate",
+    dependencies=[Depends(require_internal_key)],
+)
 async def activate_ai_features(
     estate_id: str,
     request: AiActivateRequest,

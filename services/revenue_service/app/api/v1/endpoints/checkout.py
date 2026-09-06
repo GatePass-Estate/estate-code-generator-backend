@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _assert_estate_member(current_user: dict, estate_id: str) -> None:
+    """Raise 403 if the authenticated user does not belong to estate_id."""
+    user_estate = current_user.get("estate_id")
+    if user_estate is None or str(user_estate) != str(estate_id):
+        raise HTTPException(
+            status_code=403,
+            detail="User does not belong to this estate.",
+        )
+
+
 def get_service(
     http: AsyncHttpHandler = Depends(get_http_handler),
 ) -> CheckoutService:
@@ -127,6 +137,7 @@ async def initialize_checkout(
     Requires an ``Idempotency-Key`` header. Re-using a key that maps to a
     failed or expired session returns 409.
     """
+    _assert_estate_member(current_user, str(request.estate_id))
     try:
         return await service.initialize(
             request.model_dump(),
