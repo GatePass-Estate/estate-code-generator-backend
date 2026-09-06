@@ -80,9 +80,10 @@ async def get_result_page_overview(
         record. ``total_guests`` is the count of unique
         ``visitor_fullname`` values in the window. ``total_users`` is
         active resident-side users (role resident, admin, or
-        primary_admin) plus those unique guests. ``ratio`` is guest /
-        resident / security counts and each group's percentage of
-        guest + resident + security. ``total_anomalous_instances`` and
+        primary_admin), security users, and those unique guests.
+        ``ratio`` is guest / resident / security counts and each
+        group's percentage of guest + resident + security.
+        ``total_anomalous_instances`` and
         ``total_high_risk_instances`` are prediction *row* counts, not
         unique people. High-risk is ``final_score >= 0.8``.
 

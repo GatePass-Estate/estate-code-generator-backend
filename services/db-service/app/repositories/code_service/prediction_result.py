@@ -688,7 +688,7 @@ class PredictionResultRepository:
                 country=estate.country,
                 total_guests=await self._scalar(guest_q),
                 # resident+admin+primary_admin → ratio.resident
-                # (+ guests in ai-service → demographic.total_users)
+                # (+ guests + security in ai-service → total_users)
                 resident_count=await self._scalar(
                     _active_users().where(_is_resident_user())
                 ),
