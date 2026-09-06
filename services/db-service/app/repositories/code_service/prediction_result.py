@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError
+from app.models.ai_features.ai_response import AiResponse
 from app.models.code_service.prediction_result import (
     PredictionResult as TableModel,
 )
@@ -20,6 +21,7 @@ from app.models.code_service.resident_log import ResidentLog
 from app.models.code_service.visitor_log import VisitorLog
 from app.models.user_profile.estates import Estates
 from app.models.user_profile.users import Users
+from app.schemas.ai_features.ai_response import ANOMALY_SUMMARY_FEATURE_KEY
 from app.schemas.code_service.prediction_result import (
     HIGH_RISK_SCORE,
     MEDIUM_SCORE,
@@ -301,6 +303,14 @@ def _has_summary_tier(raw: Any, key: str) -> bool:
     return True
 
 
+def _joined_ai_summary(mapping: Any) -> dict[str, Any] | None:
+    """Return the joined ``ai_response.ai_summary`` JSON, if present."""
+    if not hasattr(mapping, "get") and not isinstance(mapping, dict):
+        return None
+    raw = mapping.get("joined_ai_summary")
+    return raw if isinstance(raw, dict) and raw else None
+
+
 def _week_span(from_date: datetime | None, to_date: datetime | None) -> float:
     """Weeks in the inclusive window; at least one day (1/7 week)."""
     if from_date is None or to_date is None:
@@ -308,6 +318,20 @@ def _week_span(from_date: datetime | None, to_date: datetime | None) -> float:
     seconds = (to_date - from_date).total_seconds()
     days = max(seconds / 86400.0, 1.0)
     return days / 7.0
+
+
+def _person_match_name(joined_name: str | None, override: str | None) -> str:
+    """
+    Name used to match other logs and predictions for this person.
+
+    Prefer the joined visitor / resident name from the selected
+    prediction. A client ``display_name`` is only used when that log
+    name is blank so a host-resident override cannot hide a guest.
+    """
+    primary = (joined_name or "").strip()
+    if primary:
+        return primary
+    return (override or "").strip()
 
 
 class PredictionResultRepository:
@@ -318,7 +342,7 @@ class PredictionResultRepository:
         self.session = session
 
     def _base_join(self) -> Select:
-        """Prediction rows with visitor/resident name and gender columns."""
+        """Prediction rows with visitor/resident name and cached AI flags."""
         return (
             select(
                 TableModel,
@@ -331,12 +355,21 @@ class PredictionResultRepository:
                 ResidentLog.access_time.label("resident_time"),
                 ResidentLog.user_id.label("resident_user_id"),
                 Users.gender.label("resident_gender"),
+                AiResponse.ai_summary.label("joined_ai_summary"),
             )
             .outerjoin(VisitorLog, TableModel.visitor_log_id == VisitorLog.id)
             .outerjoin(
                 ResidentLog, TableModel.resident_log_id == ResidentLog.id
             )
             .outerjoin(Users, ResidentLog.user_id == Users.id)
+            .outerjoin(
+                AiResponse,
+                and_(
+                    AiResponse.prediction_result_id == TableModel.id,
+                    AiResponse.feature_key == ANOMALY_SUMMARY_FEATURE_KEY,
+                    AiResponse.is_deleted == False,  # noqa: E712
+                ),
+            )
             .where(TableModel.is_deleted == False)  # noqa: E712
         )
 
@@ -405,8 +438,12 @@ class PredictionResultRepository:
             is_anomalous=payload.get("is_anomalous"),
             severity=_severity_of(score_f),
             anomaly_type=payload.get("anomaly_type"),
-            has_tier1_summary=_has_summary_tier(record.ai_summary, "tier1"),
-            has_tier2_summary=_has_summary_tier(record.ai_summary, "tier2"),
+            has_tier1_summary=_has_summary_tier(
+                mapping.get("joined_ai_summary"), "tier1"
+            ),
+            has_tier2_summary=_has_summary_tier(
+                mapping.get("joined_ai_summary"), "tier2"
+            ),
         )
 
     async def search(
@@ -719,7 +756,7 @@ class PredictionResultRepository:
             # 1. Identity from the selected prediction's joined log.
             row = await self._get_case_row(request)
             record, _mapping, is_guest, name, user_id = self._identity(row)
-            display = request.display_name or name or ""
+            display = _person_match_name(name, request.display_name)
             estate_id = UUID(str(request.estate_id))
             # 2. Log-row count in the window → total_entries;
             #    divide by weeks (min one day) → average_entry_per_week.
@@ -741,10 +778,10 @@ class PredictionResultRepository:
                 total_entries=total,
                 average_entry_per_week=avg,
                 has_tier1_summary=_has_summary_tier(
-                    record.ai_summary, "tier1"
+                    _mapping.get("joined_ai_summary"), "tier1"
                 ),
                 has_tier2_summary=_has_summary_tier(
-                    record.ai_summary, "tier2"
+                    _mapping.get("joined_ai_summary"), "tier2"
                 ),
             )
         except NotFoundError:
@@ -760,7 +797,7 @@ class PredictionResultRepository:
             #    for the same visitor/resident name, newest first.
             row = await self._get_case_row(request)
             record, _mapping, is_guest, name, _uid = self._identity(row)
-            display = (request.display_name or name or "").strip()
+            display = _person_match_name(name, request.display_name)
             estate_id = UUID(str(request.estate_id))
             query = self._estate_scope(self._base_join(), estate_id)
             if is_guest:
@@ -826,9 +863,7 @@ class PredictionResultRepository:
             sample, feature_max, scope_max, scope_feat_max = (
                 self._sample_and_maxes(all_rows)
             )
-            summary = record.ai_summary
-            if not isinstance(summary, dict):
-                summary = None
+            summary = _joined_ai_summary(_mapping)
             return CaseDetailResponse(
                 prediction_id=record.id,
                 created_at=record.created_at,
@@ -856,7 +891,7 @@ class PredictionResultRepository:
     async def patch_ai_summary(
         self, prediction_id: UUID, request: AiSummaryPatchRequest
     ) -> AiSummaryResponse:
-        """Merge ``tier1`` / ``tier2`` into the cached ``ai_summary`` JSON."""
+        """Merge ``tier1`` / ``tier2`` into ``core.ai_response`` for this case."""
         try:
             query = select(TableModel).where(
                 TableModel.id == prediction_id,
@@ -865,18 +900,37 @@ class PredictionResultRepository:
             record = (await self.session.execute(query)).scalar_one_or_none()
             if record is None:
                 raise NotFoundError(f"Prediction {prediction_id} not found")
-            # Merge only supplied keys so a later tier2 patch keeps tier1.
-            merged = dict(record.ai_summary or {})
+            lookup_key = str(prediction_id)
+            summary_q = select(AiResponse).where(
+                AiResponse.is_deleted == False,  # noqa: E712
+                AiResponse.feature_key == ANOMALY_SUMMARY_FEATURE_KEY,
+                AiResponse.lookup_key == lookup_key,
+            )
+            cached = (
+                await self.session.execute(summary_q)
+            ).scalar_one_or_none()
+            merged = dict(cached.ai_summary or {}) if cached else {}
             if request.tier1 is not None:
                 merged["tier1"] = request.tier1
             if request.tier2 is not None:
                 merged["tier2"] = request.tier2
-            record.ai_summary = merged
+            if cached is None:
+                cached = AiResponse(
+                    feature_key=ANOMALY_SUMMARY_FEATURE_KEY,
+                    lookup_key=lookup_key,
+                    prediction_result_id=prediction_id,
+                    ai_summary=merged or None,
+                )
+                self.session.add(cached)
+            else:
+                cached.ai_summary = merged or None
             await self.session.flush()
-            await self.session.refresh(record)
-            summary = record.ai_summary
-            if not isinstance(summary, dict):
-                summary = None
+            await self.session.refresh(cached)
+            summary = (
+                cached.ai_summary
+                if isinstance(cached.ai_summary, dict)
+                else None
+            )
             return AiSummaryResponse(
                 prediction_id=record.id,
                 ai_summary=summary,

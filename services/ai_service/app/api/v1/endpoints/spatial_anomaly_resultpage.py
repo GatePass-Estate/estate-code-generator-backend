@@ -236,7 +236,7 @@ async def get_case_demographic(
     Arguments:
         prediction_id: Selected prediction from the list.
         estate_id: Estate that owns the visitor or resident log.
-        display_name: Optional name override; defaults to the joined log.
+        display_name: Fallback only when the joined log has no name.
         from_date: Inclusive lower bound on log timestamps.
         to_date: Inclusive upper bound on log timestamps.
 
@@ -283,13 +283,16 @@ async def get_case_history(
     """
     Five most recent predictions for the same visitor or resident name.
 
-    The selected instance is the newest row. Each item includes
+    The selected instance is the newest row. Guests are matched on
+    visitor name; residents on resident name. A client
+    ``display_name`` cannot replace that identity (it is only used
+    when the joined log name is blank). Each item includes
     validation timestamp, validated code, and severity.
 
     Arguments:
         prediction_id: Selected prediction (most recent in the list).
         estate_id: Estate that owns the visitor or resident log.
-        display_name: Optional name override; defaults to the joined log.
+        display_name: Fallback only when the joined log has no name.
         history_limit: Max rows; default 5.
 
     Returns:
@@ -331,9 +334,9 @@ async def get_case_summary(
     Entitlement-gated in-house and/or LLM summary for one case.
 
     Always re-checks the estate AI grant so a downgraded subscription
-    withholds a previously generated tier. Cached ``ai_summary.tier1`` /
-    ``tier2`` on the prediction row are reused when present; otherwise
-    the missing tier is generated and stored.
+    withholds a previously generated tier. Cached ``ai_response`` rows
+    keyed by prediction id are reused when present; otherwise the
+    missing tier is generated and stored.
 
     Tier 2 includes tier 1. The list endpoint never returns the summary
     body, only ``has_tier1_summary`` / ``has_tier2_summary`` flags.

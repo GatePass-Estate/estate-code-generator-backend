@@ -1,8 +1,9 @@
 """
-Incident intelligence orchestrator (free topics + paid LLM summary).
+Incident intelligence orchestrator (CLI / internal date-window analysis).
 
-Single ``analyze`` entry used by ``POST /incident-reports/summarize``. See
-``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md`` for tier behaviour and mathematics.
+Public generation lives on
+``GET /incident-reports/result-page/summary``. This module remains a
+CLI harness over the same date-window cohort.
 """
 
 from __future__ import annotations
@@ -20,21 +21,18 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
-from app.core.exceptions import EntitlementDeniedError, IncidentReportError
+from app.core.exceptions import IncidentReportError
 from app.integrations.db_service_incident_reports import (
     load_incident_reports_for_estate,
 )
-from app.integrations.revenue_service import (
-    INCIDENT_SUMMARY_FEATURE_KEY,
-    check_ai_feature_allowed,
-)
-from app.models.incident_schemas import (
-    IncidentStructuredSummary,
-    IncidentSummarySection,
-)
+from app.integrations.revenue_service import resolve_incident_entitlements
+from app.models.incident_resultpage import IncidentLlmSummary
 from app.pipeline.incident_eda import build_incident_eda
 from app.pipeline.incident_llm_summarizer import summarize_incidents_with_llm
-from app.pipeline.incident_topic_modelling import discover_incident_topics
+from app.pipeline.incident_resultpage import (
+    attach_category_eda,
+    build_inhouse_incident_summary,
+)
 
 
 def _coerce_summary_keys(raw: dict[str, Any]) -> dict[str, Any]:
@@ -51,13 +49,19 @@ def _coerce_summary_keys(raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-class IncidentReportOrchestrator:
-    """
-    Coordinates db fetch, topic modelling, and optional paid summarisation.
+def _parse_cli_datetime(raw: str | None) -> datetime | None:
+    """Parse an optional ISO-8601 CLI datetime."""
+    if raw is None or not raw.strip():
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
-    Free tier: TF-IDF + NMF + ``report_text``. Paid tier adds EDA + LLM JSON when
-    estate payment is active.
-    """
+
+class IncidentReportOrchestrator:
+    """Load one estate date window and run entitled topic / LLM summaries."""
 
     async def analyze(
         self,
@@ -66,15 +70,13 @@ class IncidentReportOrchestrator:
         estate_id: UUID,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
-        max_records: int = 500,
         n_topics: int | None = None,
     ) -> dict[str, Any]:
         """
-        Load estate incidents once, then run topic modelling for all tiers.
+        Analyse every incident in the selected date window.
 
-        Paid estates (``incident_summary_basic`` AI grant installed + allowed)
-        also receive ``summary`` with EDA and LLM/heuristic fields; free
-        estates get empty ``summary``.
+        Tier 1 runs TF-IDF/NMF topic modelling. Tier 2 adds the LLM
+        narrative. Neither tier is row-capped.
         """
         records = await load_incident_reports_for_estate(
             client,
@@ -82,7 +84,6 @@ class IncidentReportOrchestrator:
             estate_id=estate_id,
             from_date=from_date,
             to_date=to_date,
-            max_records=max_records,
         )
         if not records:
             raise IncidentReportError(
@@ -90,29 +91,20 @@ class IncidentReportOrchestrator:
                 status_code=422,
             )
 
-        try:
-            payment_active = await check_ai_feature_allowed(
-                client,
-                settings,
-                estate_id=estate_id,
-                feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
-            )
-        except EntitlementDeniedError:
-            payment_active = False
-        modelled = discover_incident_topics(records, n_topics=n_topics)
-        topics_section = {
-            "method": modelled.get("method", "tfidf_nmf"),
-            "documents_modelled": int(modelled.get("documents_modelled") or 0),
-            "n_topics": int(modelled.get("n_topics") or 0),
-            "note": modelled.get("note"),
-            "topics": modelled.get("topics") or [],
-            "assignments": modelled.get("assignments") or [],
-            "temporal_overview": modelled.get("temporal_overview") or {},
-            "human_report": modelled.get("human_report"),
-            "report_text": modelled.get("report_text"),
-        }
+        _page_ok, inhouse_ok, llm_ok = await resolve_incident_entitlements(
+            client, settings, estate_id=estate_id
+        )
 
-        if payment_active:
+        topics_section: dict[str, Any] = {}
+        inhouse = None
+        if inhouse_ok:
+            inhouse = build_inhouse_incident_summary(
+                records, n_topics=n_topics
+            )
+            topics_section = inhouse.topics or {}
+
+        summary_section: dict[str, Any] = {}
+        if llm_ok:
             eda = build_incident_eda(records)
             raw_summary, model, llm_used = await summarize_incidents_with_llm(
                 client=client,
@@ -120,23 +112,26 @@ class IncidentReportOrchestrator:
                 records=records,
                 eda=eda,
             )
-            structured = IncidentStructuredSummary.model_validate(
+            llm = IncidentLlmSummary.model_validate(
                 _coerce_summary_keys(raw_summary)
             )
-            summary_section = IncidentSummarySection(
-                eda=eda,
-                structured_summary=structured,
-                llm_model=model,
-                llm_used=llm_used,
-            )
-        else:
-            summary_section = IncidentSummarySection()
+            if inhouse is not None:
+                llm = attach_category_eda(llm, inhouse.category_eda)
+            summary_section = {
+                "eda": eda,
+                "structured_summary": llm.model_dump(exclude={"category_eda"}),
+                "llm_model": model,
+                "llm_used": llm_used,
+            }
 
         return {
             "estate_id": str(estate_id),
             "record_count": len(records),
-            "estate_payment_active": payment_active,
-            "summary": summary_section.model_dump(),
+            "estate_payment_active": llm_ok,
+            "entitled_tier": (
+                "tier2" if llm_ok else "tier1" if inhouse_ok else None
+            ),
+            "summary": summary_section,
             "topics": topics_section,
         }
 
@@ -157,21 +152,21 @@ def _write_analyze_json(result: dict[str, Any], path: Path) -> None:
 async def _run(
     *,
     estate_id: UUID,
-    max_records: int,
+    from_date: datetime | None,
+    to_date: datetime | None,
     n_topics: int | None,
     as_json: bool,
     json_output: Path | None = None,
 ) -> None:
-    """CLI harness: run analyze and print human output or write JSON + latency."""
+    """CLI harness: run analyze and print human output or write JSON."""
     orch = IncidentReportOrchestrator()
     async with httpx.AsyncClient(timeout=120.0) as client:
         started = time.perf_counter()
         result = await orch.analyze(
             client=client,
             estate_id=estate_id,
-            from_date=None,
-            to_date=None,
-            max_records=max_records,
+            from_date=from_date,
+            to_date=to_date,
             n_topics=n_topics,
         )
         latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
@@ -179,8 +174,7 @@ async def _run(
         count = result.get("record_count", 0)
         print("\n[__main__] incident analyze")
         print(
-            f"records={count} estate_payment_active={paid} "
-            f"latency_ms={latency_ms}"
+            f"records={count} estate_payment_active={paid} latency_ms={latency_ms}"
         )
         if as_json:
             out_path = _json_output_path(estate_id, json_output)
@@ -191,7 +185,7 @@ async def _run(
         topics = result.get("topics") or {}
         print("\n" + (topics.get("report_text") or "(no topic report)"))
         if not paid:
-            print("\n── Summary skipped (estate payment inactive)")
+            print("\n── Summary skipped (tier 2 not entitled)")
             return
         structured = (result.get("summary") or {}).get(
             "structured_summary"
@@ -206,7 +200,8 @@ async def _run(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run incident analyze (TF-IDF+NMF topics; LLM summary when paid)."
+            "Run incident analyze for a date window "
+            "(topics when tier 1; LLM when tier 2)."
         ),
     )
     parser.add_argument(
@@ -216,11 +211,16 @@ def _parse_args() -> argparse.Namespace:
         help="Estate UUID (replace with your test estate).",
     )
     parser.add_argument(
-        "--max-records",
-        type=int,
-        default=500,
-        metavar="N",
-        help="Max incident rows to load (default: 500).",
+        "--from-date",
+        default=None,
+        metavar="ISO",
+        help="Inclusive lower bound on incident created_at.",
+    )
+    parser.add_argument(
+        "--to-date",
+        default=None,
+        metavar="ISO",
+        help="Inclusive upper bound on incident created_at.",
     )
     parser.add_argument(
         "--n-topics",
@@ -255,7 +255,8 @@ def main() -> None:
     asyncio.run(
         _run(
             estate_id=args.estate_id,
-            max_records=max(1, args.max_records),
+            from_date=_parse_cli_datetime(args.from_date),
+            to_date=_parse_cli_datetime(args.to_date),
             n_topics=args.n_topics,
             as_json=bool(args.json),
             json_output=args.output,
