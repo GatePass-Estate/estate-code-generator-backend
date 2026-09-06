@@ -34,8 +34,9 @@ async def paystack_webhook(
     Receive and process Paystack webhook events.
 
     Verifies the HMAC-SHA512 signature, deduplicates by event id, and
-    dispatches to the matching handler. Always returns 200 to prevent
-    Paystack from retrying indefinitely on processing errors.
+    dispatches to the matching handler. Successful and duplicate events
+    return 200. A processing failure returns 500 so Paystack retries
+    (the event is not recorded until the handler succeeds).
     """
     body = await http_request.body()
 
@@ -81,11 +82,13 @@ async def paystack_webhook(
     except Exception:
         logger.exception(
             "Webhook processing error event_type=%s event_id=%s — "
-            "event NOT recorded; Paystack retry will reprocess it",
+            "event NOT recorded; returning 500 so Paystack retries",
             event_type,
             event_id,
         )
-        return {"status": "ok"}
+        raise HTTPException(
+            status_code=500, detail="Webhook processing failed"
+        )
 
     await service.repo.create_payment_event(
         {
