@@ -2,10 +2,15 @@
 
 import logging
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from gatepass_auth.dependencies import get_current_user
 
+from app.core.config import settings
+from app.integrations.paystack_client import PaystackClient
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.internal_auth import require_internal_key
 from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.checkout import (
     ActivateSubscriptionRequest,
@@ -22,19 +27,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _assert_estate_member(current_user: dict, estate_id: str) -> None:
+    """Raise 403 if the authenticated user does not belong to estate_id."""
+    user_estate = current_user.get("estate_id")
+    if user_estate is None or str(user_estate) != str(estate_id):
+        raise HTTPException(
+            status_code=403,
+            detail="User does not belong to this estate.",
+        )
+
+
 def get_service(
     http: AsyncHttpHandler = Depends(get_http_handler),
 ) -> SubscriptionService:
     """Build a SubscriptionService for request handling."""
-    return SubscriptionService(DbRevenueRepository(http))
+    return SubscriptionService(
+        DbRevenueRepository(http),
+        paystack_client=PaystackClient(
+            secret_key=settings.PAYSTACK_SECRET_KEY
+        ),
+    )
 
 
 @router.get("/estate/{estate_id}", response_model=EstateSubscriptionResponse)
 async def get_estate_subscription(
     estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
     """Return the active subscription and effective entitlements for an estate."""
+    _assert_estate_member(current_user, estate_id)
     try:
         return await service.get_estate_subscription(estate_id)
     except HTTPException:
@@ -49,12 +71,21 @@ async def get_estate_subscription(
         ) from e
 
 
-@router.post("/activate", response_model=ActivateSubscriptionResponse)
+@router.post(
+    "/activate",
+    response_model=ActivateSubscriptionResponse,
+    dependencies=[Depends(require_internal_key)],
+)
 async def activate_subscription(
     request: ActivateSubscriptionRequest,
     service: SubscriptionService = Depends(get_service),
 ):
-    """Activate or replace a subscription after charge success (no Paystack)."""
+    """
+    Activate or replace a subscription without going through Paystack.
+
+    Internal use only (``X-Internal-Key`` required). Normal activations
+    are driven by the ``charge.success`` webhook.
+    """
     try:
         return await service.activate(request.model_dump())
     except HTTPException:
@@ -73,13 +104,19 @@ async def activate_subscription(
 @router.post(
     "/estate/{estate_id}/renew",
     response_model=MutationSubscriptionResponse,
+    dependencies=[Depends(require_internal_key)],
 )
 async def renew_subscription(
     estate_id: str,
     request: RenewSubscriptionRequest,
     service: SubscriptionService = Depends(get_service),
 ):
-    """Renew subscription using dating rules; extend linked paid AI grants."""
+    """
+    Renew a subscription without going through Paystack.
+
+    Internal use only (``X-Internal-Key`` required). Normal renewals are
+    driven by the ``charge.success`` webhook on a Paystack auto-renewal.
+    """
     try:
         paid_at = None
         if request.paid_at:
@@ -108,9 +145,11 @@ async def renew_subscription(
 )
 async def cancel_subscription(
     estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
-    """Cancel auto-renew; keep period_end / AI expires_at unchanged."""
+    """Cancel auto-renew and disable the Paystack subscription."""
+    _assert_estate_member(current_user, estate_id)
     try:
         return await service.cancel(estate_id)
     except HTTPException:

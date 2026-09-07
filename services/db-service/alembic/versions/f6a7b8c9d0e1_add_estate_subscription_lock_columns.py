@@ -10,7 +10,6 @@ for environments that applied a1b2c3d4e5f6 before those columns were added.
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -22,25 +21,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add lock and renewal-attempt columns to estate_subscription."""
-    op.add_column(
-        "estate_subscription",
-        sa.Column(
-            "over_cap_locked",
-            sa.Boolean(),
-            server_default="false",
-            nullable=False,
-        ),
-        schema="core",
-    )
-    op.add_column(
-        "estate_subscription",
-        sa.Column(
-            "renew_attempt_count",
-            sa.Integer(),
-            server_default="0",
-            nullable=False,
-        ),
-        schema="core",
+    # Use IF NOT EXISTS so this migration is idempotent on environments
+    # whose a1b2c3d4e5f6 already included these columns in CREATE TABLE.
+    op.execute(
+        """
+        ALTER TABLE core.estate_subscription
+            ADD COLUMN IF NOT EXISTS over_cap_locked BOOLEAN
+                NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS renew_attempt_count INTEGER
+                NOT NULL DEFAULT 0
+        """
     )
 
 
