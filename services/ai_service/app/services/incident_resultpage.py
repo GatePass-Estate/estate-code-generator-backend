@@ -10,7 +10,8 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from app.core.config import Settings, settings as default_settings
+from app.core.config import Settings
+from app.core.config import settings as default_settings
 from app.core.exceptions import (
     EntitlementDeniedError,
     IncidentReportError,
@@ -337,10 +338,8 @@ class IncidentResultPageService:
                 grant.
             ResultPageError: Incident load or cache I/O failed.
         """
-        # 1. One cache row per estate + date window.
-        lookup_key = incident_lookup_key(estate_id, from_date, to_date)
         async with httpx.AsyncClient(timeout=_SUMMARY_TIMEOUT) as client:
-            # 2. Catalog tier 2 is required; catalog tier 3 is optional.
+            # 1. Catalog tier 2 is required; catalog tier 3 is optional.
             _page_ok, inhouse_ok, llm_ok = await resolve_incident_entitlements(
                 client, self.settings, estate_id=estate_id
             )
@@ -349,6 +348,8 @@ class IncidentResultPageService:
                     "Estate is not entitled to incident summary.",
                     status_code=403,
                 )
+            # 2. One cache row per estate + date window.
+            lookup_key = incident_lookup_key(estate_id, from_date, to_date)
             # 3. Read the existing JSON (404 becomes an empty dict).
             cache = await fetch_ai_summary(
                 client,
