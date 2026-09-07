@@ -179,6 +179,12 @@ class SearchRequest(BaseSearchRequest):
     status: Optional[SubscriptionStatus] = Field(
         None, description="Subscription status"
     )
+    paystack_subscription_code: Optional[str] = Field(
+        None, description="Paystack subscription code"
+    )
+    paystack_customer_code: Optional[str] = Field(
+        None, description="Paystack customer code"
+    )
 
 
 class ListResponse(BaseListResponse):

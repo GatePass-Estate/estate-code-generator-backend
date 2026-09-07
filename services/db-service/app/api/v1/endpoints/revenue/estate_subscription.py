@@ -130,6 +130,8 @@ async def search(
     estate_id: UUID4 | None = None,
     tier_id: UUID4 | None = None,
     status: SubscriptionStatus | None = None,
+    paystack_subscription_code: str | None = None,
+    paystack_customer_code: str | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
