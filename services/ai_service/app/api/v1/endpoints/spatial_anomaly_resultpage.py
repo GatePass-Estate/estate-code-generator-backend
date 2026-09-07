@@ -6,6 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from gatepass_rbac import require_estate_membership
 
 from app.core.auth import get_current_user
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
@@ -30,20 +31,6 @@ router = APIRouter()
 def get_service() -> SpatialAnomalyResultPageService:
     """Build a result-page service for the current request."""
     return SpatialAnomalyResultPageService()
-
-
-def _require_estate_membership(current_user: dict, estate_id: UUID) -> None:
-    """
-    Reject callers whose JWT estate does not match ``estate_id``.
-
-    Membership is an endpoint-layer concern (RBAC will follow later).
-    """
-    user_estate_id = current_user.get("estate_id")
-    if user_estate_id is None or str(user_estate_id) != str(estate_id):
-        raise HTTPException(
-            status_code=403,
-            detail="User does not belong to this estate.",
-        )
 
 
 def _to_http(exc: ResultPageError | EntitlementDeniedError) -> HTTPException:
@@ -120,7 +107,7 @@ async def get_result_page_overview(
             not belong to the estate; 404 if the estate does not exist;
             502 if db-service is unreachable or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page overview caller_id=%s estate_id=%s",
         current_user.get("id"),
@@ -191,7 +178,7 @@ async def list_result_page_predictions(
             not belong to the estate; 502 if db-service is unreachable
             or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page predictions caller_id=%s estate_id=%s",
         current_user.get("id"),
@@ -250,7 +237,7 @@ async def get_case_demographic(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case demographic caller_id=%s prediction_id=%s",
         current_user.get("id"),
@@ -300,7 +287,7 @@ async def get_case_history(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case history caller_id=%s prediction_id=%s",
         current_user.get("id"),
@@ -351,7 +338,7 @@ async def get_case_summary(
             allowed; 404 if the prediction is missing; 502 on
             downstream errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case summary caller_id=%s prediction_id=%s",
         current_user.get("id"),
@@ -402,7 +389,7 @@ async def get_case_results(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case results caller_id=%s prediction_id=%s",
         current_user.get("id"),

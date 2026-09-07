@@ -119,6 +119,25 @@ type = "directory"
 url = "../../shared/gatepass_auth"
 
 [[package]]
+name = "gatepass-rbac"
+version = "0.1.0"
+description = "Shared RBAC and membership checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+markers = "sys_platform == \"win32\" or sys_platform == \"emscripten\" or sys_platform != \"win32\" and sys_platform != \"emscripten\""
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+pydantic-settings = ">=2.6.1"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_rbac"
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
@@ -1568,4 +1587,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "24594afece63a4c4206c771c4fa903630f0dd9ee98ef6b089d7ae67139a603df"
+content-hash = "3fc387573bd366b28a29f0ff2db650bef2ad13de3153386963724fce9a75942c"

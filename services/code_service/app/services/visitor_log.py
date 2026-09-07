@@ -2,14 +2,16 @@ import asyncio
 import logging
 from datetime import datetime
 
-from fastapi import HTTPException
-
 from app.libs.http_handler import AsyncHttpHandler
 from app.libs.revenue_entitlements import (
     VISITOR_LOG_RETENTION_KEY,
     resolve_retention_from_date,
 )
-from app.libs.role_permissions import get_role_permissions
+from gatepass_rbac import (
+    deny_roles,
+    get_role_permissions,
+    resolve_estate_log_scope,
+)
 from app.repositories.visitor_log import (
     VisitorLogRepository as Repository,
 )
@@ -59,20 +61,7 @@ class VisitorLogService:
         permissions = await get_role_permissions(
             self.ahttp_client, requester["role"]
         )
-        if not permissions.get("can_view_other_user_logs", False):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view these logs.",
-            )
-        if permissions.get("can_view_other_user_logs_in_other_estate", False):
-            return None
-        estate_id = requester.get("estate_id")
-        if not estate_id:
-            raise HTTPException(
-                status_code=403,
-                detail="No estate is associated with your account.",
-            )
-        return str(estate_id)
+        return resolve_estate_log_scope(requester, permissions)
 
     async def _apply_retention(
         self,
@@ -100,11 +89,11 @@ class VisitorLogService:
         Raises:
             HTTPException: 403 if the requester is a security account.
         """
-        if str(requester.get("role", "")).lower() == "security":
-            raise HTTPException(
-                status_code=403,
-                detail="Security accounts have no personal visitor history.",
-            )
+        deny_roles(
+            str(requester.get("role", "")),
+            ("security",),
+            detail="Security accounts have no personal visitor history.",
+        )
 
     async def _enrich_code_deleted(self, result: dict) -> dict:
         """

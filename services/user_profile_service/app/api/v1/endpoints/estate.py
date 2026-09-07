@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
-from app.libs.role_permissions import check_permission
+from gatepass_rbac import check_permission
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.schedule import ScheduleRepository as ScheduleRepo

@@ -3,6 +3,8 @@ from typing import Dict, Optional, Any
 from urllib.parse import urlencode
 from fastapi import HTTPException
 
+from gatepass_rbac import get_role_permissions as fetch_role_permissions
+
 from app.libs.http_handler import AsyncHttpHandler
 from app.schemas.user import (
     RegisterUserRequest,
@@ -690,16 +692,4 @@ class UserRepository:
         Raises:
             HTTPException: If retrieval fails.
         """
-        url = (
-            f"{self.base_url}api/v1/userprofile/rolepermission/"
-            f"search?role_name={role}"
-        )
-        response = await self.client.async_get(url)
-
-        if not response or not response.get("items"):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Permissions not found for role '{role}'.",
-            )
-
-        return response.get("items")[0]
+        return await fetch_role_permissions(self.client, role)

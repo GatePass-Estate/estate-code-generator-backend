@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from gatepass_auth import get_current_user
+from gatepass_rbac import require_owner
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.device_token import DeviceTokenRepository
@@ -38,11 +39,11 @@ async def get_device_tokens_by_user(
     current_user: dict = Depends(get_current_user),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
-    if user_id != current_user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot access another user's device tokens.",
-        )
+    require_owner(
+        current_user,
+        user_id,
+        detail="Cannot access another user's device tokens.",
+    )
     repo = DeviceTokenRepository(ahttp_client)
     result = await repo.get_by_user(user_id=user_id)
     if result is None:

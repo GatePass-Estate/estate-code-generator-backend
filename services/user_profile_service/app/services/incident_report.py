@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import HTTPException
+from gatepass_rbac import require_admin, require_same_estate
 
 from app.repositories.incident_report import IncidentReportRepository
 from app.schemas.incident_report import (
@@ -48,9 +48,15 @@ class IncidentReportService:
         user_role: str,
         user_estate_id: str,
     ) -> IncidentReportItem:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         item = await self.repository.get(incident_id, admin_id)
-        _require_same_estate(str(item.estate_id), user_estate_id)
+        require_same_estate(
+            item.estate_id,
+            user_estate_id,
+            detail="Access to reports from other estates is not allowed.",
+        )
         return item
 
     async def list(
@@ -62,7 +68,9 @@ class IncidentReportService:
         page: int = 1,
         limit: int = 20,
     ) -> IncidentReportListResponse:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         # Use search with estate_id to ensure estate-scoped results.
         return await self.repository.search(
             estate_id=user_estate_id,
@@ -83,7 +91,9 @@ class IncidentReportService:
         page: int = 1,
         limit: int = 20,
     ) -> IncidentReportListResponse:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         return await self.repository.search(
             estate_id=user_estate_id,
             admin_id=admin_id,
@@ -101,7 +111,9 @@ class IncidentReportService:
         *,
         user_role: str,
     ) -> dict:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         return await self.repository.mark_read(incident_id, admin_id)
 
     async def mark_all_read(
@@ -111,7 +123,9 @@ class IncidentReportService:
         *,
         user_role: str,
     ) -> dict:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         return await self.repository.mark_all_read(
             estate_id=estate_id, admin_id=admin_id
         )
@@ -123,23 +137,9 @@ class IncidentReportService:
         *,
         user_role: str,
     ) -> dict:
-        _require_admin(user_role)
+        require_admin(
+            user_role, detail="Only admins can access incident reports."
+        )
         return await self.repository.clear_read(
             estate_id=estate_id, admin_id=admin_id
-        )
-
-
-def _require_admin(role: str) -> None:
-    if role not in ("admin", "primary_admin", "root"):
-        raise HTTPException(
-            status_code=403,
-            detail="Only admins can access incident reports.",
-        )
-
-
-def _require_same_estate(report_estate_id: str, user_estate_id: str) -> None:
-    if report_estate_id != user_estate_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Access to reports from other estates is not allowed.",
         )

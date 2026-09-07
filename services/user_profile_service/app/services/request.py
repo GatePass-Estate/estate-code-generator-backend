@@ -1,6 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from gatepass_rbac import (
+    is_admin,
+    require_owner,
+    require_roles,
+    require_same_estate,
+)
 
 from app.core.config import settings
 from app.schemas.request import (
@@ -214,12 +220,12 @@ class RequestService:
             raise HTTPException(status_code=404, detail="Request not found")
 
         # Authorization: user can only view their own requests unless admin
-        if user_role not in ("admin", "primary_admin", "root"):
-            if str(edit_request.resident_id) != user_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Not authorized to view this request",
-                )
+        if not is_admin(user_role):
+            require_owner(
+                user_id,
+                edit_request.resident_id,
+                detail="Not authorized to view this request",
+            )
 
         return edit_request
 
@@ -251,13 +257,11 @@ class RequestService:
             raise HTTPException(status_code=404, detail="User not found")
 
         # For residents, filter to only their requests
-        if user_role not in ("admin", "primary_admin", "root"):
+        if not is_admin(user_role):
             search_request.resident_id = user.id
             search_request.estate_id = user.estate_id
-        else:
-            # For admins, filter to their estate if not root
-            if user_role != "root":
-                search_request.estate_id = user.estate_id
+        elif user_role != "root":
+            search_request.estate_id = user.estate_id
 
         return await self.repository.search_requests(search_request)
 
@@ -286,12 +290,11 @@ class RequestService:
             HTTPException: If not authorized, request not found,
             or update fails.
         """
-        # Check authorization
-        if reviewer_role not in ("admin", "primary_admin"):
-            raise HTTPException(
-                status_code=403,
-                detail="Only admins can approve/reject requests",
-            )
+        require_roles(
+            reviewer_role,
+            ("admin", "primary_admin"),
+            detail="Only admins can approve/reject requests",
+        )
 
         # Get the request
         edit_request = await self.repository.get_request_by_id(request_id)
@@ -310,11 +313,11 @@ class RequestService:
         if not reviewer:
             raise HTTPException(status_code=404, detail="Reviewer not found")
 
-        if str(reviewer.estate_id) != str(edit_request.estate_id):
-            raise HTTPException(
-                status_code=403,
-                detail="Cannot review requests from other estates",
-            )
+        require_same_estate(
+            reviewer,
+            edit_request,
+            detail="Cannot review requests from other estates",
+        )
 
         # On approval, apply the side effect (ID document promotion or profile
         # change) BEFORE flipping the request status. If it fails, the request
@@ -407,12 +410,11 @@ class RequestService:
         if not edit_request or edit_request.is_deleted:
             raise HTTPException(status_code=404, detail="Request not found")
 
-        # Check authorization: user can only update own requests
-        if str(edit_request.resident_id) != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only update your own requests",
-            )
+        require_owner(
+            user_id,
+            edit_request.resident_id,
+            detail="You can only update your own requests",
+        )
 
         # Check if request is still pending
         if edit_request.status != RequestStatus.PENDING:
@@ -461,11 +463,11 @@ class RequestService:
         if not edit_request or edit_request.is_deleted:
             raise HTTPException(status_code=404, detail="Request not found")
 
-        if str(edit_request.resident_id) != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only remind admins about your own requests",
-            )
+        require_owner(
+            user_id,
+            edit_request.resident_id,
+            detail="You can only remind admins about your own requests",
+        )
 
         if edit_request.status != RequestStatus.PENDING:
             raise HTTPException(
@@ -533,12 +535,11 @@ class RequestService:
         if not edit_request or edit_request.is_deleted:
             raise HTTPException(status_code=404, detail="Request not found")
 
-        # Check authorization: user can only delete own requests
-        if str(edit_request.resident_id) != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only delete your own requests",
-            )
+        require_owner(
+            user_id,
+            edit_request.resident_id,
+            detail="You can only delete your own requests",
+        )
 
         # Check if request is still pending
         if edit_request.status != RequestStatus.PENDING:
@@ -627,11 +628,11 @@ class RequestService:
             )
 
         doc_meta = await self.documents_repository.get_by_id(document_id)
-        if str(doc_meta.get("user_id")) != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Document does not belong to this user",
-            )
+        require_owner(
+            user_id,
+            doc_meta.get("user_id"),
+            detail="Document does not belong to this user",
+        )
         if doc_meta.get("document_type") != "id_card":
             raise HTTPException(
                 status_code=400,
@@ -656,11 +657,11 @@ class RequestService:
             )
 
         doc_meta = await self.documents_repository.get_by_id(document_id)
-        if str(doc_meta.get("user_id")) != user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Document does not belong to this user",
-            )
+        require_owner(
+            user_id,
+            doc_meta.get("user_id"),
+            detail="Document does not belong to this user",
+        )
         if doc_meta.get("document_type") != "id_card":
             raise HTTPException(
                 status_code=400,
@@ -701,11 +702,11 @@ class RequestService:
                 raise HTTPException(
                     status_code=404, detail="Target User not found"
                 )
-            if str(target_user.estate_id) != str(reviewer.estate_id):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Cannot approve documents from other estates",
-                )
+            require_same_estate(
+                target_user,
+                reviewer,
+                detail="Cannot approve documents from other estates",
+            )
 
         await self.documents_repository.approve(pending_document_id)
 
