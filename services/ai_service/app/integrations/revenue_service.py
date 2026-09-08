@@ -14,8 +14,12 @@ logger = logging.getLogger(__name__)
 
 #: Seeded AI catalog key for visitor/resident anomaly detection.
 ANOMALY_FEATURE_KEY = "visitor_resident_anomaly_detection"
-#: Seeded AI catalog key for paid incident LLM summary.
+#: Result-page access only (overview + reports; no AI summary).
 INCIDENT_SUMMARY_FEATURE_KEY = "incident_summary_basic"
+#: In-house topic-modelling summary for an estate date window.
+INCIDENT_SUMMARY_TIER2_KEY = "incident_summary_basic_tier2"
+#: LLM narrative for an estate date window (includes in-house).
+INCIDENT_SUMMARY_TIER3_KEY = "incident_summary_basic_tier3"
 #: In-house formatted summary for a selected anomaly case.
 ANOMALY_SUMMARY_TIER2_KEY = "visitor_resident_anomaly_detection_tier2"
 #: LLM summary for a selected anomaly case (includes in-house).
@@ -68,8 +72,7 @@ async def check_ai_feature_allowed(
                 status_code=404,
             ) from exc
         logger.exception(
-            "AI feature check HTTP error estate_id=%s feature_key=%s "
-            "status=%s",
+            "AI feature check HTTP error estate_id=%s feature_key=%s status=%s",
             estate_id,
             feature_key,
             exc.response.status_code,
@@ -117,3 +120,37 @@ async def is_ai_feature_allowed(
         if exc.status_code in (403, 404):
             return False
         raise
+
+
+async def resolve_incident_entitlements(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    estate_id: UUID | str,
+) -> tuple[bool, bool, bool]:
+    """
+    Return ``(result_page, inhouse, llm)`` for incident result-page access.
+
+    ``incident_summary_basic`` is result-page only. Tier 2 is in-house
+    topic modelling. Tier 3 is the LLM narrative and includes tier 2.
+    Higher summary grants also unlock the result page.
+    """
+    llm_ok = await is_ai_feature_allowed(
+        client,
+        settings,
+        estate_id=estate_id,
+        feature_key=INCIDENT_SUMMARY_TIER3_KEY,
+    )
+    inhouse_ok = llm_ok or await is_ai_feature_allowed(
+        client,
+        settings,
+        estate_id=estate_id,
+        feature_key=INCIDENT_SUMMARY_TIER2_KEY,
+    )
+    page_ok = inhouse_ok or await is_ai_feature_allowed(
+        client,
+        settings,
+        estate_id=estate_id,
+        feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+    )
+    return page_ok, inhouse_ok, llm_ok

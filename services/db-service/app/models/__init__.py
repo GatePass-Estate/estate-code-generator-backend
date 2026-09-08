@@ -7,6 +7,7 @@ from app.models.user_profile.incident_report import IncidentReport
 from app.models.code_service.log_feature_engineering import (
     LogFeatureEngineering,
 )
+from app.models.ai_features.ai_response import AiResponse
 from app.models.code_service.prediction_result import PredictionResult
 from app.models.code_service.resident_log import ResidentLog
 from app.models.code_service.visitor_log import VisitorLog
@@ -49,6 +50,7 @@ from app.models.revenue.payment_transaction import PaymentTransaction
 
 __all__ = [
     "AccessCode",
+    "AiResponse",
     "AdminIncidentReportRead",
     "BroadcastReads",
     "IncidentReport",

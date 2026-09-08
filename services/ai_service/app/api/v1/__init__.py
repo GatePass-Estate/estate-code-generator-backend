@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints.incident_report import router as incident_router
+from app.api.v1.endpoints.incident_resultpage import (
+    router as incident_resultpage_router,
+)
 from app.api.v1.endpoints.ai_market_place import (
     router as ai_market_place_router,
 )
@@ -36,9 +38,9 @@ api_router.include_router(
     tags=["Temporal Anomaly (Matrix Profile)"],
 )
 api_router.include_router(
-    incident_router,
-    prefix="/incident-reports",
-    tags=["Incident reports (TF-IDF/NMF + paid LLM)"],
+    incident_resultpage_router,
+    prefix="/incident-reports/result-page",
+    tags=["Incident Report Result Page"],
 )
 api_router.include_router(
     volume_forecast_router,

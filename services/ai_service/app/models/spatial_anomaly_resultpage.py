@@ -41,7 +41,10 @@ class Demographic(BaseModel):
     country: str | None = None
     total_users: int = Field(
         ...,
-        description="Residents, admins, primary admins, plus unique guests.",
+        description=(
+            "Residents, admins, primary admins, security, "
+            "plus unique guests."
+        ),
     )
     total_guests: int = Field(
         ..., description="Unique visitor-log names in the timeframe."

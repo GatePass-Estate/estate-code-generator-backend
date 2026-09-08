@@ -115,7 +115,10 @@ class CaseRequest(BaseSearchRequest):
     prediction_id: UUID4 = Field(..., description="Selected prediction row.")
     display_name: str | None = Field(
         default=None,
-        description="Override name used to match visitor/resident logs.",
+        description=(
+            "Fallback name when the joined visitor/resident log has none. "
+            "Ignored when the selected prediction already has a log name."
+        ),
     )
     user_type: UserType | None = Field(default=None)
     history_limit: int = Field(default=5, ge=1, le=20)

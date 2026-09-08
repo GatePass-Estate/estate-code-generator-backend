@@ -66,13 +66,13 @@ async def load_incident_reports_for_estate(
     estate_id: UUID,
     from_date: datetime | None,
     to_date: datetime | None,
-    max_records: int,
+    max_records: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Page ``GET /api/v1/userprofile/incidentreport/search`` for one estate.
 
-    Results are ordered by ``created_at`` descending in db-service. Stops when
-    ``max_records`` is reached or the server reports no further pages.
+    Date bounds filter ``created_at``. When ``max_records`` is omitted,
+    every matching row in the window is loaded. Results are newest first.
 
     Raises:
         IncidentReportError: On transport or HTTP errors from db-service.
@@ -80,8 +80,12 @@ async def load_incident_reports_for_estate(
     url = _db_url(settings, "api/v1/userprofile/incidentreport/search")
     collected: list[dict[str, Any]] = []
     page = 1
-    while len(collected) < max_records:
-        limit = min(_PAGE_SIZE, max_records - len(collected))
+    while True:
+        if max_records is not None and len(collected) >= max_records:
+            break
+        limit = _PAGE_SIZE
+        if max_records is not None:
+            limit = min(_PAGE_SIZE, max_records - len(collected))
         params: dict[str, Any] = {
             "estate_id": str(estate_id),
             "page": page,
@@ -104,4 +108,6 @@ async def load_incident_reports_for_estate(
         estate_id,
         len(collected),
     )
-    return collected[:max_records]
+    if max_records is not None:
+        return collected[:max_records]
+    return collected

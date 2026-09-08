@@ -213,7 +213,7 @@ def test_overview_from_db_payload_maps_demographic_fields():
     }
     result = overview_from_db_payload(deepcopy(payload))
     assert result.demographic.estate_name == "Lekki Gardens"
-    assert result.demographic.total_users == 42
+    assert result.demographic.total_users == 47
     assert result.demographic.ratio["guest"].count == 12
     assert result.demographic.ratio["guest"].percentage == 25.53
     assert result.demographic.ratio["resident"].count == 30

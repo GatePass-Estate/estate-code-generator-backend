@@ -364,10 +364,11 @@ def overview_from_db_payload(
     Map a db-service overview dict onto the public result-page payload.
 
     Counts pass through with light coercion. ``total_users`` is
-    resident-side users plus unique guests (not subscription seats).
-    ``ratio`` percentages use guest + resident + security as the
-    denominator. ``normal_sample`` and the three max maps are sanitized
-    then handed to ``build_anomaly_overview``.
+    resident-side users, security, and unique guests (not
+    subscription seats). ``ratio`` percentages use that same
+    guest + resident + security total. ``normal_sample`` and the
+    three max maps are sanitized then handed to
+    ``build_anomaly_overview``.
 
     Arguments:
         data: Raw overview JSON from db-service (estate identity,
@@ -407,7 +408,7 @@ def overview_from_db_payload(
             estate_name=str(data.get("estate_name") or ""),
             state=data.get("state"),
             country=data.get("country"),
-            total_users=residents + guests,  # not paid seats
+            total_users=whole,
             total_guests=guests,
             ratio={
                 "guest": _ratio_share(guests, whole),

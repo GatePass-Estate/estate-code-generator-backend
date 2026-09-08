@@ -1,8 +1,8 @@
 """
-Pydantic models for ``POST /api/v1/incident-reports/summarize``.
+Shared incident-intelligence models.
 
-Free tier populates ``topics``; paid tier also fills ``summary`` when
-``estate_payment_active`` is true. See ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md``.
+Public generation is ``GET /incident-reports/result-page/summary``.
+These shapes remain for the CLI orchestrator and cached topic payloads.
 """
 
 from __future__ import annotations
@@ -13,12 +13,7 @@ from pydantic import UUID4, BaseModel, Field
 
 
 class IncidentSummarizeRequest(BaseModel):
-    """
-    Filter an estate's incident cohort.
-
-    ``POST /incident-reports/summarize`` always runs TF-IDF+NMF topics; the LLM
-    summary block is included only when the estate has active payment.
-    """
+    """Date-window filter for the CLI incident analyze harness."""
 
     estate_id: UUID4
     from_date: datetime | None = Field(
