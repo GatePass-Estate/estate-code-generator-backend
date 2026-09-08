@@ -9,6 +9,12 @@ from app.api.v1.endpoints.user_profile.incident_report import (
 from app.api.v1.endpoints.code_service.log_feature_engineering import (
     router as logfeatureengineering_router,
 )
+from app.api.v1.endpoints.ai_features.ai_response import (
+    router as airesponse_router,
+)
+from app.api.v1.endpoints.ai_features.incident_resultpage import (
+    router as incident_resultpage_router,
+)
 from app.api.v1.endpoints.code_service.prediction_result import (
     router as predictionresult_router,
 )
@@ -114,6 +120,18 @@ api_router.include_router(
     predictionresult_router,
     prefix="/codeservice/predictionresult",
     tags=["PredictionResult"],
+)
+
+api_router.include_router(
+    airesponse_router,
+    prefix="/ai-features/ai-response",
+    tags=["AiResponse"],
+)
+
+api_router.include_router(
+    incident_resultpage_router,
+    prefix="/ai-features/incident-report",
+    tags=["Incident Report Result Page"],
 )
 
 api_router.include_router(

@@ -190,7 +190,7 @@ async def case_demographic(
     Arguments:
         prediction_id: Selected prediction row.
         estate_id: Estate that owns the visitor or resident log.
-        display_name: Optional name override; defaults to the joined log.
+        display_name: Fallback only when the joined log has no name.
         from_date: Inclusive lower bound on log timestamps.
         to_date: Inclusive upper bound on log timestamps.
 
@@ -241,14 +241,17 @@ async def case_history(
     """
     Recent predictions for the same visitor or resident name.
 
-    The selected instance is the newest row returned. Matches
-    ``visitor_fullname`` or ``residentlog.full_name`` (case-insensitive)
-    and ``created_at <=`` the selected prediction.
+    The selected instance is the newest row returned. Guests match
+    ``visitor_fullname``; residents match ``residentlog.full_name``.
+    Matching uses the joined log name from this prediction, not a
+    client ``display_name`` (that field is only a fallback when the
+    log name is blank). Rows satisfy ``created_at <=`` the selected
+    prediction.
 
     Arguments:
         prediction_id: Selected prediction (most recent in the list).
         estate_id: Estate that owns the visitor or resident log.
-        display_name: Optional name override; defaults to the joined log.
+        display_name: Fallback only when the joined log has no name.
         history_limit: Max rows; default 5.
 
     Returns:
@@ -346,9 +349,10 @@ async def patch_ai_summary(
     service: Service = Depends(get_service),
 ) -> AiSummaryResponse:
     """
-    Merge generated summaries into the prediction's ``ai_summary`` JSON.
+    Merge generated summaries into ``core.ai_response`` for this prediction.
 
-    Only provided keys are written; existing tier payloads are kept.
+    Lookup key is the prediction id. Only provided keys are written;
+    existing tier payloads are kept.
 
     Arguments:
         prediction_id: Prediction row to update.

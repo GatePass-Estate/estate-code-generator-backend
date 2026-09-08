@@ -389,8 +389,11 @@ class IncidentReportRepository:
             }
         except SQLAlchemyError as e:
             message = (
-                "Database error marking incident %s read "
-                "for admin %s" % (incident_report_id, admin_id)
+                "Database error marking incident %s read for admin %s"
+                % (
+                    incident_report_id,
+                    admin_id,
+                )
             )
             logger.exception(message)
             raise DatabaseError(message) from e

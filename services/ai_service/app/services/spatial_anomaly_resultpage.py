@@ -216,9 +216,9 @@ class SpatialAnomalyResultPageService:
         Entitlement-gated in-house and/or LLM summary for one case.
 
         Re-checks the estate AI grant so a downgraded subscription
-        withholds a previously generated tier. Cached ``ai_summary.tier1``
-        / ``tier2`` are reused when present; otherwise the missing tier
-        is generated and stored.
+        withholds a previously generated tier. Cached ``ai_response``
+        rows keyed by prediction id are reused when present; otherwise
+        the missing tier is generated and stored.
         """
         async with httpx.AsyncClient(timeout=_SUMMARY_TIMEOUT) as client:
             # Re-check grants every call. Tier3 implies both; else
