@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import HTTPException
+from gatepass_rbac import require_same_estate, same_estate
 
 from app.repositories.household import HouseholdRepository
 from app.repositories.user import UserRepository
@@ -63,7 +64,7 @@ class HouseholdService:
                 raise HTTPException(
                     status_code=404, detail="Head user not found."
                 )
-            if str(head_user.estate_id) != str(request.estate_id):
+            if not same_estate(head_user, request):
                 raise HTTPException(
                     status_code=400,
                     detail="Head user does not belong to this estate.",
@@ -122,9 +123,10 @@ class HouseholdService:
         household = await self.household_repo.get_household_by_id(household_id)
         if not household:
             raise HTTPException(status_code=404, detail="Household not found.")
-        if actor_estate_id and str(household.estate_id) != actor_estate_id:
-            raise HTTPException(
-                status_code=403,
+        if actor_estate_id:
+            require_same_estate(
+                household,
+                actor_estate_id,
                 detail=(
                     "You can only access households within your own estate."
                 ),
@@ -157,9 +159,10 @@ class HouseholdService:
         household = await self.household_repo.get_household_by_id(household_id)
         if not household:
             raise HTTPException(status_code=404, detail="Household not found.")
-        if actor_estate_id and str(household.estate_id) != actor_estate_id:
-            raise HTTPException(
-                status_code=403,
+        if actor_estate_id:
+            require_same_estate(
+                household,
+                actor_estate_id,
                 detail=(
                     "You can only manage households within your own estate."
                 ),
@@ -169,7 +172,7 @@ class HouseholdService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
-        if str(user.estate_id) != str(household.estate_id):
+        if not same_estate(user, household):
             raise HTTPException(
                 status_code=400,
                 detail="User does not belong to the household's estate.",
@@ -206,10 +209,11 @@ class HouseholdService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
-        if actor_estate_id and str(user.estate_id) != actor_estate_id:
-            raise HTTPException(
-                status_code=403,
-                detail=("You can only manage users within your own estate."),
+        if actor_estate_id:
+            require_same_estate(
+                user,
+                actor_estate_id,
+                detail="You can only manage users within your own estate.",
             )
 
         new_household = await self.household_repo.get_household_by_id(
@@ -218,7 +222,7 @@ class HouseholdService:
         if not new_household:
             raise HTTPException(status_code=404, detail="Household not found.")
 
-        if str(new_household.estate_id) != str(user.estate_id):
+        if not same_estate(new_household, user):
             raise HTTPException(
                 status_code=400,
                 detail="Household does not belong to user's estate.",

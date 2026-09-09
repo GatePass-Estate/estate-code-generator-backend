@@ -21,7 +21,7 @@ from app.schemas.request import (
     RequestStatus,
 )
 from app.libs.http_handler import get_http_handler, AsyncHttpHandler
-from app.libs.role_permissions import check_permission
+from gatepass_rbac import check_permission
 from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository

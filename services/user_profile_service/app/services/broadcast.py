@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.libs.http_handler import AsyncHttpHandler
 from app.libs.notify import fire_notify
-from app.libs.role_permissions import check_permission
+from gatepass_rbac import check_permission, require_owner_or_roles
 from app.repositories.broadcast import BroadcastRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.user import UserRepository
@@ -340,13 +340,13 @@ class BroadcastService:
         requester_role: str,
     ) -> BroadcastUpdateResponse:
         broadcast = await self.repo.get_by_id(broadcast_id)
-        is_owner = broadcast.sender_id == requester_id
-        is_root = requester_role == "root"
-        if not (is_owner or is_root):
-            raise HTTPException(
-                status_code=403,
-                detail="Only the sender or root can update this broadcast.",
-            )
+        require_owner_or_roles(
+            requester_id,
+            broadcast.sender_id,
+            requester_role,
+            ("root",),
+            detail="Only the sender or root can update this broadcast.",
+        )
         return await self.repo.update(broadcast_id, payload)
 
     async def delete(
@@ -357,11 +357,11 @@ class BroadcastService:
         requester_role: str,
     ) -> BroadcastDeleteResponse:
         broadcast = await self.repo.get_by_id(broadcast_id)
-        is_owner = broadcast.sender_id == requester_id
-        is_root = requester_role == "root"
-        if not (is_owner or is_root):
-            raise HTTPException(
-                status_code=403,
-                detail="Only the sender or root can delete this broadcast.",
-            )
+        require_owner_or_roles(
+            requester_id,
+            broadcast.sender_id,
+            requester_role,
+            ("root",),
+            detail="Only the sender or root can delete this broadcast.",
+        )
         return await self.repo.delete(broadcast_id)

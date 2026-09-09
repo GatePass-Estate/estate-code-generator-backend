@@ -100,6 +100,7 @@ services:
     volumes:
       - ./services/revenue_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
+      - ./shared/gatepass_rbac:/shared/gatepass_rbac
     env_file:
       - ./.env.secrets
       - ./services/revenue_service/.env.secrets
@@ -131,6 +132,7 @@ services:
     volumes:
       - ./services/code_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
+      - ./shared/gatepass_rbac:/shared/gatepass_rbac
     env_file:
       - ./.env.secrets
       - ./services/code_service/.env.secrets
@@ -161,6 +163,7 @@ services:
       - ./services/user_profile_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
       - ./shared/gatepass_docs:/shared/gatepass_docs
+      - ./shared/gatepass_rbac:/shared/gatepass_rbac
     env_file:
       - ./.env.secrets
       - ./services/user_profile_service/.env.secrets
@@ -189,6 +192,7 @@ services:
     volumes:
       - ./services/ai_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
+      - ./shared/gatepass_rbac:/shared/gatepass_rbac
     env_file:
       - ./.env.secrets
       - ./services/ai_service/.env.secrets

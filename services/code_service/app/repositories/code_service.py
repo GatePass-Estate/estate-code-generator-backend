@@ -5,6 +5,8 @@ from fastapi import HTTPException
 from pydantic import UUID4
 
 from app.core.config import settings
+from gatepass_rbac import is_owner, same_estate
+
 from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
 from app.libs.auth import get_user_details
 from app.libs.hash_gen import generate_unique_code
@@ -477,7 +479,7 @@ class CodeServiceRepository:
                     )
                     return False
 
-                if str(record.get("user_id")) != user_details.get("id"):
+                if not is_owner(user_details, record.get("user_id")):
                     message = (
                         "User is not authorized to delete this resource "
                         "due to user_id mismatch!"
@@ -623,9 +625,9 @@ class CodeServiceRepository:
             ScheduleError: If the visitor validity period exceeds 2 weeks.
             DatabaseError: If there's an error during the database operation.
         """
-        if str(request.estate_id) != user_details.get("estate_id") or str(
-            request.user_id
-        ) != user_details.get("id"):
+        if not same_estate(request, user_details) or not is_owner(
+            user_details, request.user_id
+        ):
             message = (
                 "User is not authorized to generate code for this estate/user!"
             )
@@ -763,7 +765,7 @@ class CodeServiceRepository:
                 ahttp_client=self.ahttp_client, code=code
             )
 
-            if record.get("estate_id") != user_details.get("estate_id"):
+            if not same_estate(record, user_details):
                 message = (
                     "User is not authorized to access this resource "
                     "due to estate_id mismatch!"
@@ -915,7 +917,7 @@ class CodeServiceRepository:
             )
             raise NotFoundError(f"Invalid code: {code}!") from exc
 
-        if str(record.get("user_id")) != user_details.get("id"):
+        if not is_owner(user_details, record.get("user_id")):
             logger.warning(
                 "Visitor code owner auth failed code=%s requester_id=%s "
                 "owner_id=%s reason=user_id_mismatch",
@@ -1003,7 +1005,7 @@ class CodeServiceRepository:
             NotFoundError: If the resident code is not found.
         """
         # Validate that the user is authorized to update this resident's code
-        if str(user_id) != user_details.get("id"):
+        if not is_owner(user_details, user_id):
             message = (
                 "User is not authorized to update code for this resident!"
             )

@@ -11,6 +11,7 @@ WORKDIR /src/service
 
 # Copy the shared package so path deps resolve during poetry lock
 COPY shared/gatepass_auth /shared/gatepass_auth/
+COPY shared/gatepass_rbac /shared/gatepass_rbac/
 
 COPY services/ai_service/pyproject.toml services/ai_service/poetry.lock services/ai_service/README.md /src/service/
 

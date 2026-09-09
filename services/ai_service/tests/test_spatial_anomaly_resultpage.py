@@ -524,32 +524,36 @@ def test_build_inhouse_summary_has_executive_and_detail():
 def test_require_estate_membership_allows_matching_estate():
     from uuid import UUID
 
-    from app.api.v1.endpoints.spatial_anomaly_resultpage import (
-        _require_estate_membership,
-    )
+    from gatepass_rbac import require_estate_membership
 
     estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    _require_estate_membership({"estate_id": str(estate_id)}, estate_id)
+    require_estate_membership({"estate_id": str(estate_id)}, estate_id)
 
 
 def test_require_estate_membership_rejects_mismatch_and_missing():
     from uuid import UUID
 
     from fastapi import HTTPException
-
-    from app.api.v1.endpoints.spatial_anomaly_resultpage import (
-        _require_estate_membership,
-    )
+    from gatepass_rbac import require_estate_membership
 
     estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     other = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     with pytest.raises(HTTPException) as mismatch:
-        _require_estate_membership({"estate_id": str(other)}, estate_id)
+        require_estate_membership({"estate_id": str(other)}, estate_id)
     assert mismatch.value.status_code == 403
 
     with pytest.raises(HTTPException) as missing:
-        _require_estate_membership({"estate_id": None}, estate_id)
+        require_estate_membership({"estate_id": None}, estate_id)
     assert missing.value.status_code == 403
+
+
+def test_require_estate_membership_skips_root():
+    from uuid import UUID
+
+    from gatepass_rbac import require_estate_membership
+
+    estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    require_estate_membership({"role": "root", "estate_id": None}, estate_id)
 
 
 @pytest.mark.asyncio

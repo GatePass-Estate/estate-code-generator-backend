@@ -261,6 +261,62 @@ all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>
 standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "jinja2 (>=3.1.5)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
+name = "gatepass-auth"
+version = "0.1.0"
+description = "Shared FastAPI authentication dependency for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+pyjwt = ">=2.9.0"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_auth"
+
+[[package]]
+name = "gatepass-notify"
+version = "0.1.0"
+description = "Shared notification helper for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_notify"
+
+[[package]]
+name = "gatepass-rbac"
+version = "0.1.0"
+description = "Shared RBAC and membership checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+pydantic-settings = ">=2.6.1"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_rbac"
+
+[[package]]
 name = "greenlet"
 version = "3.1.1"
 description = "Lightweight in-process concurrent programming"
@@ -1317,4 +1373,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "19084f6d8dbed23782bc7783159deb47838effd6971641ea4999983bd7807743"
+content-hash = "24c0d08481514d82cb61677ff39bb0d3edbedb3af3d34a5c5cdc286c3a0f5305"

@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from app.libs.document_permissions import can_download, can_upload, can_view
+from gatepass_rbac import can_download, can_upload, can_view
 
 _SAME_ESTATE = "estate-a"
 _OTHER_ESTATE = "estate-b"

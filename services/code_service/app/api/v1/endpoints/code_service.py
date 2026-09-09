@@ -9,7 +9,7 @@ from app.core.exceptions import NotFoundError, ScheduleError
 from app.libs.auth import get_current_user, get_user_details
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
-from app.libs.role_permissions import check_permission, check_status
+from gatepass_rbac import check_permission, check_status
 from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,

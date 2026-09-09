@@ -7,7 +7,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify, fire_notify_critical
-from app.libs.role_permissions import check_permission
+from gatepass_rbac import (
+    check_permission,
+    require_estate_membership,
+    require_owner,
+    require_roles,
+    require_same_estate,
+)
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.guest import GuestRepository
@@ -92,18 +98,19 @@ async def register_user(
             status_code=403, detail="You are not authorized to register users."
         )
 
+    if request.role == Role.PRIMARY_ADMIN:
+        require_roles(
+            requester_role,
+            ("root",),
+            detail="Only the root user can register a primary admin role.",
+        )
     if requester_role != Role.ROOT:
-        if request.role == Role.PRIMARY_ADMIN:
-            raise HTTPException(
-                status_code=403,
-                detail="Only the root user can register a primary admin role.",
-            )
         estate_id = await service.get_estate_id_by_user_id(current_user["id"])
-        if estate_id != str(request.estate_id):
-            raise HTTPException(
-                status_code=403,
-                detail="Not authorized to register users for this estate.",
-            )
+        require_same_estate(
+            estate_id,
+            request.estate_id,
+            detail="Not authorized to register users for this estate.",
+        )
 
     user, token = await service.register_user(request)
     verification_url = (
@@ -202,11 +209,12 @@ async def get_user_profile(
         raise HTTPException(
             status_code=403, detail="You are not authorized to view users."
         )
-    if not await service.check_same_estate(user_id, current_user["id"]):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to view this user.",
-        )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to view this user.",
+    )
     return await service.get_user_profile(UserProfileRequest(user_id=user_id))
 
 
@@ -448,11 +456,11 @@ async def update_password(
     service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
 ):
-    if str(payload.user_id) != str(current_user["id"]):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to update this user's password.",
-        )
+    require_owner(
+        current_user,
+        payload.user_id,
+        detail="You are not authorized to update this user's password.",
+    )
     result = await service.update_password(payload)
     background_tasks.add_task(
         fire_notify,
@@ -593,12 +601,12 @@ async def resend_verification_email(
             detail="You are not authorized to perform this action.",
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to perform this action.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to perform this action.",
+    )
 
     regenerated_user_id, token = await service.regenerate_verification_token(
         user_id
@@ -757,11 +765,11 @@ async def get_user(
     current_user: dict = Depends(get_current_user),
 ):
     """Get user details by ID."""
-    if current_user["role"] != "root":
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to view this user.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="You are not authorized to view this user.",
+    )
     return await service.get_user(user_id)
 
 
@@ -784,12 +792,12 @@ async def update_user(
             detail="You are not authorized to update this user.",
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view this user.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to update this user.",
+    )
     return await service.update_user(user_id, request)
 
 
@@ -810,12 +818,12 @@ async def delete_user(
             status_code=403, detail="You are not authorized to delete users."
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view this user.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to delete this user.",
+    )
     return await service.delete_user(user_id)
 
 
@@ -827,11 +835,11 @@ async def update_user_phone(
     current_user: dict = Depends(get_current_user),
 ):
     """Allow a user to update their own phone number."""
-    if str(current_user["id"]) != str(user_id):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to update this user's phone number",
-        )
+    require_owner(
+        current_user,
+        user_id,
+        detail="You are not authorized to update this user's phone number",
+    )
     if not phone_number:
         raise HTTPException(status_code=400, detail="phone_number is required")
     return await service.update_user_phone(user_id, phone_number)

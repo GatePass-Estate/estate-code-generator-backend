@@ -6,8 +6,19 @@ from typing import Any, Literal
 import httpx
 from fastapi import HTTPException, UploadFile
 
+from gatepass_rbac import (
+    ADMIN_ROLES,
+    can_download,
+    can_upload,
+    can_view,
+    get_role_permissions,
+    is_admin,
+    is_owner,
+    require_admin,
+    same_estate,
+)
+
 from app.libs.document_filenames import stream_filename
-from app.libs.document_permissions import can_download, can_upload, can_view
 from app.libs.document_validation import (
     DocumentType,
     DocumentValidationError,
@@ -27,7 +38,6 @@ from app.schemas.user_documents import (
     UserDocumentsMetadataResponse,
 )
 
-_ADMIN_ROLES = frozenset({"admin", "primary_admin", "root"})
 _RESTRICTED_DOCUMENT_STATUSES = frozenset(
     {DocumentStatus.PENDING, DocumentStatus.ARCHIVED}
 )
@@ -53,7 +63,7 @@ class UserDocumentsService:
 
     async def _get_permissions(self, role: str) -> dict[str, Any]:
         """Load RBAC flags for the requester's role."""
-        return await self.user_repository.get_role_permissions(role)
+        return await get_role_permissions(self.user_repository.client, role)
 
     async def _resolve_target_user(self, target_user_id: str):
         """Fetch the target user or raise 404 when missing or deleted."""
@@ -127,7 +137,7 @@ class UserDocumentsService:
             view_url = self._view_url(str(requester["id"]), doc_type.value)
         elif (
             doc_type == DocumentType.ID_CARD
-            and requester.get("role") not in _ADMIN_ROLES
+            and requester.get("role") not in ADMIN_ROLES
             and self.request_repository is not None
         ):
             request_service = RequestService(
@@ -198,17 +208,16 @@ class UserDocumentsService:
         if not can_view(requester, target_user, permissions):
             raise HTTPException(status_code=403, detail="Not allowed to view")
 
-        is_owner = str(requester["id"]) == target_user_id
+        owner = is_owner(requester, target_user_id)
         effective_statuses = document_status
-        if not is_owner:
+        if not owner:
             if not document_status:
                 effective_statuses = [DocumentStatus.ACTIVE]
             elif _RESTRICTED_DOCUMENT_STATUSES.intersection(document_status):
-                if requester.get("role") not in _ADMIN_ROLES:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Not allowed to filter by this document status",
-                    )
+                require_admin(
+                    requester["role"],
+                    detail="Not allowed to filter by this document status",
+                )
 
         search_result = await self.repository.search_by_user(
             target_user_id,
@@ -241,11 +250,7 @@ class UserDocumentsService:
                 view_url = self._view_url(owner_id, doc_type)
                 if can_download(requester, target_user, permissions):
                     download_url = self._download_url(owner_id, doc_type)
-            elif is_owner or requester["role"] in (
-                "admin",
-                "primary_admin",
-                "root",
-            ):
+            elif owner or is_admin(requester["role"]):
                 view_url = f"{_DOCUMENTS_BASE}/pending/{document_id}/view"
 
             entry = DocumentMetadataItem(
@@ -280,15 +285,15 @@ class UserDocumentsService:
             )
 
         owner_id = str(doc_meta["user_id"])
-        is_owner = str(requester["id"]) == owner_id
-        is_admin = requester["role"] in ("admin", "primary_admin", "root")
+        owner = is_owner(requester, owner_id)
+        admin = is_admin(requester["role"])
 
-        if not is_owner and not is_admin:
+        if not owner and not admin:
             raise HTTPException(status_code=403, detail="Not allowed to view")
 
-        if is_admin and not is_owner and requester["role"] != "root":
+        if admin and not owner and requester["role"] != "root":
             target_user = await self._resolve_target_user(owner_id)
-            if str(target_user.estate_id) != str(requester.get("estate_id")):
+            if not same_estate(target_user, requester):
                 raise HTTPException(
                     status_code=403, detail="Not allowed to view"
                 )

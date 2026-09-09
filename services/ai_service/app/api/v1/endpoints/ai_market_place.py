@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from gatepass_rbac import require_admin
 
 from app.core.auth import get_current_user
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -48,7 +49,9 @@ async def list_features(
 
     Optional ``purchase_status`` and ``category`` are repeated query params.
     Unpurchased items include a starting price; ratings are attached per page.
+    Restricted to admin, primary_admin, and root.
     """
+    require_admin(current_user["role"])
     return await service.list(
         _estate_id(current_user),
         purchase_status=purchase_status,
@@ -64,7 +67,11 @@ async def view_feature_picture(
     current_user: dict = Depends(get_current_user),
     service: AiMarketPlaceService = Depends(get_service),
 ):
-    """Stream a display picture by GCS object path. JWT only; no extra RBAC."""
+    """Stream a display picture by GCS object path.
+
+    Restricted to admin, primary_admin, and root.
+    """
+    require_admin(current_user["role"])
     result = await service.stream_picture(path)
     return Response(
         content=result["content"],
@@ -83,7 +90,11 @@ async def get_feature(
     current_user: dict = Depends(get_current_user),
     service: AiMarketPlaceService = Depends(get_service),
 ) -> MarketplaceDetailResponse:
-    """Return one marketplace product with child tiers and estate grant status."""
+    """Return one marketplace product with child tiers and estate grant status.
+
+    Restricted to admin, primary_admin, and root.
+    """
+    require_admin(current_user["role"])
     return await service.get(id, _estate_id(current_user))
 
 
@@ -94,7 +105,11 @@ async def rate_feature(
     current_user: dict = Depends(get_current_user),
     service: AiMarketPlaceService = Depends(get_service),
 ) -> RatingResponse:
-    """Create or update the caller's rating and return it with the summary."""
+    """Create or update the caller's rating and return it with the summary.
+
+    Restricted to admin, primary_admin, and root.
+    """
+    require_admin(current_user["role"])
     return await service.rate(
         id, str(current_user["id"]), request.score, request.comment
     )
@@ -110,8 +125,10 @@ async def subscribe_feature(
     """Subscribe the estate to a child ``ai_feature`` tier of this product.
 
     Free features install immediately. Paid features quote then activate via
-    revenue-service (Paystack initialize is still stubbed).
+    revenue-service (Paystack initialize is still stubbed). Restricted to
+    admin, primary_admin, and root.
     """
+    require_admin(current_user["role"])
     return await service.subscribe(
         id,
         _estate_id(current_user),

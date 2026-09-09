@@ -15,6 +15,7 @@ WORKDIR /src/service
 COPY shared/gatepass_auth /shared/gatepass_auth/
 COPY shared/gatepass_docs /shared/gatepass_docs/
 COPY shared/gatepass_notify /shared/gatepass_notify/
+COPY shared/gatepass_rbac /shared/gatepass_rbac/
 
 # Copy the pyproject.toml and lock file to the working directory
 COPY services/user_profile_service/pyproject.toml services/user_profile_service/poetry.lock services/user_profile_service/README.md /src/service/

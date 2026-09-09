@@ -8,8 +8,10 @@ from app.schemas.guest import (
     SearchGuestRequest,
     ListGuestResponse,
 )
-from app.repositories.guest import GuestRepository
 from fastapi import HTTPException
+from gatepass_rbac import require_owner
+
+from app.repositories.guest import GuestRepository
 
 
 class GuestService:
@@ -72,10 +74,11 @@ class GuestService:
         if not existing_guest or existing_guest.is_deleted:
             raise HTTPException(status_code=404, detail="Guest not found")
 
-        if str(existing_guest.resident_id) != requester_id:
-            raise HTTPException(
-                status_code=403, detail="Not authorized to update this guest"
-            )
+        require_owner(
+            requester_id,
+            existing_guest.resident_id,
+            detail="Not authorized to update this guest",
+        )
 
         # Check if any fields are being updated
         if all(
@@ -111,8 +114,7 @@ class GuestService:
         if not guest or guest.is_deleted:
             raise HTTPException(status_code=404, detail="guest not found")
 
-        if str(guest.resident_id) != resident_id:
-            raise HTTPException(status_code=403, detail="Forbidden")
+        require_owner(resident_id, guest.resident_id, detail="Forbidden")
         return guest
 
     async def delete_guest(
@@ -135,10 +137,11 @@ class GuestService:
         if not existing_guest or existing_guest.is_deleted:
             raise HTTPException(status_code=404, detail="guest not found")
 
-        if str(existing_guest.resident_id) != requester_id:
-            raise HTTPException(
-                status_code=403, detail="Not authorized to delete this guest"
-            )
+        require_owner(
+            requester_id,
+            existing_guest.resident_id,
+            detail="Not authorized to delete this guest",
+        )
 
         return await self.repository.delete_guest(guest_id)
 

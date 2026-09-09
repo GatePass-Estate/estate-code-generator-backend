@@ -4,6 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
 from app.core.exceptions import VolumeForecastError
@@ -36,7 +37,10 @@ async def predict_validation_volume(
     Requires a bearer token. Pulls the estate's validation history from
     db-service, buckets it into a zero-filled daily series, and returns the
     ``horizon``-day forecast with a 95% interval plus model diagnostics.
+    Restricted to admin, primary_admin, and root on the caller's estate.
     """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, body.estate_id)
     logger.debug(
         "volume forecast caller_id=%s estate_id=%s target=%s",
         current_user.get("id"),

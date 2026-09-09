@@ -46,19 +46,9 @@ from app.libs.password_utils import (
 )
 from app.libs.revenue_entitlements import assert_seat_available
 from fastapi import HTTPException
+from gatepass_rbac import require_higher_rank, same_estate
 
 logger = logging.getLogger(__name__)
-
-# Role hierarchy rank for deactivation permission checks.
-# An actor can only close accounts with a strictly lower rank.
-_ROLE_RANK: dict[str, int] = {
-    "root": 5,
-    "primary_admin": 4,
-    "admin": 3,
-    "resident": 2,
-    "security": 2,
-    "guest": 1,
-}
 
 
 def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
@@ -543,7 +533,7 @@ class UserService:
             head_user = await self.repository.get_user_by_id(str(head_user_id))
             if head_user:
                 primary_resident_name = (
-                    f"{head_user.first_name} " f"{head_user.last_name}"
+                    f"{head_user.first_name} {head_user.last_name}"
                 )
             else:
                 primary_resident_name = None
@@ -814,7 +804,7 @@ class UserService:
         try:
             user = await self.repository.get_user_by_id(user_id)
             requester = await self.repository.get_user_by_id(requester_user_id)
-            return user.estate_id == requester.estate_id
+            return same_estate(user, requester)
         except Exception:
             return False
 
@@ -1428,15 +1418,11 @@ class UserService:
         target_role_str = (
             user.role.value if hasattr(user.role, "value") else str(user.role)
         )
-        actor_rank = _ROLE_RANK.get(actor_role, 0)
-        target_rank = _ROLE_RANK.get(target_role_str, 0)
-        if actor_rank <= target_rank:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "You cannot close an account of equal or higher rank."
-                ),
-            )
+        require_higher_rank(
+            actor_role,
+            target_role_str,
+            detail="You cannot close an account of equal or higher rank.",
+        )
 
     async def admin_close_account(
         self,
