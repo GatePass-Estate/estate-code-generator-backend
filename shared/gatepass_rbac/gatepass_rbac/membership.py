@@ -39,6 +39,8 @@ def require_estate_membership(
 ) -> None:
     """Reject callers whose JWT estate does not match ``estate_id``.
 
+    Root is not estate-bound, so this check is skipped for ``role="root"``.
+
     Args:
         current_user: Authenticated user dict with ``estate_id``.
         estate_id: Estate the caller must belong to.
@@ -47,6 +49,8 @@ def require_estate_membership(
     Raises:
         HTTPException: 403 if the JWT has no estate or it does not match.
     """
+    if current_user.get("role") == "root":
+        return
     user_estate_id = _estate_id(current_user)
     if user_estate_id is None or user_estate_id != str(estate_id):
         raise HTTPException(status_code=403, detail=detail)

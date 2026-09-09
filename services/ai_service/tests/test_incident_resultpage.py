@@ -144,6 +144,13 @@ def test_require_estate_membership_rejects_mismatch_and_missing():
     assert missing.value.status_code == 403
 
 
+def test_require_estate_membership_skips_root():
+    from gatepass_rbac import require_estate_membership
+
+    estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    require_estate_membership({"role": "root", "estate_id": None}, estate_id)
+
+
 @pytest.mark.asyncio
 async def test_overview_denies_when_estate_has_no_grant(monkeypatch):
     from app.core.exceptions import EntitlementDeniedError

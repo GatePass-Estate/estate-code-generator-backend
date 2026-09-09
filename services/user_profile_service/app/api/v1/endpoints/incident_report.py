@@ -44,8 +44,8 @@ async def create(
     """File a new incident report. Any authenticated user may file."""
     result = await service.create(
         request,
-        estate_id=str(current_user["estate_id"]),
-        user_id=str(current_user["id"]),
+        estate_id=str(current_user.get("estate_id")),
+        user_id=str(current_user.get("id")),
     )
     background_tasks.add_task(
         fire_notify,
@@ -54,7 +54,7 @@ async def create(
             "title": "New Incident Report",
             "body": "A new incident report has been filed.",
             "fan_out": {
-                "estate_id": str(current_user["estate_id"]),
+                "estate_id": str(current_user.get("estate_id")),
                 "roles": ["admin", "primary_admin"],
             },
             "metadata": {
@@ -75,9 +75,9 @@ async def list_all(
 ) -> IncidentReportListResponse:
     """List non-cleared incident reports. Admins only."""
     return await service.list(
-        admin_id=str(current_user["id"]),
-        user_role=current_user["role"],
-        user_estate_id=str(current_user["estate_id"]),
+        admin_id=str(current_user.get("id")),
+        user_role=current_user.get("role"),
+        user_estate_id=str(current_user.get("estate_id")),
         page=page,
         limit=limit,
     )
@@ -95,9 +95,9 @@ async def search(
 ) -> IncidentReportListResponse:
     """Search incident reports with optional filters. Admins only."""
     return await service.search(
-        admin_id=str(current_user["id"]),
-        user_role=current_user["role"],
-        user_estate_id=str(current_user["estate_id"]),
+        admin_id=str(current_user.get("id")),
+        user_role=current_user.get("role"),
+        user_estate_id=str(current_user.get("estate_id")),
         category=category.value if category else None,
         from_date=from_date,
         to_date=to_date,
@@ -115,9 +115,9 @@ async def get(
     """Get a single incident report with reporter details. Admins only."""
     return await service.get(
         incident_id,
-        admin_id=str(current_user["id"]),
-        user_role=current_user["role"],
-        user_estate_id=str(current_user["estate_id"]),
+        admin_id=str(current_user.get("id")),
+        user_role=current_user.get("role"),
+        user_estate_id=str(current_user.get("estate_id")),
     )
 
 
@@ -130,8 +130,8 @@ async def mark_read(
     """Mark a single incident report as read. Admins only."""
     return await service.mark_read(
         incident_id,
-        admin_id=str(current_user["id"]),
-        user_role=current_user["role"],
+        admin_id=str(current_user.get("id")),
+        user_role=current_user.get("role"),
     )
 
 
@@ -142,9 +142,9 @@ async def mark_all_read(
 ) -> dict:
     """Bulk-mark all uncleared reports as read. Admins only."""
     return await service.mark_all_read(
-        admin_id=str(current_user["id"]),
-        estate_id=str(current_user["estate_id"]),
-        user_role=current_user["role"],
+        admin_id=str(current_user.get("id")),
+        estate_id=str(current_user.get("estate_id")),
+        user_role=current_user.get("role"),
     )
 
 
@@ -155,7 +155,7 @@ async def clear_read(
 ) -> dict:
     """Soft-delete all read records for this admin. Admins only."""
     return await service.clear_read(
-        admin_id=str(current_user["id"]),
-        estate_id=str(current_user["estate_id"]),
-        user_role=current_user["role"],
+        admin_id=str(current_user.get("id")),
+        estate_id=str(current_user.get("estate_id")),
+        user_role=current_user.get("role"),
     )

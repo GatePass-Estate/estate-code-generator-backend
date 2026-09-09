@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from gatepass_rbac import require_admin, require_same_estate
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.repositories.incident_report import IncidentReportRepository
 from app.schemas.incident_report import (
@@ -52,9 +52,9 @@ class IncidentReportService:
             user_role, detail="Only admins can access incident reports."
         )
         item = await self.repository.get(incident_id, admin_id)
-        require_same_estate(
+        require_estate_membership(
+            {"role": user_role, "estate_id": user_estate_id},
             item.estate_id,
-            user_estate_id,
             detail="Access to reports from other estates is not allowed.",
         )
         return item
