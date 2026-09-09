@@ -123,29 +123,24 @@ def test_drop_all_filter_treats_all_as_unfiltered():
 
 
 def test_require_estate_membership_allows_matching_estate():
-    from app.api.v1.endpoints.incident_resultpage import (
-        _require_estate_membership,
-    )
+    from gatepass_rbac import require_estate_membership
 
     estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    _require_estate_membership({"estate_id": str(estate_id)}, estate_id)
+    require_estate_membership({"estate_id": str(estate_id)}, estate_id)
 
 
 def test_require_estate_membership_rejects_mismatch_and_missing():
     from fastapi import HTTPException
-
-    from app.api.v1.endpoints.incident_resultpage import (
-        _require_estate_membership,
-    )
+    from gatepass_rbac import require_estate_membership
 
     estate_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     other = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     with pytest.raises(HTTPException) as mismatch:
-        _require_estate_membership({"estate_id": str(other)}, estate_id)
+        require_estate_membership({"estate_id": str(other)}, estate_id)
     assert mismatch.value.status_code == 403
 
     with pytest.raises(HTTPException) as missing:
-        _require_estate_membership({"estate_id": None}, estate_id)
+        require_estate_membership({"estate_id": None}, estate_id)
     assert missing.value.status_code == 403
 
 

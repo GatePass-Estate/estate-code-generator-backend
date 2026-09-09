@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from gatepass_rbac import require_estate_membership
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
@@ -108,6 +108,7 @@ async def get_result_page_overview(
             not belong to the estate; 404 if the estate does not exist;
             502 if db-service is unreachable or errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page overview caller_id=%s estate_id=%s",
@@ -179,6 +180,7 @@ async def list_result_page_predictions(
             not belong to the estate; 502 if db-service is unreachable
             or errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page predictions caller_id=%s estate_id=%s",
@@ -238,6 +240,7 @@ async def get_case_demographic(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case demographic caller_id=%s prediction_id=%s",
@@ -291,6 +294,7 @@ async def get_case_history(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case history caller_id=%s prediction_id=%s",
@@ -342,6 +346,7 @@ async def get_case_summary(
             allowed; 404 if the prediction is missing; 502 on
             downstream errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case summary caller_id=%s prediction_id=%s",
@@ -393,6 +398,7 @@ async def get_case_results(
             not belong to the estate; 404 if the prediction is missing;
             502 if db-service is unreachable or errors.
     """
+    require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     logger.debug(
         "result-page case results caller_id=%s prediction_id=%s",

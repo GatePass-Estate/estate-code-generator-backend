@@ -4,6 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from gatepass_rbac import require_estate_membership, require_roles
 
 from app.core.auth import get_current_user
 from app.core.config import settings
@@ -26,6 +27,8 @@ from app.pipeline.spatial_anomaly_orchestration import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_ANALYZE_ROLES = ("admin", "primary_admin", "security", "root")
+
 
 @router.post(
     "/analyze/{anomaly_type}",
@@ -40,10 +43,14 @@ async def analyze_spatial_anomalies(
     Run the spatial anomaly pipeline for the given type using validation context.
 
     Requires a bearer token, validates path vs payload receiver alignment,
-    verifies the estate's AI feature entitlement via revenue-service, loads log
-    history from db-service, runs K-means/DBSCAN/LOF per scope, and returns
-    scores plus transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
+    confirms the caller belongs to the payload estate and is admin,
+    primary_admin, security, or root, verifies the estate's AI feature
+    entitlement via revenue-service, loads log history from db-service,
+    runs K-means/DBSCAN/LOF per scope, and returns scores plus
+    transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
     """
+    require_roles(current_user["role"], _ANALYZE_ROLES)
+    require_estate_membership(current_user, body.code_validation.estate_id)
     if anomaly_type == AnomalyType.COMBINED:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

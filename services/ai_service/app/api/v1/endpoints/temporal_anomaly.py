@@ -4,6 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
 from app.core.exceptions import LogHistoryError
@@ -37,8 +38,11 @@ async def analyze_temporal_anomalies(
     (``visitor`` / ``resident`` / ``combined`` selects the log tables), then
     scores the most recent one-week window against the whole history as a
     discord. Returns 422 if history spans fewer than three windows (21 days).
+    Restricted to admin, primary_admin, and root on the caller's estate.
     See ``explainer_docs/TEMPORAL_ANOMALY_MATRIX_PROFILE_EXPLAINER.md``.
     """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, body.estate_id)
     logger.debug(
         "temporal anomaly analyze caller_id=%s anomaly_type=%s estate_id=%s",
         current_user.get("id"),

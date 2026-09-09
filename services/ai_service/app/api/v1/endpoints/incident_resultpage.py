@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
@@ -29,20 +30,6 @@ def get_service() -> IncidentResultPageService:
         A new ``IncidentResultPageService`` bound to default settings.
     """
     return IncidentResultPageService()
-
-
-def _require_estate_membership(current_user: dict, estate_id: UUID) -> None:
-    """
-    Reject callers whose JWT estate does not match ``estate_id``.
-
-    Membership is an endpoint-layer concern (RBAC will follow later).
-    """
-    user_estate_id = current_user.get("estate_id")
-    if user_estate_id is None or str(user_estate_id) != str(estate_id):
-        raise HTTPException(
-            status_code=403,
-            detail="User does not belong to this estate.",
-        )
 
 
 def _to_http(exc: ResultPageError | EntitlementDeniedError) -> HTTPException:
@@ -147,12 +134,13 @@ async def get_result_page_overview(
         ``demographic``, ``eda``, and the two cache flags.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate or has no result-page grant; 404
-            if the estate does not exist; 502 if db-service is
-            unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller is not
+            an admin, does not belong to the estate, or has no
+            result-page grant; 404 if the estate does not exist; 502 if
+            db-service is unreachable or errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "incident result-page overview caller_id=%s estate_id=%s",
         current_user.get("id"),
@@ -209,11 +197,13 @@ async def list_result_page_reports(
         narrative, and ``reporter_user_type``.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate or has no result-page grant; 502
-            if db-service is unreachable or errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller is not
+            an admin, does not belong to the estate, or has no
+            result-page grant; 502 if db-service is unreachable or
+            errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "incident result-page reports caller_id=%s estate_id=%s",
         current_user.get("id"),
@@ -272,11 +262,12 @@ async def get_result_page_summary(
         Entitled tier, cache flag, and the granted summary payloads.
 
     Raises:
-        HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate or no summary grant is allowed;
-            502 on downstream errors.
+        HTTPException: 401 if unauthenticated; 403 if the caller is not
+            an admin, does not belong to the estate, or no summary
+            grant is allowed; 502 on downstream errors.
     """
-    _require_estate_membership(current_user, estate_id)
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     logger.debug(
         "incident result-page summary caller_id=%s estate_id=%s",
         current_user.get("id"),
