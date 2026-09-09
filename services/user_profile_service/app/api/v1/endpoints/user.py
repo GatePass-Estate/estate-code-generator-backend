@@ -7,7 +7,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify, fire_notify_critical
-from gatepass_rbac import check_permission, require_owner, require_same_estate
+from gatepass_rbac import (
+    check_permission,
+    require_estate_membership,
+    require_owner,
+    require_roles,
+    require_same_estate,
+)
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.guest import GuestRepository
@@ -92,12 +98,13 @@ async def register_user(
             status_code=403, detail="You are not authorized to register users."
         )
 
+    if request.role == Role.PRIMARY_ADMIN:
+        require_roles(
+            requester_role,
+            ("root",),
+            detail="Only the root user can register a primary admin role.",
+        )
     if requester_role != Role.ROOT:
-        if request.role == Role.PRIMARY_ADMIN:
-            raise HTTPException(
-                status_code=403,
-                detail="Only the root user can register a primary admin role.",
-            )
         estate_id = await service.get_estate_id_by_user_id(current_user["id"])
         require_same_estate(
             estate_id,
@@ -202,11 +209,12 @@ async def get_user_profile(
         raise HTTPException(
             status_code=403, detail="You are not authorized to view users."
         )
-    if not await service.check_same_estate(user_id, current_user["id"]):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to view this user.",
-        )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to view this user.",
+    )
     return await service.get_user_profile(UserProfileRequest(user_id=user_id))
 
 
@@ -593,12 +601,12 @@ async def resend_verification_email(
             detail="You are not authorized to perform this action.",
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to perform this action.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to perform this action.",
+    )
 
     regenerated_user_id, token = await service.regenerate_verification_token(
         user_id
@@ -757,11 +765,11 @@ async def get_user(
     current_user: dict = Depends(get_current_user),
 ):
     """Get user details by ID."""
-    if current_user["role"] != "root":
-        raise HTTPException(
-            status_code=403,
-            detail="You are not authorized to view this user.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="You are not authorized to view this user.",
+    )
     return await service.get_user(user_id)
 
 
@@ -784,12 +792,12 @@ async def update_user(
             detail="You are not authorized to update this user.",
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view this user.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to update this user.",
+    )
     return await service.update_user(user_id, request)
 
 
@@ -810,12 +818,12 @@ async def delete_user(
             status_code=403, detail="You are not authorized to delete users."
         )
 
-    if requester_role != "root":
-        if not await service.check_same_estate(user_id, current_user["id"]):
-            raise HTTPException(
-                status_code=403,
-                detail="You are not authorized to view this user.",
-            )
+    target_user = await service.get_user(user_id)
+    require_estate_membership(
+        current_user,
+        str(target_user.estate_id),
+        detail="You are not authorized to delete this user.",
+    )
     return await service.delete_user(user_id)
 
 

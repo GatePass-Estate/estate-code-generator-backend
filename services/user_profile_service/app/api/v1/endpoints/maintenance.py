@@ -1,7 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 from gatepass_auth import get_current_user
+from gatepass_rbac import require_roles
 
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -29,11 +30,11 @@ async def purge_old_notifications(
     current_user: dict = Depends(get_current_user),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
-    if current_user.get("role") != "root":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only root users can perform this operation.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="Only root users can perform this operation.",
+    )
 
     age = (
         older_than_days

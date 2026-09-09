@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
-from gatepass_rbac import check_permission
+from gatepass_rbac import check_permission, require_estate_membership
 from app.schemas.user import Role
 from app.repositories.user import UserRepository
 from app.repositories.estate import EstateRepository
@@ -95,17 +95,11 @@ async def promote_user_to_admin(
         )
 
     # Non-root users can only promote users from their own estate
-    if requester_role != Role.ROOT:
-        requester_user_id = current_user["id"]
-        requester_estate_id = await user_service.get_estate_id_by_user_id(
-            requester_user_id
-        )
-
-        if requester_estate_id != str(user_to_promote.estate_id):
-            raise HTTPException(
-                status_code=403,
-                detail="You can only promote users from your own estate.",
-            )
+    require_estate_membership(
+        current_user,
+        str(user_to_promote.estate_id),
+        detail="You can only promote users from your own estate.",
+    )
 
     # Update user role to admin
 
@@ -222,17 +216,11 @@ async def demote_admin_to_resident(
             )
 
     # Non-root users can only demote admins from their own estate
-    if requester_role != Role.ROOT:
-        requester_user_id = current_user["id"]
-        requester_estate_id = await user_service.get_estate_id_by_user_id(
-            requester_user_id
-        )
-
-        if requester_estate_id != str(user_to_demote.estate_id):
-            raise HTTPException(
-                status_code=403,
-                detail="You can only demote admins from your own estate.",
-            )
+    require_estate_membership(
+        current_user,
+        str(user_to_demote.estate_id),
+        detail="You can only demote admins from your own estate.",
+    )
 
     # Update user role to resident
 

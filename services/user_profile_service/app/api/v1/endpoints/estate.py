@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
-from gatepass_rbac import check_permission
+from gatepass_rbac import check_permission, require_roles
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.schedule import ScheduleRepository as ScheduleRepo
@@ -300,11 +300,11 @@ async def deactivate_estate(
     - `deactivate_at` is a future datetime → scheduled deactivation via Redis.
       Cannot exceed SCHEDULE_CLOSE_MAX_DAYS days from now.
     """
-    if current_user["role"] != "root":
-        raise HTTPException(
-            status_code=403,
-            detail="Only root can deactivate an estate.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="Only root can deactivate an estate.",
+    )
 
     try:
         estate = await service.get_estate(estate_id)
@@ -371,11 +371,11 @@ async def reactivate_estate(
     current_user: dict = Depends(get_current_user),
 ):
     """Reactivate a previously deactivated estate (root only)."""
-    if current_user["role"] != "root":
-        raise HTTPException(
-            status_code=403,
-            detail="Only root can reactivate an estate.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="Only root can reactivate an estate.",
+    )
 
     await service.reactivate_estate(estate_id, current_user["id"])
 
@@ -416,11 +416,11 @@ async def cancel_estate_deactivation(
     Cancel a pending scheduled estate deactivation (root only).
     Returns 404 if no scheduled deactivation exists for this estate.
     """
-    if current_user["role"] != "root":
-        raise HTTPException(
-            status_code=403,
-            detail="Only root can cancel a scheduled estate deactivation.",
-        )
+    require_roles(
+        current_user["role"],
+        ("root",),
+        detail="Only root can cancel a scheduled estate deactivation.",
+    )
 
     await service.cancel_scheduled_deactivation(estate_id, schedule_repo)
     return {

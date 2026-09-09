@@ -14,6 +14,7 @@ from gatepass_rbac import (
     get_role_permissions,
     is_admin,
     is_owner,
+    require_admin,
     same_estate,
 )
 
@@ -213,11 +214,10 @@ class UserDocumentsService:
             if not document_status:
                 effective_statuses = [DocumentStatus.ACTIVE]
             elif _RESTRICTED_DOCUMENT_STATUSES.intersection(document_status):
-                if requester.get("role") not in ADMIN_ROLES:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Not allowed to filter by this document status",
-                    )
+                require_admin(
+                    requester["role"],
+                    detail="Not allowed to filter by this document status",
+                )
 
         search_result = await self.repository.search_by_user(
             target_user_id,
