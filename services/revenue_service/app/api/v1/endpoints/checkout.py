@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from gatepass_auth.dependencies import get_current_user
+from gatepass_rbac import require_admin, require_estate_membership
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.db_revenue import DbRevenueRepository
@@ -24,16 +25,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _assert_estate_member(current_user: dict, estate_id: str) -> None:
-    """Raise 403 if the authenticated user does not belong to estate_id."""
-    user_estate = current_user.get("estate_id")
-    if user_estate is None or str(user_estate) != str(estate_id):
-        raise HTTPException(
-            status_code=403,
-            detail="User does not belong to this estate.",
-        )
-
-
 def get_service(
     http: AsyncHttpHandler = Depends(get_http_handler),
 ) -> CheckoutService:
@@ -44,9 +35,12 @@ def get_service(
 @router.post("/quote", response_model=QuoteResponse)
 async def quote(
     request: QuoteRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
     """Compute a pricing quote for a subscription / custom purchase."""
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, request.estate_id)
     try:
         return await service.quote(request.model_dump())
     except HTTPException:
@@ -78,9 +72,12 @@ async def quote(
 @router.post("/seats/prorate", response_model=SeatProrateResponse)
 async def prorate_seats(
     request: SeatProrateRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
     """Quote mid-period seat add (remaining days × daily rate; AI excluded)."""
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, request.estate_id)
     try:
         return await service.prorate_seats(request.model_dump())
     except HTTPException:
@@ -99,9 +96,12 @@ async def prorate_seats(
 @router.post("/ai/quote")
 async def quote_ai(
     request: AiCheckoutRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
     """Quote standalone AI feature purchase (flat monthly × months)."""
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, request.estate_id)
     try:
         return await service.quote_ai_features(request.model_dump())
     except HTTPException:
@@ -137,7 +137,8 @@ async def initialize_checkout(
     Requires an ``Idempotency-Key`` header. Re-using a key that maps to a
     failed or expired session returns 409.
     """
-    _assert_estate_member(current_user, str(request.estate_id))
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, request.estate_id)
     try:
         return await service.initialize(
             request.model_dump(),
@@ -162,6 +163,7 @@ async def initialize_checkout(
 )
 async def checkout_status(
     paystack_reference: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     # NOTE: this endpoint must be rate-limited at gateway level.
     checkout_token: Annotated[
         str | None, Header(alias="X-Checkout-Token")
@@ -175,8 +177,11 @@ async def checkout_status(
     response). When present, it is verified against the session. When
     absent, the lookup proceeds by reference only.
     """
+    require_admin(current_user["role"])
     try:
-        return await service.get_status(paystack_reference, checkout_token)
+        result = await service.get_status(paystack_reference, checkout_token)
+        require_estate_membership(current_user, result.pop("estate_id"))
+        return result
     except HTTPException:
         raise
     except Exception as e:

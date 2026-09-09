@@ -6,6 +6,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from gatepass_auth.dependencies import get_current_user
+from gatepass_rbac import (
+    require_admin,
+    require_estate_membership,
+    require_roles,
+)
 
 from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
@@ -26,15 +31,7 @@ from app.services.subscription_service import SubscriptionService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-def _assert_estate_member(current_user: dict, estate_id: str) -> None:
-    """Raise 403 if the authenticated user does not belong to estate_id."""
-    user_estate = current_user.get("estate_id")
-    if user_estate is None or str(user_estate) != str(estate_id):
-        raise HTTPException(
-            status_code=403,
-            detail="User does not belong to this estate.",
-        )
+_PRIMARY_ADMIN_ROLES = ("primary_admin", "root")
 
 
 def get_service(
@@ -55,8 +52,9 @@ async def get_estate_subscription(
     current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
-    """Return the active subscription and effective entitlements for an estate."""
-    _assert_estate_member(current_user, estate_id)
+    """Return the estate's active subscription and entitlements."""
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.get_estate_subscription(estate_id)
     except HTTPException:
@@ -78,6 +76,7 @@ async def get_estate_subscription(
 )
 async def activate_subscription(
     request: ActivateSubscriptionRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: SubscriptionService = Depends(get_service),
 ):
     """
@@ -86,6 +85,8 @@ async def activate_subscription(
     Internal use only (``X-Internal-Key`` required). Normal activations
     are driven by the ``charge.success`` webhook.
     """
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, request.estate_id)
     try:
         return await service.activate(request.model_dump())
     except HTTPException:
@@ -149,7 +150,8 @@ async def cancel_subscription(
     service: SubscriptionService = Depends(get_service),
 ):
     """Cancel auto-renew and disable the Paystack subscription."""
-    _assert_estate_member(current_user, estate_id)
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.cancel(estate_id)
     except HTTPException:

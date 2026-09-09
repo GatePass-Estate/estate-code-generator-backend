@@ -1,8 +1,15 @@
 """AI feature check, list, install, uninstall, and activate endpoints."""
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from gatepass_auth.dependencies import get_current_user
+from gatepass_rbac import (
+    require_admin,
+    require_estate_membership,
+    require_roles,
+)
 from pydantic import BaseModel, Field
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -17,6 +24,8 @@ from app.services.entitlement_service import EntitlementService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_PRIMARY_ADMIN_ROLES = ("primary_admin", "root")
 
 
 class AiFeatureKeyRequest(BaseModel):
@@ -36,13 +45,17 @@ def get_service(
 async def check_ai_feature(
     estate_id: str,
     feature_key: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
 ):
     """
     Check whether an estate may use an AI feature.
 
     Query params: estate_id, feature_key.
+    Restricted to admin, primary_admin, and root on the caller's estate.
     """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.check_ai_feature(estate_id, feature_key)
     except HTTPException:
@@ -61,9 +74,12 @@ async def check_ai_feature(
 @router.get("/estate/{estate_id}", response_model=EstateAiFeaturesResponse)
 async def list_ai_features(
     estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
 ):
-    """List AI feature grants for an estate (orphans marked catalog_deleted)."""
+    """List AI feature grants; orphans are marked catalog_deleted."""
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.list_ai_features(estate_id)
     except HTTPException:
@@ -82,9 +98,12 @@ async def list_ai_features(
 async def install_ai_feature(
     estate_id: str,
     request: AiFeatureKeyRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
 ):
     """Set is_installed=true; create grant only for free features."""
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.install_ai_feature(estate_id, request.feature_key)
     except HTTPException:
@@ -104,9 +123,12 @@ async def install_ai_feature(
 async def uninstall_ai_feature(
     estate_id: str,
     request: AiFeatureKeyRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
 ):
     """Set is_installed=false; preserve billing/expiry fields."""
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
     try:
         return await service.uninstall_ai_feature(
             estate_id, request.feature_key
@@ -131,9 +153,12 @@ async def uninstall_ai_feature(
 async def activate_ai_features(
     estate_id: str,
     request: AiActivateRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
 ):
     """Provision standalone AI grants after charge success (no Paystack)."""
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
     try:
         payload = request.model_dump()
         payload["estate_id"] = estate_id

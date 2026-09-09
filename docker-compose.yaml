@@ -100,6 +100,7 @@ services:
     volumes:
       - ./services/revenue_service/app:/src/service/app
       - ./shared/gatepass_auth:/shared/gatepass_auth
+      - ./shared/gatepass_rbac:/shared/gatepass_rbac
     env_file:
       - ./.env.secrets
       - ./services/revenue_service/.env.secrets

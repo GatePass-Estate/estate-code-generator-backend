@@ -713,7 +713,8 @@ class CheckoutService:
                 response.
 
         Returns:
-            CheckoutStatusResponse-compatible dict.
+            CheckoutStatusResponse-compatible dict plus ``estate_id``
+            for the caller to enforce membership before responding.
 
         Raises:
             HTTPException: 404 if not found; 401/403 on token mismatch.
@@ -752,5 +753,6 @@ class CheckoutService:
                 if hasattr(paid_at, "isoformat")
                 else paid_at
             ),
+            "estate_id": estate_id,
             "estate_id_masked": estate_id[:8] + "***",
         }
