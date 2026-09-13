@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from app.integrations.revenue_service import (
-    INCIDENT_SUMMARY_FEATURE_KEY,
-    INCIDENT_SUMMARY_TIER2_KEY,
-    INCIDENT_SUMMARY_TIER3_KEY,
+from gatepass_entitlement import (
+    INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+    INCIDENT_REPORT_SUMMARY_TIER_2_KEY,
+    INCIDENT_REPORT_SUMMARY_TIER_3_KEY,
     resolve_incident_entitlements,
 )
 from app.pipeline.incident_report_orchestrator import (
@@ -48,33 +48,33 @@ _SAMPLE_RECORDS = [
 @pytest.mark.asyncio
 async def test_resolve_incident_entitlements_maps_three_keys():
     async def _allowed(*_args, feature_key: str, **_kwargs):
-        return feature_key == INCIDENT_SUMMARY_FEATURE_KEY
+        return feature_key == INCIDENT_REPORT_SUMMARY_TIER_1_KEY
 
     with patch(
-        "app.integrations.revenue_service.is_ai_feature_allowed",
+        "gatepass_entitlement.ai.is_ai_feature_allowed",
         new=_allowed,
     ):
         page, inhouse, llm = await resolve_incident_entitlements(
-            AsyncMock(),
-            AsyncMock(),
+            "http://revenue-service",
             estate_id=uuid4(),
         )
     assert (page, inhouse, llm) == (True, False, False)
 
     async def _tier3(*_args, feature_key: str, **_kwargs):
-        return feature_key == INCIDENT_SUMMARY_TIER3_KEY
+        return feature_key == INCIDENT_REPORT_SUMMARY_TIER_3_KEY
 
     with patch(
-        "app.integrations.revenue_service.is_ai_feature_allowed",
+        "gatepass_entitlement.ai.is_ai_feature_allowed",
         new=_tier3,
     ):
         page, inhouse, llm = await resolve_incident_entitlements(
-            AsyncMock(),
-            AsyncMock(),
+            "http://revenue-service",
             estate_id=uuid4(),
         )
     assert (page, inhouse, llm) == (True, True, True)
-    assert INCIDENT_SUMMARY_TIER2_KEY.startswith("incident_summary_basic")
+    assert INCIDENT_REPORT_SUMMARY_TIER_2_KEY.startswith(
+        "incident_report_summary"
+    )
 
 
 def _entitlements(page: bool, inhouse: bool, llm: bool):

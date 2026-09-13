@@ -1,4 +1,4 @@
-"""Revenue-service client for AI feature entitlement checks."""
+"""Revenue-service AI feature entitlement checks."""
 
 from __future__ import annotations
 
@@ -7,63 +7,38 @@ from uuid import UUID
 
 import httpx
 
-from app.core.config import Settings
-from app.core.exceptions import EntitlementDeniedError
+from gatepass_entitlement.config import settings
+from gatepass_entitlement.exceptions import EntitlementDeniedError
+from gatepass_entitlement.http import get_json, join_url
 
 logger = logging.getLogger(__name__)
 
-#: Seeded AI catalog key for visitor/resident anomaly detection.
-ANOMALY_FEATURE_KEY = "visitor_resident_anomaly_detection"
-#: Result-page access only (overview + reports; no AI summary).
-INCIDENT_SUMMARY_FEATURE_KEY = "incident_summary_basic"
-#: In-house topic-modelling summary for an estate date window.
-INCIDENT_SUMMARY_TIER2_KEY = "incident_summary_basic_tier2"
-#: LLM narrative for an estate date window (includes in-house).
-INCIDENT_SUMMARY_TIER3_KEY = "incident_summary_basic_tier3"
-#: In-house formatted summary for a selected anomaly case.
-ANOMALY_SUMMARY_TIER2_KEY = "visitor_resident_anomaly_detection_tier2"
-#: LLM summary for a selected anomaly case (includes in-house).
-ANOMALY_SUMMARY_TIER3_KEY = "visitor_resident_anomaly_detection_tier3"
-
-
-def _revenue_url(settings: Settings, path: str) -> str:
-    """Join ``REVENUE_SERVICE_URL`` with a relative API path."""
-    base = settings.REVENUE_SERVICE_URL.rstrip("/") + "/"
-    return base + path.lstrip("/")
+_CHECK_PATH = "api/v1/ai-features/check"
 
 
 async def check_ai_feature_allowed(
-    client: httpx.AsyncClient,
-    settings: Settings,
+    revenue_base_url: str,
     *,
     estate_id: UUID | str,
-    feature_key: str = ANOMALY_FEATURE_KEY,
+    feature_key: str,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """
     Return whether ``estate_id`` may run ``feature_key`` per revenue-service.
 
     Calls ``GET /api/v1/ai-features/check``. Fail-closed on transport errors.
 
-    Args:
-        client: Shared httpx client.
-        settings: AI service settings (needs ``REVENUE_SERVICE_URL``).
-        estate_id: Estate UUID.
-        feature_key: AI catalog feature key.
-
-    Returns:
-        True when revenue-service reports ``allowed``.
-
     Raises:
         EntitlementDeniedError: When the feature is not allowed (403).
         EntitlementDeniedError: On revenue-service failures (502/fail-closed).
     """
-    url = _revenue_url(settings, "api/v1/ai-features/check")
+    url = join_url(revenue_base_url, _CHECK_PATH)
     params = {
         "estate_id": str(estate_id),
         "feature_key": feature_key,
     }
     try:
-        response = await client.get(url, params=params)
+        response = await get_json(url, params, client=client)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
@@ -72,7 +47,8 @@ async def check_ai_feature_allowed(
                 status_code=404,
             ) from exc
         logger.exception(
-            "AI feature check HTTP error estate_id=%s feature_key=%s status=%s",
+            "AI feature check HTTP error estate_id=%s feature_key=%s "
+            "status=%s",
             estate_id,
             feature_key,
             exc.response.status_code,
@@ -102,19 +78,19 @@ async def check_ai_feature_allowed(
 
 
 async def is_ai_feature_allowed(
-    client: httpx.AsyncClient,
-    settings: Settings,
+    revenue_base_url: str,
     *,
     estate_id: UUID | str,
     feature_key: str,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Return whether the estate may use ``feature_key``; False on 403/404."""
     try:
         return await check_ai_feature_allowed(
-            client,
-            settings,
+            revenue_base_url,
             estate_id=estate_id,
             feature_key=feature_key,
+            client=client,
         )
     except EntitlementDeniedError as exc:
         if exc.status_code in (403, 404):
@@ -123,34 +99,34 @@ async def is_ai_feature_allowed(
 
 
 async def resolve_incident_entitlements(
-    client: httpx.AsyncClient,
-    settings: Settings,
+    revenue_base_url: str,
     *,
     estate_id: UUID | str,
+    client: httpx.AsyncClient | None = None,
 ) -> tuple[bool, bool, bool]:
     """
     Return ``(result_page, inhouse, llm)`` for incident result-page access.
 
-    ``incident_summary_basic`` is result-page only. Tier 2 is in-house
-    topic modelling. Tier 3 is the LLM narrative and includes tier 2.
-    Higher summary grants also unlock the result page.
+    ``incident_report_summary_tier_1`` is result-page only. Tier 2 is
+    in-house topic modelling. Tier 3 is the LLM narrative and includes
+    tier 2. Higher summary grants also unlock the result page.
     """
     llm_ok = await is_ai_feature_allowed(
-        client,
-        settings,
+        revenue_base_url,
         estate_id=estate_id,
-        feature_key=INCIDENT_SUMMARY_TIER3_KEY,
+        feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_3_KEY,
+        client=client,
     )
     inhouse_ok = llm_ok or await is_ai_feature_allowed(
-        client,
-        settings,
+        revenue_base_url,
         estate_id=estate_id,
-        feature_key=INCIDENT_SUMMARY_TIER2_KEY,
+        feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_2_KEY,
+        client=client,
     )
     page_ok = inhouse_ok or await is_ai_feature_allowed(
-        client,
-        settings,
+        revenue_base_url,
         estate_id=estate_id,
-        feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+        feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+        client=client,
     )
     return page_ok, inhouse_ok, llm_ok

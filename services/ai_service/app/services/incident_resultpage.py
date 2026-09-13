@@ -8,6 +8,10 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from gatepass_entitlement import (
+    INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+    resolve_incident_entitlements,
+)
 from pydantic import ValidationError
 
 from app.core.config import Settings
@@ -17,10 +21,7 @@ from app.core.exceptions import (
     IncidentReportError,
     ResultPageError,
 )
-from app.domain.ai_summary import (
-    INCIDENT_SUMMARY_FEATURE_KEY,
-    incident_lookup_key,
-)
+from app.domain.ai_summary import incident_lookup_key
 from app.integrations.db_service_ai_summary import (
     fetch_ai_summary,
     upsert_ai_summary,
@@ -32,7 +33,6 @@ from app.integrations.db_service_incident_resultpage import (
     fetch_incident_overview,
     fetch_incident_reports,
 )
-from app.integrations.revenue_service import resolve_incident_entitlements
 from app.models.incident_resultpage import (
     IncidentInhouseSummary,
     IncidentListItem,
@@ -185,7 +185,9 @@ class IncidentResultPageService:
                 _inhouse_ok,
                 _llm_ok,
             ) = await resolve_incident_entitlements(
-                client, self.settings, estate_id=estate_id
+                self.settings.REVENUE_SERVICE_URL,
+                estate_id=estate_id,
+                client=client,
             )
             if not page_ok:
                 raise EntitlementDeniedError(
@@ -217,7 +219,7 @@ class IncidentResultPageService:
             cache = await fetch_ai_summary(
                 client,
                 self.settings,
-                feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+                feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
                 lookup_key=incident_lookup_key(estate_id, from_date, to_date),
             )
             has_tier1, has_tier2 = _cache_tier_flags(cache)
@@ -268,7 +270,9 @@ class IncidentResultPageService:
                 _inhouse_ok,
                 _llm_ok,
             ) = await resolve_incident_entitlements(
-                client, self.settings, estate_id=estate_id
+                self.settings.REVENUE_SERVICE_URL,
+                estate_id=estate_id,
+                client=client,
             )
             if not page_ok:
                 raise EntitlementDeniedError(
@@ -310,9 +314,9 @@ class IncidentResultPageService:
 
         Catalog keys and stored JSON keys differ:
 
-        - ``incident_summary_basic_tier2`` unlocks in-house topics,
+        - ``incident_report_summary_tier_2`` unlocks in-house topics,
           stored as ``ai_summary.tier1``.
-        - ``incident_summary_basic_tier3`` unlocks the LLM narrative,
+        - ``incident_report_summary_tier_3`` unlocks the LLM narrative,
           stored as ``ai_summary.tier2``, and includes tier 2.
 
         Cache key is ``{estate_id}:{from}:{to}`` (``open`` if a bound
@@ -341,7 +345,9 @@ class IncidentResultPageService:
         async with httpx.AsyncClient(timeout=_SUMMARY_TIMEOUT) as client:
             # 1. Catalog tier 2 is required; catalog tier 3 is optional.
             _page_ok, inhouse_ok, llm_ok = await resolve_incident_entitlements(
-                client, self.settings, estate_id=estate_id
+                self.settings.REVENUE_SERVICE_URL,
+                estate_id=estate_id,
+                client=client,
             )
             if not inhouse_ok:
                 raise EntitlementDeniedError(
@@ -354,7 +360,7 @@ class IncidentResultPageService:
             cache = await fetch_ai_summary(
                 client,
                 self.settings,
-                feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+                feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
                 lookup_key=lookup_key,
             )
             if not isinstance(cache, dict):
@@ -409,7 +415,7 @@ class IncidentResultPageService:
                 await upsert_ai_summary(
                     client,
                     self.settings,
-                    feature_key=INCIDENT_SUMMARY_FEATURE_KEY,
+                    feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
                     lookup_key=lookup_key,
                     estate_id=estate_id,
                     from_date=from_date,

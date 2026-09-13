@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.libs.ai_grant_entitlement import is_purchased as _is_purchased
+from gatepass_entitlement import is_purchased as _is_purchased
 from app.repositories.ai_market_place import AiMarketPlaceRepository
 from app.schemas.ai_market_place import (
     MarketplaceDetailResponse,

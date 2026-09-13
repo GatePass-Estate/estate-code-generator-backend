@@ -119,6 +119,26 @@ type = "directory"
 url = "../../shared/gatepass_auth"
 
 [[package]]
+name = "gatepass-entitlement"
+version = "0.1.0"
+description = "Shared revenue-service entitlement checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+markers = "sys_platform == \"win32\" or sys_platform == \"emscripten\" or sys_platform != \"win32\" and sys_platform != \"emscripten\""
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_entitlement"
+
+[[package]]
 name = "gatepass-rbac"
 version = "0.1.0"
 description = "Shared RBAC and membership checks for GatePass services"
@@ -131,7 +151,6 @@ develop = true
 
 [package.dependencies]
 fastapi = ">=0.115.4"
-pydantic-settings = ">=2.6.1"
 
 [package.source]
 type = "directory"
@@ -1587,4 +1606,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "3fc387573bd366b28a29f0ff2db650bef2ad13de3153386963724fce9a75942c"
+content-hash = "13d83a45bf01398d99fc09dd6e259cab323f001e1ef4d1e772ea09e3ba561e5e"

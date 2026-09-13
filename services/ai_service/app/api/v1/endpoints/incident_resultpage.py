@@ -247,9 +247,9 @@ async def get_result_page_summary(
     ``ai_response`` rows keyed by estate + date window are reused when
     present; otherwise the missing entitled tier is generated and stored.
 
-    ``incident_summary_basic`` unlocks this result page without AI
-    summaries. ``incident_summary_basic_tier2`` is in-house topic
-    modelling. ``incident_summary_basic_tier3`` adds the LLM
+    ``incident_report_summary_tier_1`` unlocks this result page without
+    AI summaries. ``incident_report_summary_tier_2`` is in-house topic
+    modelling. ``incident_report_summary_tier_3`` adds the LLM
     narrative and includes tier 2. Both summary payloads carry the
     same category EDA.
 

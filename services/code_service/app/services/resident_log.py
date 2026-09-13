@@ -1,9 +1,10 @@
 import logging
 from datetime import datetime, timezone
 
+from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler
-from app.libs.revenue_entitlements import (
-    RESIDENT_LOG_RETENTION_KEY,
+from gatepass_entitlement import (
+    EXTENDED_HISTORICAL_RECORD_KEY,
     resolve_retention_from_date,
 )
 from gatepass_rbac import (
@@ -40,7 +41,7 @@ class ResidentLogService:
     ``full_name``.
 
     History windows are clamped by revenue-service
-    ``resident_log_retention_days`` when an estate_id is known.
+    ``extended_historical_record`` when an estate_id is known.
     """
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
@@ -68,13 +69,13 @@ class ResidentLogService:
         estate_id: str | None,
         from_date: datetime | None,
     ) -> datetime | None:
-        """Clamp from_date using resident_log_retention_days when estate is known."""
+        """Clamp from_date using extended_historical_record when estate is known."""
         if not estate_id:
             return from_date
         return await resolve_retention_from_date(
-            self.ahttp_client,
+            settings.REVENUE_SERVICE_URL,
             estate_id=str(estate_id),
-            service_key=RESIDENT_LOG_RETENTION_KEY,
+            service_key=EXTENDED_HISTORICAL_RECORD_KEY,
             from_date=from_date,
         )
 

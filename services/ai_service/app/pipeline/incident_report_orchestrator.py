@@ -19,13 +19,13 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from gatepass_entitlement import resolve_incident_entitlements
 
 from app.core.config import settings
 from app.core.exceptions import IncidentReportError
 from app.integrations.db_service_incident_reports import (
     load_incident_reports_for_estate,
 )
-from app.integrations.revenue_service import resolve_incident_entitlements
 from app.models.incident_resultpage import IncidentLlmSummary
 from app.pipeline.incident_eda import build_incident_eda
 from app.pipeline.incident_llm_summarizer import summarize_incidents_with_llm
@@ -92,7 +92,9 @@ class IncidentReportOrchestrator:
             )
 
         _page_ok, inhouse_ok, llm_ok = await resolve_incident_entitlements(
-            client, settings, estate_id=estate_id
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            client=client,
         )
 
         topics_section: dict[str, Any] = {}

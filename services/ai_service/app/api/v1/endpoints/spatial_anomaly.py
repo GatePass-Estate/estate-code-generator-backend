@@ -4,6 +4,10 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from gatepass_entitlement import (
+    ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+    check_ai_feature_allowed,
+)
 from gatepass_rbac import require_estate_membership, require_roles
 
 from app.core.auth import get_current_user
@@ -14,10 +18,6 @@ from app.core.exceptions import (
     LogHistoryError,
 )
 from app.domain.anomaly_types import AnomalyType
-from app.integrations.revenue_service import (
-    ANOMALY_FEATURE_KEY,
-    check_ai_feature_allowed,
-)
 from app.models.code_validation import AnalyzeRequest
 from app.models.spatial_anomaly_schema import SpatialAnalyzeResponse
 from app.pipeline.spatial_anomaly_orchestration import (
@@ -79,10 +79,10 @@ async def analyze_spatial_anomalies(
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             await check_ai_feature_allowed(
-                client,
-                settings,
+                settings.REVENUE_SERVICE_URL,
                 estate_id=body.code_validation.estate_id,
-                feature_key=ANOMALY_FEATURE_KEY,
+                feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+                client=client,
             )
             result = await orch.analyze(
                 client=client,

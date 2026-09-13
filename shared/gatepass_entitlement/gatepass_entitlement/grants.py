@@ -1,4 +1,4 @@
-"""Billing entitlement checks for estate AI grants.
+"""Local billing entitlement checks for estate AI grants.
 
 Mirrors revenue-service ``check_ai_feature`` / ``paid_feature_access_valid``
 so marketplace ``purchased`` means currently entitled, not merely that a
