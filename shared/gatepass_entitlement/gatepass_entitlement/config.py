@@ -14,6 +14,21 @@ class Settings(BaseSettings):
     EXTENDED_HISTORICAL_RECORD_KEY: str = os.getenv(
         "EXTENDED_HISTORICAL_RECORD_KEY", "extended_historical_record"
     )
+    EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS: int = int(
+        os.getenv("EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS", "14")
+    )
+    GUEST_MANAGEMENT_KEY: str = os.getenv(
+        "GUEST_MANAGEMENT_KEY", "guest_management"
+    )
+    INCIDENT_REPORT_KEY: str = os.getenv(
+        "INCIDENT_REPORT_KEY", "incident_report"
+    )
+    ADMIN_BROADCAST_KEY: str = os.getenv(
+        "ADMIN_BROADCAST_KEY", "admin_broadcast"
+    )
+    ADVANCED_CODE_MANAGEMENT_KEY: str = os.getenv(
+        "ADVANCED_CODE_MANAGEMENT_KEY", "advanced_code_management"
+    )
     ACCESS_ANOMALY_DETECTION_TIER_1_KEY: str = os.getenv(
         "ACCESS_ANOMALY_DETECTION_TIER_1_KEY",
         "access_anomaly_detection_tier_1",

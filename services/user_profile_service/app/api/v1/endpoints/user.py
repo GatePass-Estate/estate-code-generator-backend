@@ -3,10 +3,10 @@ from typing import List, Optional
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-
-from app.core.config import settings
-from app.libs.http_handler import AsyncHttpHandler, get_http_handler
-from app.libs.notify import fire_notify, fire_notify_critical
+from gatepass_entitlement import (
+    GUEST_MANAGEMENT_KEY,
+    require_service_entitlement,
+)
 from gatepass_rbac import (
     check_permission,
     require_estate_membership,
@@ -14,6 +14,10 @@ from gatepass_rbac import (
     require_roles,
     require_same_estate,
 )
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify, fire_notify_critical
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.guest import GuestRepository
@@ -480,6 +484,12 @@ async def register_guest(
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
 ):
+    """Register a guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+    )
     request.resident_id = current_user["id"]
     return await service.register_guest(request)
 

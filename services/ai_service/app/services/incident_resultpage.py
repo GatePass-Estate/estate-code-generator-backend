@@ -159,9 +159,9 @@ class IncidentResultPageService:
         """
         Build demographics, category EDA, trends, and cache flags.
 
-        Requires any incident result-page grant (basic, tier 2, or
-        tier 3). Does not generate summaries; it only reports whether
-        each tier is already stored for this estate and date window.
+        Does not generate summaries; it only reports whether each tier
+        is already stored for this estate and date window. Tier-1
+        access is enforced at the HTTP endpoint.
 
         Arguments:
             estate_id: Estate whose incidents are summarised.
@@ -174,27 +174,11 @@ class IncidentResultPageService:
             ``has_tier1_summary`` / ``has_tier2_summary``.
 
         Raises:
-            EntitlementDeniedError: Estate has no result-page grant.
             ResultPageError: db-service failed or the estate is
                 missing.
         """
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            # 1. Gate the page. Summary grants are unused here.
-            (
-                page_ok,
-                _inhouse_ok,
-                _llm_ok,
-            ) = await resolve_incident_entitlements(
-                self.settings.REVENUE_SERVICE_URL,
-                estate_id=estate_id,
-                client=client,
-            )
-            if not page_ok:
-                raise EntitlementDeniedError(
-                    "Estate is not entitled to the incident result page.",
-                    status_code=403,
-                )
-            # 2. Estate identity and resident / security counts.
+            # 1. Estate identity and resident / security counts.
             db_overview = await fetch_incident_overview(
                 client,
                 self.settings,
@@ -202,7 +186,7 @@ class IncidentResultPageService:
                 from_date=from_date,
                 to_date=to_date,
             )
-            # 3. Full window of rows for category EDA and trends.
+            # 2. Full window of rows for category EDA and trends.
             try:
                 records = await load_incident_reports_for_estate(
                     client,
@@ -215,7 +199,7 @@ class IncidentResultPageService:
                 raise ResultPageError(
                     exc.message, status_code=exc.status_code
                 ) from exc
-            # 4. Same cache key as /summary; flags only, no generate.
+            # 3. Same cache key as /summary; flags only, no generate.
             cache = await fetch_ai_summary(
                 client,
                 self.settings,
@@ -261,24 +245,9 @@ class IncidentResultPageService:
             ``limit``.
 
         Raises:
-            EntitlementDeniedError: Estate has no result-page grant.
             ResultPageError: db-service failed.
         """
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            (
-                page_ok,
-                _inhouse_ok,
-                _llm_ok,
-            ) = await resolve_incident_entitlements(
-                self.settings.REVENUE_SERVICE_URL,
-                estate_id=estate_id,
-                client=client,
-            )
-            if not page_ok:
-                raise EntitlementDeniedError(
-                    "Estate is not entitled to the incident result page.",
-                    status_code=403,
-                )
             data = await fetch_incident_reports(
                 client,
                 self.settings,

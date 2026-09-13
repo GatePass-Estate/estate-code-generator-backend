@@ -43,11 +43,14 @@ class CodeService:
         Create a visitor or resident access code.
 
         Visitor requests may include optional ``validity_period`` and
-        ``validity_window``. The total validity period may not exceed
-        2 weeks from the current time.
+        ``validity_window``. A custom period, a period longer than an
+        hour, or a daily window requires ``advanced_code_management``.
+        The total validity period may not exceed 2 weeks from now.
 
         Raises:
             ScheduleError: If the visitor validity period exceeds 2 weeks.
+            HTTPException: 403 if a paid schedule is requested without
+                entitlement.
         """
         return await self.repository.create(
             request=request, receiver=receiver, user_details=user_details

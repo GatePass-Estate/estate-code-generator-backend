@@ -215,6 +215,8 @@ class SpatialAnomalyResultPageService:
         """
         Entitlement-gated in-house and/or LLM summary for one case.
 
+        ``access_anomaly_detection_tier_2`` is in-house;
+        ``access_anomaly_detection_tier_3`` is LLM and includes tier 2.
         Re-checks the estate AI grant so a downgraded subscription
         withholds a previously generated tier. Cached ``ai_response``
         rows keyed by prediction id are reused when present; otherwise

@@ -118,6 +118,33 @@ async def check_service_entitlement(
     return data
 
 
+async def require_service_entitlement(
+    revenue_base_url: str,
+    *,
+    estate_id: str | None,
+    service_key: str,
+    client: httpx.AsyncClient | None = None,
+) -> dict:
+    """
+    Require an estate and that it is entitled to ``service_key``.
+
+    Raises:
+        HTTPException: 403 when ``estate_id`` is missing or not allowed;
+            404 when the key is unknown; 502 when revenue-service fails.
+    """
+    if not estate_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Estate is required to use this feature.",
+        )
+    return await check_service_entitlement(
+        revenue_base_url,
+        estate_id=str(estate_id),
+        service_key=service_key,
+        client=client,
+    )
+
+
 async def resolve_retention_from_date(
     revenue_base_url: str,
     *,
@@ -127,26 +154,24 @@ async def resolve_retention_from_date(
     client: httpx.AsyncClient | None = None,
 ) -> datetime:
     """
-    Enforce catalog retention days and return the effective from_date floor.
+    Clamp ``from_date`` to the catalog retention window.
 
-    Raises:
-        HTTPException: 403 when the estate is not entitled (limit <= 0).
+    Paid tiers use the entitled ``duration_days`` limit. Access (or any
+    estate without a positive limit) uses
+    ``EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS``.
     """
-    result = await check_service_entitlement(
+    result = await fetch_service_entitlement(
         revenue_base_url,
         estate_id=estate_id,
         service_key=service_key,
         client=client,
     )
     try:
-        limit_days = int(result.get("limit") or 0)
+        limit_days = int((result or {}).get("limit") or 0)
     except (TypeError, ValueError):
         limit_days = 0
-    if limit_days <= 0:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Estate is not entitled to '{service_key}'.",
-        )
+    if not (result or {}).get("allowed") or limit_days <= 0:
+        limit_days = settings.EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS
 
     earliest = datetime.now(tz=timezone.utc) - timedelta(days=limit_days)
     if from_date is None:

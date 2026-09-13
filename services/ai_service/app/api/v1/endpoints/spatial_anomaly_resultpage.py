@@ -6,9 +6,14 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from gatepass_entitlement import (
+    ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+    check_ai_feature_allowed,
+)
 from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
 from app.models.spatial_anomaly_resultpage import (
     CaseDemographic,
@@ -105,8 +110,9 @@ async def get_result_page_overview(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate; 404 if the estate does not exist;
-            502 if db-service is unreachable or errors.
+            not belong to the estate or lacks
+            ``access_anomaly_detection_tier_1``; 404 if the estate does
+            not exist; 502 if db-service is unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -116,12 +122,18 @@ async def get_result_page_overview(
         estate_id,
     )
     try:
+        # Result-page reads require access_anomaly_detection_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+        )
         return await service.get_overview(
             estate_id=estate_id,
             from_date=from_date,
             to_date=to_date,
         )
-    except ResultPageError as e:
+    except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e
 
 
@@ -177,8 +189,9 @@ async def list_result_page_predictions(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate; 502 if db-service is unreachable
-            or errors.
+            not belong to the estate or lacks
+            ``access_anomaly_detection_tier_1``; 502 if db-service is
+            unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -188,6 +201,12 @@ async def list_result_page_predictions(
         estate_id,
     )
     try:
+        # Result-page reads require access_anomaly_detection_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+        )
         return await service.list_predictions(
             estate_id=estate_id,
             severity=severity,
@@ -199,7 +218,7 @@ async def list_result_page_predictions(
             page=page,
             limit=limit,
         )
-    except ResultPageError as e:
+    except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e
 
 
@@ -237,8 +256,9 @@ async def get_case_demographic(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate; 404 if the prediction is missing;
-            502 if db-service is unreachable or errors.
+            not belong to the estate or lacks
+            ``access_anomaly_detection_tier_1``; 404 if the prediction
+            is missing; 502 if db-service is unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -248,6 +268,12 @@ async def get_case_demographic(
         prediction_id,
     )
     try:
+        # Result-page reads require access_anomaly_detection_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+        )
         return await service.get_case_demographic(
             prediction_id=prediction_id,
             estate_id=estate_id,
@@ -255,7 +281,7 @@ async def get_case_demographic(
             from_date=from_date,
             to_date=to_date,
         )
-    except ResultPageError as e:
+    except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e
 
 
@@ -291,8 +317,9 @@ async def get_case_history(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate; 404 if the prediction is missing;
-            502 if db-service is unreachable or errors.
+            not belong to the estate or lacks
+            ``access_anomaly_detection_tier_1``; 404 if the prediction
+            is missing; 502 if db-service is unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -302,13 +329,19 @@ async def get_case_history(
         prediction_id,
     )
     try:
+        # Result-page reads require access_anomaly_detection_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+        )
         return await service.get_case_history(
             prediction_id=prediction_id,
             estate_id=estate_id,
             display_name=display_name,
             history_limit=history_limit,
         )
-    except ResultPageError as e:
+    except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e
 
 
@@ -329,6 +362,10 @@ async def get_case_summary(
     withholds a previously generated tier. Cached ``ai_response`` rows
     keyed by prediction id are reused when present; otherwise the
     missing tier is generated and stored.
+
+    ``access_anomaly_detection_tier_2`` unlocks the in-house case
+    summary. ``access_anomaly_detection_tier_3`` adds the LLM summary
+    and includes tier 2. Those grants are checked in the service layer.
 
     Tier 2 includes tier 1. The list endpoint never returns the summary
     body, only ``has_tier1_summary`` / ``has_tier2_summary`` flags.
@@ -395,8 +432,9 @@ async def get_case_results(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller does
-            not belong to the estate; 404 if the prediction is missing;
-            502 if db-service is unreachable or errors.
+            not belong to the estate or lacks
+            ``access_anomaly_detection_tier_1``; 404 if the prediction
+            is missing; 502 if db-service is unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -406,11 +444,17 @@ async def get_case_results(
         prediction_id,
     )
     try:
+        # Result-page reads require access_anomaly_detection_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+        )
         return await service.get_case_results(
             prediction_id=prediction_id,
             estate_id=estate_id,
             from_date=from_date,
             to_date=to_date,
         )
-    except ResultPageError as e:
+    except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e

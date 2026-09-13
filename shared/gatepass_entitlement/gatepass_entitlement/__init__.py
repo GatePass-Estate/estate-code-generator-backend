@@ -13,6 +13,7 @@ from gatepass_entitlement.service import (
     check_service_entitlement,
     fetch_seat_limit,
     fetch_service_entitlement,
+    require_service_entitlement,
     resolve_retention_from_date,
 )
 
@@ -25,7 +26,14 @@ ACCESS_ANOMALY_DETECTION_TIER_2_KEY = (
 ACCESS_ANOMALY_DETECTION_TIER_3_KEY = (
     settings.ACCESS_ANOMALY_DETECTION_TIER_3_KEY
 )
+ADMIN_BROADCAST_KEY = settings.ADMIN_BROADCAST_KEY
+ADVANCED_CODE_MANAGEMENT_KEY = settings.ADVANCED_CODE_MANAGEMENT_KEY
+EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS = (
+    settings.EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS
+)
 EXTENDED_HISTORICAL_RECORD_KEY = settings.EXTENDED_HISTORICAL_RECORD_KEY
+GUEST_MANAGEMENT_KEY = settings.GUEST_MANAGEMENT_KEY
+INCIDENT_REPORT_KEY = settings.INCIDENT_REPORT_KEY
 INCIDENT_REPORT_SUMMARY_TIER_1_KEY = (
     settings.INCIDENT_REPORT_SUMMARY_TIER_1_KEY
 )
@@ -41,7 +49,12 @@ __all__ = [
     "ACCESS_ANOMALY_DETECTION_TIER_1_KEY",
     "ACCESS_ANOMALY_DETECTION_TIER_2_KEY",
     "ACCESS_ANOMALY_DETECTION_TIER_3_KEY",
+    "ADMIN_BROADCAST_KEY",
+    "ADVANCED_CODE_MANAGEMENT_KEY",
+    "EXTENDED_HISTORICAL_RECORD_DEFAULT_DAYS",
     "EXTENDED_HISTORICAL_RECORD_KEY",
+    "GUEST_MANAGEMENT_KEY",
+    "INCIDENT_REPORT_KEY",
     "INCIDENT_REPORT_SUMMARY_TIER_1_KEY",
     "INCIDENT_REPORT_SUMMARY_TIER_2_KEY",
     "INCIDENT_REPORT_SUMMARY_TIER_3_KEY",
@@ -55,6 +68,7 @@ __all__ = [
     "grant_is_entitled",
     "is_ai_feature_allowed",
     "is_purchased",
+    "require_service_entitlement",
     "resolve_incident_entitlements",
     "resolve_retention_from_date",
     "settings",

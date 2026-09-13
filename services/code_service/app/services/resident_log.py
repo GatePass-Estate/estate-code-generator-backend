@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime, timezone
 
+from fastapi import HTTPException
+
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler
 from gatepass_entitlement import (
@@ -10,6 +12,7 @@ from gatepass_entitlement import (
 from gatepass_rbac import (
     deny_roles,
     get_role_permissions,
+    is_root,
     resolve_estate_log_scope,
 )
 from app.repositories.resident_log import (
@@ -40,8 +43,9 @@ class ResidentLogService:
     estate; root globally). Each entry carries the resident's denormalized
     ``full_name``.
 
-    History windows are clamped by revenue-service
-    ``extended_historical_record`` when an estate_id is known.
+    History windows are clamped by ``extended_historical_record`` when
+    an estate_id is known. Access (no paid limit) uses the configured
+    default (14 days).
     """
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
@@ -68,10 +72,24 @@ class ResidentLogService:
         self,
         estate_id: str | None,
         from_date: datetime | None,
+        requester: dict,
     ) -> datetime | None:
-        """Clamp from_date using extended_historical_record when estate is known."""
+        """Clamp from_date to entitled days, or the Access default.
+
+        Root may omit ``estate_id`` (cross-estate). Everyone else must
+        have one so retention can be applied.
+
+        Raises:
+            HTTPException: 403 when ``estate_id`` is missing and the
+                requester is not root.
+        """
         if not estate_id:
-            return from_date
+            if is_root(str(requester.get("role", ""))):
+                return from_date
+            raise HTTPException(
+                status_code=403,
+                detail="Estate is required to view these logs.",
+            )
         return await resolve_retention_from_date(
             settings.REVENUE_SERVICE_URL,
             estate_id=str(estate_id),
@@ -172,7 +190,7 @@ class ResidentLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, from_date
+            str(estate_id) if estate_id else None, from_date, requester
         )
         result = await self.repository.unique_history(
             user_id=requester["id"],
@@ -199,7 +217,7 @@ class ResidentLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, None
+            str(estate_id) if estate_id else None, None, requester
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
@@ -225,7 +243,9 @@ class ResidentLogService:
         ``code_deleted``. Requires permission to view other users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
-        effective_from = await self._apply_retention(estate_scope, from_date)
+        effective_from = await self._apply_retention(
+            estate_scope, from_date, requester
+        )
         result = await self.repository.unique_history(
             estate_id=estate_scope,
             from_date=effective_from,
@@ -250,7 +270,9 @@ class ResidentLogService:
         users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
-        effective_from = await self._apply_retention(estate_scope, None)
+        effective_from = await self._apply_retention(
+            estate_scope, None, requester
+        )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
             estate_id=estate_scope,

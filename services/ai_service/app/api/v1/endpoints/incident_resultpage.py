@@ -5,9 +5,14 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from gatepass_entitlement import (
+    INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+    check_ai_feature_allowed,
+)
 from gatepass_rbac import require_admin, require_estate_membership
 
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
 from app.domain.incident_category import IncidentCategory, drop_all_filter
 from app.models.incident_resultpage import (
@@ -135,9 +140,9 @@ async def get_result_page_overview(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller is not
-            an admin, does not belong to the estate, or has no
-            result-page grant; 404 if the estate does not exist; 502 if
-            db-service is unreachable or errors.
+            an admin, does not belong to the estate, or lacks
+            ``incident_report_summary_tier_1``; 404 if the estate does
+            not exist; 502 if db-service is unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -147,6 +152,12 @@ async def get_result_page_overview(
         estate_id,
     )
     try:
+        # Result-page reads require incident_report_summary_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+        )
         return await service.get_overview(
             estate_id=estate_id,
             from_date=from_date,
@@ -198,9 +209,9 @@ async def list_result_page_reports(
 
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller is not
-            an admin, does not belong to the estate, or has no
-            result-page grant; 502 if db-service is unreachable or
-            errors.
+            an admin, does not belong to the estate, or lacks
+            ``incident_report_summary_tier_1``; 502 if db-service is
+            unreachable or errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
@@ -210,6 +221,12 @@ async def list_result_page_reports(
         estate_id,
     )
     try:
+        # Result-page reads require incident_report_summary_tier_1.
+        await check_ai_feature_allowed(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=estate_id,
+            feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+        )
         return await service.list_reports(
             estate_id=estate_id,
             categories=_parse_enum_filter(
@@ -247,11 +264,10 @@ async def get_result_page_summary(
     ``ai_response`` rows keyed by estate + date window are reused when
     present; otherwise the missing entitled tier is generated and stored.
 
-    ``incident_report_summary_tier_1`` unlocks this result page without
-    AI summaries. ``incident_report_summary_tier_2`` is in-house topic
+    ``incident_report_summary_tier_2`` unlocks in-house topic
     modelling. ``incident_report_summary_tier_3`` adds the LLM
-    narrative and includes tier 2. Both summary payloads carry the
-    same category EDA.
+    narrative and includes tier 2. Those grants are checked in the
+    service layer. Both summary payloads carry the same category EDA.
 
     Arguments:
         estate_id: Estate used for the AI feature check and cache key.

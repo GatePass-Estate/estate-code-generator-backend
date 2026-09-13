@@ -4,6 +4,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.config import settings
+from gatepass_entitlement import (
+    ADMIN_BROADCAST_KEY,
+    require_service_entitlement,
+)
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.broadcast import BroadcastRepository
 from app.repositories.estate import EstateRepository
@@ -45,7 +50,12 @@ async def create_broadcast(
     current_user: dict = Depends(get_current_user),
     service: BroadcastService = Depends(_get_service),
 ):
-    """Create and deliver a broadcast. Requires can_create_broadcast."""
+    """Create and deliver a broadcast. Requires admin_broadcast."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=ADMIN_BROADCAST_KEY,
+    )
     try:
         return await service.create_and_deliver(
             request,

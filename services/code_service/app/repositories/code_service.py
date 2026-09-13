@@ -5,6 +5,10 @@ from fastapi import HTTPException
 from pydantic import UUID4
 
 from app.core.config import settings
+from gatepass_entitlement import (
+    ADVANCED_CODE_MANAGEMENT_KEY,
+    require_service_entitlement,
+)
 from gatepass_rbac import is_owner, same_estate
 
 from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
@@ -26,6 +30,26 @@ from app.schemas.code_service import (
 )
 
 logger = logging.getLogger(__name__)
+_ONE_HOUR = timedelta(hours=1)
+
+
+def _period_exceeds_one_hour(period) -> bool:
+    """Return True when a validity period spans more than one hour."""
+    if not period:
+        return False
+    if isinstance(period, dict):
+        start, end = period.get("start"), period.get("end")
+    else:
+        start = getattr(period, "start", None)
+        end = getattr(period, "end", None)
+    if not start or not end:
+        return False
+    try:
+        start_dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return end_dt - start_dt > _ONE_HOUR
 
 
 class CodeServiceRepository:
@@ -351,8 +375,11 @@ class CodeServiceRepository:
         Persist a new access code for a visitor or resident.
 
         Visitor codes are sent to cache_service with optional
-        ``validity_period`` and ``validity_window``. Resident codes are
-        stored in db-service with a ``RESIDENT_CODE_EXPIRY_DAYS`` expiry.
+        ``validity_period`` and ``validity_window``. A custom period,
+        a period longer than an hour, or a daily window requires
+        ``advanced_code_management``.
+        Resident codes are stored in db-service with a
+        ``RESIDENT_CODE_EXPIRY_DAYS`` expiry.
 
         Args:
             ahttp_client: HTTP client for downstream services.
@@ -363,7 +390,9 @@ class CodeServiceRepository:
             Dict with ``hashed_code`` and ``valid_until``.
 
         Raises:
-            HTTPException: On downstream persistence failures.
+            HTTPException: 403 if a paid visitor schedule is requested
+                without entitlement; 500 on downstream persistence
+                failures.
         """
         try:
             if receiver == Receiver.VISITOR:
@@ -373,6 +402,18 @@ class CodeServiceRepository:
                 )
 
                 visit_data = request.model_dump()
+                period = visit_data.get("validity_period")
+                window = visit_data.get("validity_window")
+                if (
+                    period is not None
+                    or window is not None
+                    or _period_exceeds_one_hour(period)
+                ):
+                    await require_service_entitlement(
+                        settings.REVENUE_SERVICE_URL,
+                        estate_id=visit_data.get("estate_id"),
+                        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+                    )
                 now = datetime.now(timezone.utc)
                 code = generate_unique_code(
                     user_id=visit_data.get("user_id"),
@@ -436,6 +477,8 @@ class CodeServiceRepository:
                 }
                 return response
         except ScheduleError:
+            raise
+        except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

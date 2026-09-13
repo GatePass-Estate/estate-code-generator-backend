@@ -5,10 +5,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import UUID4
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError, ScheduleError
 from app.libs.auth import get_current_user, get_user_details
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
+from gatepass_entitlement import (
+    ADVANCED_CODE_MANAGEMENT_KEY,
+    require_service_entitlement,
+)
 from gatepass_rbac import check_permission, check_status
 from app.schemas.code_service import (
     CreateRequestResident,
@@ -65,11 +70,15 @@ async def generate(
 
     Visitor requests may include optional ``validity_period`` (total UTC
     range) and ``validity_window`` (daily hours). Omitted period defaults to
-    one hour from creation. The total validity period may not start or end
-    more than 2 weeks from the current time.
+    one hour from creation. A custom period, a period longer than one
+    hour, or a daily window requires ``advanced_code_management``. The
+    total validity period may not start or end more than 2 weeks from
+    the current time.
 
     Raises:
-        HTTPException: 400 if the validity period exceeds 2 weeks; 500 otherwise.
+        HTTPException: 400 if the validity period exceeds 2 weeks; 403
+            if a paid schedule is requested without entitlement; 500
+            otherwise.
     """
     try:
         # Option 1: Direct enum validation
@@ -398,7 +407,7 @@ async def delete(
         404: {"description": "Item not found"},
         200: {"description": "Extend attempted"},
     },
-    description="Extend a visitor access code by one hour",
+    description="Extend a visitor access code by one hour. Requires advanced_code_management.",
 )
 async def extend_code(
     code: str,
@@ -422,6 +431,12 @@ async def extend_code(
             status_code=403,
             detail="You are not authorized to extend codes.",
         )
+
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+    )
 
     try:
         logger.info(
@@ -450,7 +465,7 @@ async def extend_code(
         404: {"description": "Item not found"},
         200: {"description": "Freeze toggled"},
     },
-    description="Toggle freeze/pause on a visitor access code",
+    description="Toggle freeze/pause on a visitor access code. Requires advanced_code_management.",
 )
 async def freeze_code(
     code: str,
@@ -474,6 +489,12 @@ async def freeze_code(
             status_code=403,
             detail="You are not authorized to freeze codes.",
         )
+
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+    )
 
     try:
         logger.info(
