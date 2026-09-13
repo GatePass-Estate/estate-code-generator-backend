@@ -71,6 +71,7 @@ class IncidentReportOrchestrator:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
         n_topics: int | None = None,
+        auth_token: str | None = None,
     ) -> dict[str, Any]:
         """
         Analyse every incident in the selected date window.
@@ -95,6 +96,7 @@ class IncidentReportOrchestrator:
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             client=client,
+            auth_token=auth_token,
         )
 
         topics_section: dict[str, Any] = {}

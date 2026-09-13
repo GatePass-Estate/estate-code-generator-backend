@@ -12,7 +12,7 @@ from gatepass_entitlement import (
 )
 from gatepass_rbac import require_admin, require_estate_membership
 
-from app.core.auth import get_current_user
+from app.core.auth import auth_token_from_request, get_current_user
 from app.core.config import settings
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
 from app.models.spatial_anomaly_resultpage import (
@@ -53,6 +53,7 @@ async def get_result_page_overview(
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ResultPageOverviewResponse:
     """
     Build the spatial-anomaly result-page overview for one estate.
@@ -127,6 +128,7 @@ async def get_result_page_overview(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.get_overview(
             estate_id=estate_id,
@@ -153,6 +155,7 @@ async def list_result_page_predictions(
     limit: int = Query(default=10, ge=1),
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> PredictionListResponse:
     """
     List prediction rows for an estate, newest first by default.
@@ -206,6 +209,7 @@ async def list_result_page_predictions(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.list_predictions(
             estate_id=estate_id,
@@ -234,6 +238,7 @@ async def get_case_demographic(
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CaseDemographic:
     """
     Person-level demographic for a selected prediction case.
@@ -273,6 +278,7 @@ async def get_case_demographic(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.get_case_demographic(
             prediction_id=prediction_id,
@@ -296,6 +302,7 @@ async def get_case_history(
     history_limit: int = Query(default=5, ge=1, le=20),
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CaseHistoryResponse:
     """
     Five most recent predictions for the same visitor or resident name.
@@ -334,6 +341,7 @@ async def get_case_history(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.get_case_history(
             prediction_id=prediction_id,
@@ -354,6 +362,7 @@ async def get_case_summary(
     estate_id: UUID,
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CaseSummaryResponse:
     """
     Entitlement-gated in-house and/or LLM summary for one case.
@@ -394,6 +403,7 @@ async def get_case_summary(
         return await service.get_case_summary(
             prediction_id=prediction_id,
             estate_id=estate_id,
+            auth_token=auth_token,
         )
     except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e
@@ -410,6 +420,7 @@ async def get_case_results(
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
     service: SpatialAnomalyResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CaseResultsResponse:
     """
     Spider plot and contributing factors for the selected prediction.
@@ -449,6 +460,7 @@ async def get_case_results(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.get_case_results(
             prediction_id=prediction_id,

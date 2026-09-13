@@ -11,7 +11,7 @@ from gatepass_entitlement import (
 )
 from gatepass_rbac import require_admin, require_estate_membership
 
-from app.core.auth import get_current_user
+from app.core.auth import auth_token_from_request, get_current_user
 from app.core.config import settings
 from app.core.exceptions import EntitlementDeniedError, ResultPageError
 from app.domain.incident_category import IncidentCategory, drop_all_filter
@@ -95,6 +95,7 @@ async def get_result_page_overview(
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
     service: IncidentResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> IncidentOverviewResponse:
     """
     Build the incident result-page overview for one estate.
@@ -157,6 +158,7 @@ async def get_result_page_overview(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.get_overview(
             estate_id=estate_id,
@@ -181,6 +183,7 @@ async def list_result_page_reports(
     limit: int = Query(default=10, ge=1),
     current_user: dict = Depends(get_current_user),
     service: IncidentResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> IncidentListResponse:
     """
     List incident reports for an estate, newest first.
@@ -226,6 +229,7 @@ async def list_result_page_reports(
             settings.REVENUE_SERVICE_URL,
             estate_id=estate_id,
             feature_key=INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
+            auth_token=auth_token,
         )
         return await service.list_reports(
             estate_id=estate_id,
@@ -254,6 +258,7 @@ async def get_result_page_summary(
     to_date: datetime | None = None,
     current_user: dict = Depends(get_current_user),
     service: IncidentResultPageService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> IncidentSummaryResponse:
     """
     Entitlement-gated topic-modelling and LLM summary for one window.
@@ -294,6 +299,7 @@ async def get_result_page_summary(
             estate_id=estate_id,
             from_date=from_date,
             to_date=to_date,
+            auth_token=auth_token,
         )
     except (ResultPageError, EntitlementDeniedError) as e:
         raise _to_http(e) from e

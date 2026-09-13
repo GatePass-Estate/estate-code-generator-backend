@@ -38,6 +38,7 @@ class CodeService:
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
         user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> CreateResponse:
         """
         Create a visitor or resident access code.
@@ -53,7 +54,10 @@ class CodeService:
                 entitlement.
         """
         return await self.repository.create(
-            request=request, receiver=receiver, user_details=user_details
+            request=request,
+            receiver=receiver,
+            user_details=user_details,
+            auth_token=auth_token,
         )
 
     async def validate(

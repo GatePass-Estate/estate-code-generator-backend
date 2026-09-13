@@ -73,6 +73,7 @@ class VisitorLogService:
         estate_id: str | None,
         from_date: datetime | None,
         requester: dict,
+        auth_token: str | None = None,
     ) -> datetime | None:
         """Clamp from_date to entitled days, or the Access default.
 
@@ -95,6 +96,7 @@ class VisitorLogService:
             estate_id=str(estate_id),
             service_key=EXTENDED_HISTORICAL_RECORD_KEY,
             from_date=from_date,
+            auth_token=auth_token,
         )
 
     @staticmethod
@@ -146,6 +148,7 @@ class VisitorLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level personal visitor history: one entry per unique code with
@@ -155,7 +158,10 @@ class VisitorLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, from_date, requester
+            str(estate_id) if estate_id else None,
+            from_date,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.unique_history(
             user_id=requester["id"],
@@ -173,6 +179,7 @@ class VisitorLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         Second-level personal visitor history for one ``hashed_code``, latest
@@ -181,7 +188,10 @@ class VisitorLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, None, requester
+            str(estate_id) if estate_id else None,
+            None,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
@@ -200,6 +210,7 @@ class VisitorLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level estate-wide visitor history: one entry per unique code with
@@ -208,7 +219,7 @@ class VisitorLogService:
         """
         estate_scope = await self._resolve_estate_scope(requester)
         effective_from = await self._apply_retention(
-            estate_scope, from_date, requester
+            estate_scope, from_date, requester, auth_token=auth_token
         )
         result = await self.repository.unique_history(
             estate_id=estate_scope,
@@ -226,6 +237,7 @@ class VisitorLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         Second-level estate-wide visitor history for one ``hashed_code``,
@@ -233,7 +245,7 @@ class VisitorLogService:
         """
         estate_scope = await self._resolve_estate_scope(requester)
         effective_from = await self._apply_retention(
-            estate_scope, None, requester
+            estate_scope, None, requester, auth_token=auth_token
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,

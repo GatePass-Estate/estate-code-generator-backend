@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import BackgroundTasks, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from gatepass_auth.config import settings
@@ -11,6 +11,17 @@ from gatepass_auth.session_repo import update_last_active, validate_session
 security = HTTPBearer()
 
 _ID_EXEMPT_ROLES = {"primary_admin", "root"}
+
+
+def auth_token_from_request(request: Request) -> str | None:
+    """Return the Bearer token from the incoming ``Authorization`` header."""
+    value = request.headers.get("Authorization")
+    if not value:
+        return None
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
 
 
 async def _update_session_last_active(session_id: str) -> None:

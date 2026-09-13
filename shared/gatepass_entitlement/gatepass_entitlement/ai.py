@@ -22,6 +22,7 @@ async def check_ai_feature_allowed(
     estate_id: UUID | str,
     feature_key: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> bool:
     """
     Return whether ``estate_id`` may run ``feature_key`` per revenue-service.
@@ -38,7 +39,9 @@ async def check_ai_feature_allowed(
         "feature_key": feature_key,
     }
     try:
-        response = await get_json(url, params, client=client)
+        response = await get_json(
+            url, params, client=client, auth_token=auth_token
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
@@ -83,6 +86,7 @@ async def is_ai_feature_allowed(
     estate_id: UUID | str,
     feature_key: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> bool:
     """Return whether the estate may use ``feature_key``; False on 403/404."""
     try:
@@ -91,6 +95,7 @@ async def is_ai_feature_allowed(
             estate_id=estate_id,
             feature_key=feature_key,
             client=client,
+            auth_token=auth_token,
         )
     except EntitlementDeniedError as exc:
         if exc.status_code in (403, 404):
@@ -103,6 +108,7 @@ async def resolve_incident_entitlements(
     *,
     estate_id: UUID | str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> tuple[bool, bool, bool]:
     """
     Return ``(result_page, inhouse, llm)`` for incident result-page access.
@@ -116,17 +122,20 @@ async def resolve_incident_entitlements(
         estate_id=estate_id,
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_3_KEY,
         client=client,
+        auth_token=auth_token,
     )
     inhouse_ok = llm_ok or await is_ai_feature_allowed(
         revenue_base_url,
         estate_id=estate_id,
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_2_KEY,
         client=client,
+        auth_token=auth_token,
     )
     page_ok = inhouse_ok or await is_ai_feature_allowed(
         revenue_base_url,
         estate_id=estate_id,
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
         client=client,
+        auth_token=auth_token,
     )
     return page_ok, inhouse_ok, llm_ok

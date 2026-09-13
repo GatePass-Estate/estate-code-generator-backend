@@ -25,7 +25,7 @@ from app.schemas.broadcast import (
     UnreadBroadcastCountResponse,
     UpdateBroadcastRequest,
 )
-from app.services.auth import get_current_user
+from app.services.auth import auth_token_from_request, get_current_user
 from app.services.broadcast import BroadcastService
 
 logger = logging.getLogger(__name__)
@@ -49,12 +49,14 @@ async def create_broadcast(
     request: CreateBroadcastRequest,
     current_user: dict = Depends(get_current_user),
     service: BroadcastService = Depends(_get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
     """Create and deliver a broadcast. Requires admin_broadcast."""
     await require_service_entitlement(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),
         service_key=ADMIN_BROADCAST_KEY,
+        auth_token=auth_token,
     )
     try:
         return await service.create_and_deliver(

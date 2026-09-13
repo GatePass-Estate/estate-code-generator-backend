@@ -33,15 +33,26 @@ logger = logging.getLogger(__name__)
 _ONE_HOUR = timedelta(hours=1)
 
 
+def _bounds(value) -> tuple[object, object]:
+    """Return ``(start, end)`` from a period/window dict or model."""
+    if isinstance(value, dict):
+        return value.get("start"), value.get("end")
+    return getattr(value, "start", None), getattr(value, "end", None)
+
+
+def _has_bounds(value) -> bool:
+    """Return True when a period or window has a start or end set."""
+    if value is None:
+        return False
+    start, end = _bounds(value)
+    return bool(start or end)
+
+
 def _period_exceeds_one_hour(period) -> bool:
     """Return True when a validity period spans more than one hour."""
     if not period:
         return False
-    if isinstance(period, dict):
-        start, end = period.get("start"), period.get("end")
-    else:
-        start = getattr(period, "start", None)
-        end = getattr(period, "end", None)
+    start, end = _bounds(period)
     if not start or not end:
         return False
     try:
@@ -370,6 +381,7 @@ class CodeServiceRepository:
         ahttp_client: AsyncHttpHandler,
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
+        auth_token: str | None = None,
     ) -> dict:
         """
         Persist a new access code for a visitor or resident.
@@ -401,18 +413,19 @@ class CodeServiceRepository:
                     f"/cachehandler"
                 )
 
-                visit_data = request.model_dump()
+                visit_data = request.model_dump(mode="json")
                 period = visit_data.get("validity_period")
                 window = visit_data.get("validity_window")
                 if (
-                    period is not None
-                    or window is not None
+                    _has_bounds(period)
+                    or _has_bounds(window)
                     or _period_exceeds_one_hour(period)
                 ):
                     await require_service_entitlement(
                         settings.REVENUE_SERVICE_URL,
                         estate_id=visit_data.get("estate_id"),
                         service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+                        auth_token=auth_token,
                     )
                 now = datetime.now(timezone.utc)
                 code = generate_unique_code(
@@ -437,7 +450,7 @@ class CodeServiceRepository:
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode"
                 )
 
-                resident_data = request.model_dump()
+                resident_data = request.model_dump(mode="json")
                 now = datetime.now(timezone.utc)
                 code = generate_unique_code(
                     user_id=resident_data.get("user_id"),
@@ -651,6 +664,7 @@ class CodeServiceRepository:
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
         user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> CreateResponse:
         """
         Create a new item in the table.
@@ -683,10 +697,13 @@ class CodeServiceRepository:
                 ahttp_client=self.ahttp_client,
                 request=request,
                 receiver=receiver,
+                auth_token=auth_token,
             )
             created_record = CreateResponse.model_validate(response)
             return created_record
         except ScheduleError:
+            raise
+        except HTTPException:
             raise
         except DatabaseError as e:
             message = "Database error in creating the access code"

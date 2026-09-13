@@ -55,7 +55,11 @@ from app.schemas.user import (
     UserProfileRequest,
     UserProfileResponse,
 )
-from app.services.auth import get_current_user, get_current_user_unverified
+from app.services.auth import (
+    auth_token_from_request,
+    get_current_user,
+    get_current_user_unverified,
+)
 from app.services.guest import GuestService
 from app.services.user import UserService
 
@@ -92,6 +96,7 @@ async def register_user(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
     requester_role = current_user["role"]
 
@@ -116,7 +121,7 @@ async def register_user(
             detail="Not authorized to register users for this estate.",
         )
 
-    user, token = await service.register_user(request)
+    user, token = await service.register_user(request, auth_token=auth_token)
     verification_url = (
         f"{settings.FRONTEND_BASE_URL}/activate?{urlencode({'token': token})}"
     )
@@ -483,12 +488,14 @@ async def register_guest(
     request: RegisterGuestRequest,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
     """Register a guest. Requires the guest_management entitlement."""
     await require_service_entitlement(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),
         service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
     )
     request.resident_id = current_user["id"]
     return await service.register_guest(request)

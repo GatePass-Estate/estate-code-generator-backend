@@ -277,6 +277,7 @@ class IncidentResultPageService:
         estate_id: UUID,
         from_date: datetime | None,
         to_date: datetime | None,
+        auth_token: str | None = None,
     ) -> IncidentSummaryResponse:
         """
         Load or generate entitled summaries for one estate window.
@@ -317,6 +318,7 @@ class IncidentResultPageService:
                 self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
                 client=client,
+                auth_token=auth_token,
             )
             if not inhouse_ok:
                 raise EntitlementDeniedError(

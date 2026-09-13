@@ -211,6 +211,7 @@ class SpatialAnomalyResultPageService:
         *,
         prediction_id: UUID,
         estate_id: UUID,
+        auth_token: str | None = None,
     ) -> CaseSummaryResponse:
         """
         Entitlement-gated in-house and/or LLM summary for one case.
@@ -230,12 +231,14 @@ class SpatialAnomalyResultPageService:
                 estate_id=estate_id,
                 feature_key=ACCESS_ANOMALY_DETECTION_TIER_3_KEY,
                 client=client,
+                auth_token=auth_token,
             )
             tier1_ok = tier2_ok or await is_ai_feature_allowed(
                 self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
                 feature_key=ACCESS_ANOMALY_DETECTION_TIER_2_KEY,
                 client=client,
+                auth_token=auth_token,
             )
             if not tier1_ok:
                 raise EntitlementDeniedError(

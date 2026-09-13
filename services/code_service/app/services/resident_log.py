@@ -73,6 +73,7 @@ class ResidentLogService:
         estate_id: str | None,
         from_date: datetime | None,
         requester: dict,
+        auth_token: str | None = None,
     ) -> datetime | None:
         """Clamp from_date to entitled days, or the Access default.
 
@@ -95,6 +96,7 @@ class ResidentLogService:
             estate_id=str(estate_id),
             service_key=EXTENDED_HISTORICAL_RECORD_KEY,
             from_date=from_date,
+            auth_token=auth_token,
         )
 
     @staticmethod
@@ -181,6 +183,7 @@ class ResidentLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level personal history: one entry per access code with
@@ -190,7 +193,10 @@ class ResidentLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, from_date, requester
+            str(estate_id) if estate_id else None,
+            from_date,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.unique_history(
             user_id=requester["id"],
@@ -207,6 +213,7 @@ class ResidentLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> CodeHistoryListResponse:
         """
         Second-level personal history for one ``hashed_code``.
@@ -217,7 +224,10 @@ class ResidentLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, None, requester
+            str(estate_id) if estate_id else None,
+            None,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
@@ -236,6 +246,7 @@ class ResidentLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level estate-wide history: one entry per access code with
@@ -244,7 +255,7 @@ class ResidentLogService:
         """
         estate_scope = await self._resolve_estate_scope(requester)
         effective_from = await self._apply_retention(
-            estate_scope, from_date, requester
+            estate_scope, from_date, requester, auth_token=auth_token
         )
         result = await self.repository.unique_history(
             estate_id=estate_scope,
@@ -261,6 +272,7 @@ class ResidentLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> CodeHistoryListResponse:
         """
         Second-level estate-wide history for one ``hashed_code``.
@@ -271,7 +283,7 @@ class ResidentLogService:
         """
         estate_scope = await self._resolve_estate_scope(requester)
         effective_from = await self._apply_retention(
-            estate_scope, None, requester
+            estate_scope, None, requester, auth_token=auth_token
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,

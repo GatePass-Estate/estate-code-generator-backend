@@ -10,7 +10,7 @@ from gatepass_entitlement import (
 )
 from gatepass_rbac import require_estate_membership, require_roles
 
-from app.core.auth import get_current_user
+from app.core.auth import auth_token_from_request, get_current_user
 from app.core.config import settings
 from app.core.exceptions import (
     EntitlementDeniedError,
@@ -38,6 +38,7 @@ async def analyze_spatial_anomalies(
     anomaly_type: AnomalyType,
     body: AnalyzeRequest,
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> SpatialAnalyzeResponse:
     """
     Run the spatial anomaly pipeline for the given type using validation context.
@@ -83,6 +84,7 @@ async def analyze_spatial_anomalies(
                 estate_id=body.code_validation.estate_id,
                 feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
                 client=client,
+                auth_token=auth_token,
             )
             result = await orch.analyze(
                 client=client,

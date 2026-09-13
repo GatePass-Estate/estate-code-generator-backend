@@ -7,7 +7,11 @@ from pydantic import UUID4
 
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, ScheduleError
-from app.libs.auth import get_current_user, get_user_details
+from app.libs.auth import (
+    auth_token_from_request,
+    get_current_user,
+    get_user_details,
+)
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
 from gatepass_entitlement import (
@@ -64,6 +68,7 @@ async def generate(
     request: CreateRequestVisitor | CreateRequestResident,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CreateResponse:
     """
     Generate a visitor or resident access code.
@@ -100,7 +105,7 @@ async def generate(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -115,8 +120,13 @@ async def generate(
 
     try:
         return await service.generate(
-            request=request, receiver=receiver, user_details=user_details
+            request=request,
+            receiver=receiver,
+            user_details=user_details,
+            auth_token=auth_token,
         )
+    except HTTPException:
+        raise
     except ScheduleError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -174,7 +184,7 @@ async def validate(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -307,7 +317,7 @@ async def get_all_codes_by_user(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -373,7 +383,7 @@ async def delete(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -413,13 +423,14 @@ async def extend_code(
     code: str,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ExtendResponse:
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
     )
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -436,6 +447,7 @@ async def extend_code(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),
         service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+        auth_token=auth_token,
     )
 
     try:
@@ -471,13 +483,14 @@ async def freeze_code(
     code: str,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> FreezeResponse:
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
     )
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -494,6 +507,7 @@ async def freeze_code(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),
         service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+        auth_token=auth_token,
     )
 
     try:
@@ -553,7 +567,7 @@ async def update_resident_code(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )

@@ -27,6 +27,7 @@ async def fetch_service_entitlement(
     estate_id: str,
     service_key: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> dict | None:
     """
     Fetch a catalog entitlement payload without requiring ``allowed``.
@@ -40,6 +41,7 @@ async def fetch_service_entitlement(
             _check_url(revenue_base_url),
             params,
             client=client,
+            auth_token=auth_token,
         )
         response.raise_for_status()
     except Exception:
@@ -59,6 +61,7 @@ async def check_service_entitlement(
     estate_id: str,
     service_key: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> dict:
     """
     Call revenue-service entitlement check for one service_key.
@@ -76,6 +79,7 @@ async def check_service_entitlement(
             _check_url(revenue_base_url),
             params,
             client=client,
+            auth_token=auth_token,
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -124,6 +128,7 @@ async def require_service_entitlement(
     estate_id: str | None,
     service_key: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> dict:
     """
     Require an estate and that it is entitled to ``service_key``.
@@ -142,6 +147,7 @@ async def require_service_entitlement(
         estate_id=str(estate_id),
         service_key=service_key,
         client=client,
+        auth_token=auth_token,
     )
 
 
@@ -152,6 +158,7 @@ async def resolve_retention_from_date(
     service_key: str,
     from_date: datetime | None,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> datetime:
     """
     Clamp ``from_date`` to the catalog retention window.
@@ -165,6 +172,7 @@ async def resolve_retention_from_date(
         estate_id=estate_id,
         service_key=service_key,
         client=client,
+        auth_token=auth_token,
     )
     try:
         limit_days = int((result or {}).get("limit") or 0)
@@ -186,6 +194,7 @@ async def fetch_seat_limit(
     *,
     estate_id: str,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> dict | None:
     """
     Fetch ``max_active_users`` check payload (does not require allowed=true).
@@ -198,6 +207,7 @@ async def fetch_seat_limit(
         estate_id=estate_id,
         service_key=settings.MAX_ACTIVE_USERS_KEY,
         client=client,
+        auth_token=auth_token,
     )
 
 
@@ -207,6 +217,7 @@ async def assert_seat_available(
     estate_id: str,
     current_active_users: int,
     client: httpx.AsyncClient | None = None,
+    auth_token: str | None = None,
 ) -> dict | None:
     """
     Enforce covered seat / ``max_active_users`` before registering a user.
@@ -222,6 +233,7 @@ async def assert_seat_available(
         revenue_base_url,
         estate_id=estate_id,
         client=client,
+        auth_token=auth_token,
     )
     if result is None:
         logger.warning(
