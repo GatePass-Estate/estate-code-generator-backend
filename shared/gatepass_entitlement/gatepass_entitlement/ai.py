@@ -9,7 +9,12 @@ import httpx
 
 from gatepass_entitlement.config import settings
 from gatepass_entitlement.exceptions import EntitlementDeniedError
-from gatepass_entitlement.http import get_json, join_url
+from gatepass_entitlement.http import (
+    error_detail,
+    get_json,
+    join_url,
+    passthrough_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,20 +28,26 @@ async def check_ai_feature_allowed(
     feature_key: str,
     client: httpx.AsyncClient | None = None,
     auth_token: str | None = None,
+    allow_security: bool = False,
 ) -> bool:
     """
     Return whether ``estate_id`` may run ``feature_key`` per revenue-service.
 
-    Calls ``GET /api/v1/ai-features/check``. Fail-closed on transport errors.
+    Calls ``GET /api/v1/ai-features/check``. ``allow_security=True``
+    lets security check (gate validate → analyze). Default is
+    admin-only. Fail-closed on transport errors.
 
     Raises:
-        EntitlementDeniedError: When the feature is not allowed (403).
-        EntitlementDeniedError: On revenue-service failures (502/fail-closed).
+        EntitlementDeniedError: 401 when the forwarded token is
+            rejected; 403 when the feature is not allowed or the
+            caller is not a member; 404 when the key is unknown;
+            502 on revenue-service failures.
     """
     url = join_url(revenue_base_url, _CHECK_PATH)
     params = {
         "estate_id": str(estate_id),
         "feature_key": feature_key,
+        "allow_security": "true" if allow_security else "false",
     }
     try:
         response = await get_json(
@@ -44,10 +55,16 @@ async def check_ai_feature_allowed(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
+        status_code = passthrough_status(exc)
+        if status_code == 404:
             raise EntitlementDeniedError(
                 f"Unknown AI feature_key '{feature_key}'.",
                 status_code=404,
+            ) from exc
+        if status_code in (401, 403):
+            raise EntitlementDeniedError(
+                error_detail(exc, "Not authorized."),
+                status_code=status_code,
             ) from exc
         logger.exception(
             "AI feature check HTTP error estate_id=%s feature_key=%s "
@@ -87,6 +104,7 @@ async def is_ai_feature_allowed(
     feature_key: str,
     client: httpx.AsyncClient | None = None,
     auth_token: str | None = None,
+    allow_security: bool = False,
 ) -> bool:
     """Return whether the estate may use ``feature_key``; False on 403/404."""
     try:
@@ -96,6 +114,7 @@ async def is_ai_feature_allowed(
             feature_key=feature_key,
             client=client,
             auth_token=auth_token,
+            allow_security=allow_security,
         )
     except EntitlementDeniedError as exc:
         if exc.status_code in (403, 404):
@@ -109,6 +128,7 @@ async def resolve_incident_entitlements(
     estate_id: UUID | str,
     client: httpx.AsyncClient | None = None,
     auth_token: str | None = None,
+    allow_security: bool = False,
 ) -> tuple[bool, bool, bool]:
     """
     Return ``(result_page, inhouse, llm)`` for incident result-page access.
@@ -123,6 +143,7 @@ async def resolve_incident_entitlements(
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_3_KEY,
         client=client,
         auth_token=auth_token,
+        allow_security=allow_security,
     )
     inhouse_ok = llm_ok or await is_ai_feature_allowed(
         revenue_base_url,
@@ -130,6 +151,7 @@ async def resolve_incident_entitlements(
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_2_KEY,
         client=client,
         auth_token=auth_token,
+        allow_security=allow_security,
     )
     page_ok = inhouse_ok or await is_ai_feature_allowed(
         revenue_base_url,
@@ -137,5 +159,6 @@ async def resolve_incident_entitlements(
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_1_KEY,
         client=client,
         auth_token=auth_token,
+        allow_security=allow_security,
     )
     return page_ok, inhouse_ok, llm_ok

@@ -4,19 +4,10 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from gatepass_entitlement import (
-    ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
-    check_ai_feature_allowed,
-)
 from gatepass_rbac import require_estate_membership, require_roles
 
-from app.core.auth import auth_token_from_request, get_current_user
-from app.core.config import settings
-from app.core.exceptions import (
-    EntitlementDeniedError,
-    FeatureStoreError,
-    LogHistoryError,
-)
+from app.core.auth import get_current_user
+from app.core.exceptions import FeatureStoreError, LogHistoryError
 from app.domain.anomaly_types import AnomalyType
 from app.models.code_validation import AnalyzeRequest
 from app.models.spatial_anomaly_schema import SpatialAnalyzeResponse
@@ -38,17 +29,17 @@ async def analyze_spatial_anomalies(
     anomaly_type: AnomalyType,
     body: AnalyzeRequest,
     current_user: dict = Depends(get_current_user),
-    auth_token: str | None = Depends(auth_token_from_request),
 ) -> SpatialAnalyzeResponse:
     """
     Run the spatial anomaly pipeline for the given type using validation context.
 
-    Requires a bearer token, validates path vs payload receiver alignment,
-    confirms the caller belongs to the payload estate and is admin,
-    primary_admin, security, or root, verifies the estate's AI feature
-    entitlement via revenue-service, loads log history from db-service,
-    runs K-means/DBSCAN/LOF per scope, and returns scores plus
-    transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
+    Requires a bearer token. Confirms path vs payload receiver alignment
+    and that the caller is admin, primary_admin, security, or root on
+    the payload estate. This route does not check catalog entitlement;
+    the gate-validate path gates ``access_anomaly_detection_tier_1`` in
+    code-service before it calls here. Loads log history from
+    db-service, runs K-means/DBSCAN/LOF per scope, and returns scores
+    plus transparency. See ``explainer_docs/ANOMALY_DETECTION_EXPLAINER.md``.
     """
     require_roles(current_user["role"], _ANALYZE_ROLES)
     require_estate_membership(current_user, body.code_validation.estate_id)
@@ -79,23 +70,11 @@ async def analyze_spatial_anomalies(
     timeout = httpx.Timeout(30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            await check_ai_feature_allowed(
-                settings.REVENUE_SERVICE_URL,
-                estate_id=body.code_validation.estate_id,
-                feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
-                client=client,
-                auth_token=auth_token,
-            )
             result = await orch.analyze(
                 client=client,
                 anomaly_type=anomaly_type,
                 code_validation=body.code_validation,
             )
-        except EntitlementDeniedError as e:
-            raise HTTPException(
-                status_code=e.status_code,
-                detail=e.message,
-            ) from e
         except LogHistoryError as e:
             raise HTTPException(
                 status_code=e.status_code,

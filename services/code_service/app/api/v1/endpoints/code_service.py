@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import UUID4
 
 from app.core.config import settings
@@ -37,7 +36,6 @@ from app.services.code_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_bearer = HTTPBearer()
 
 
 def get_service(
@@ -157,14 +155,16 @@ async def validate(
     background_tasks: BackgroundTasks,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> GetResponseResident | GetResponseVisitor:
     """
     Validate an access code (security scan at the gate).
 
-    On success this persists a visitor or resident log row, then triggers
-    spatial anomaly analysis best-effort. Anomaly runs only here because a
-    real visit/access event was recorded — listing codes does not. Flagged
+    On success this persists a visitor or resident log row. Spatial
+    analyze is a code-service sub-gate: ``access_anomaly_detection_tier_1``
+    is checked before the AI trigger; deny skips analyze and still
+    returns the validation. Anomaly runs only here because a real
+    visit/access event was recorded — listing codes does not. Flagged
     events notify estate admins and primary admins.
 
     Arguments:
@@ -201,7 +201,7 @@ async def validate(
         result = await service.validate(
             code=code,
             user_details=user_details,
-            auth_token=credentials.credentials,
+            auth_token=auth_token,
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
@@ -443,6 +443,7 @@ async def extend_code(
             detail="You are not authorized to extend codes.",
         )
 
+    # Sub-gate: extend is paid (advanced_code_management).
     await require_service_entitlement(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),
@@ -503,6 +504,7 @@ async def freeze_code(
             detail="You are not authorized to freeze codes.",
         )
 
+    # Sub-gate: freeze is paid (advanced_code_management).
     await require_service_entitlement(
         settings.REVENUE_SERVICE_URL,
         estate_id=current_user.get("estate_id"),

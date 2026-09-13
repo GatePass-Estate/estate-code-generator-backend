@@ -72,7 +72,8 @@ class CodeService:
         Arguments:
             code: The generated access code to be validated.
             user_details: The details of the user making the request.
-            auth_token: Bearer token forwarded to ai-service for anomaly check.
+            auth_token: Bearer token used for the anomaly entitlement
+                check, then forwarded to ai-service if allowed.
                 Anomalous results also notify estate admins.
 
         Returns:

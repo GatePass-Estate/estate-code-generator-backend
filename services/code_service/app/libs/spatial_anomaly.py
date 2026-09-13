@@ -27,10 +27,12 @@ async def trigger_spatial_anomaly_check(
     auth_token: str | None,
 ) -> dict[str, Any] | None:
     """
-    Run spatial anomaly analyze after a visitor/resident log is persisted.
+    POST spatial analyze after a visitor/resident log is persisted.
 
-    Entitlement is enforced by ai-service. Not subscribed (403) → silent.
-    Network or other failures → log and return ``None`` (never raise).
+    Does not check entitlement. The repository must call
+    ``_spatial_anomaly_allowed`` first so unsubscribed estates never
+    hit this function. Network or other failures log and return
+    ``None`` (never raise).
 
     Returns:
         ``{"prediction_result_id": str, "is_anomalous": bool}`` on success,
@@ -82,7 +84,7 @@ async def trigger_spatial_anomaly_check(
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
             if response.status_code == 403:
-                # Not subscribed / entitlement denied — silent.
+                # Role or estate membership denied on analyze — silent.
                 return None
             if response.status_code == 422:
                 # Insufficient history / preconditions — soft skip.

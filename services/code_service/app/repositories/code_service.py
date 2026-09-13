@@ -6,7 +6,10 @@ from pydantic import UUID4
 
 from app.core.config import settings
 from gatepass_entitlement import (
+    ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
     ADVANCED_CODE_MANAGEMENT_KEY,
+    EntitlementDeniedError,
+    check_ai_feature_allowed,
     require_service_entitlement,
 )
 from gatepass_rbac import is_owner, same_estate
@@ -397,14 +400,17 @@ class CodeServiceRepository:
             ahttp_client: HTTP client for downstream services.
             request: Visitor or resident create payload.
             receiver: Whether the code is for a visitor or resident.
+            auth_token: Caller JWT forwarded to revenue-service when a
+                paid visitor schedule is requested.
 
         Returns:
             Dict with ``hashed_code`` and ``valid_until``.
 
         Raises:
-            HTTPException: 403 if a paid visitor schedule is requested
-                without entitlement; 500 on downstream persistence
-                failures.
+            HTTPException: 401 if the forwarded token is rejected; 403
+                if a paid visitor schedule is requested without
+                entitlement; 502 if revenue-service fails; 500 on
+                downstream persistence failures.
         """
         try:
             if receiver == Receiver.VISITOR:
@@ -416,6 +422,9 @@ class CodeServiceRepository:
                 visit_data = request.model_dump(mode="json")
                 period = visit_data.get("validity_period")
                 window = visit_data.get("validity_window")
+                # Sub-gate: default 1-hour codes skip. Custom period,
+                # daily window, or span > 1 hour needs
+                # advanced_code_management (403 if missing).
                 if (
                     _has_bounds(period)
                     or _has_bounds(window)
@@ -779,6 +788,40 @@ class CodeServiceRepository:
             }
         )
 
+    async def _spatial_anomaly_allowed(
+        self,
+        estate_id: object,
+        auth_token: str | None,
+    ) -> bool:
+        """
+        Code-service sub-gate for gate-scan spatial analyze.
+
+        Checks ``access_anomaly_detection_tier_1`` with
+        ``allow_security=True`` so security and admin may look up the
+        grant. Deny (403/404) is silent so validate still succeeds.
+        Call this immediately before ``trigger_spatial_anomaly_check``.
+        """
+        if not estate_id or not auth_token:
+            return False
+        try:
+            await check_ai_feature_allowed(
+                settings.REVENUE_SERVICE_URL,
+                estate_id=str(estate_id),
+                feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+                auth_token=auth_token,
+                allow_security=True,
+            )
+        except EntitlementDeniedError as exc:
+            if exc.status_code not in (403, 404):
+                logger.exception(
+                    "Spatial anomaly entitlement check failed "
+                    "estate_id=%s status=%s",
+                    estate_id,
+                    exc.status_code,
+                )
+            return False
+        return True
+
     async def _apply_anomaly_result(
         self,
         record: dict,
@@ -814,10 +857,11 @@ class CodeServiceRepository:
         (``full_name`` on resident logs, ``resident_fullname`` on visitor
         logs) resolved at validation time.
 
-        After a successful log persist, spatial anomaly analysis is triggered
-        best-effort (not subscribed → silent; other failures → logged). When
-        the event is anomalous, estate admins and primary admins are notified
-        via the notification-service internal endpoint.
+        After a successful log persist, a second sub-gate checks
+        ``access_anomaly_detection_tier_1``. Only then is
+        ``trigger_spatial_anomaly_check`` called (best-effort; deny is
+        silent). The log write is not entitlement-gated. When the event
+        is anomalous, estate admins and primary admins are notified.
         """
         try:
             # Get the record from the database
@@ -873,13 +917,19 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting visitor's record to DB"
                     ) from persist_exception
-                anomaly = await trigger_spatial_anomaly_check(
-                    anomaly_type="visitor",
-                    record=record,
-                    log_id=str((persist_response or {}).get("id") or ""),
-                    security_id=str(user_details.get("id")),
-                    auth_token=auth_token,
-                )
+                # Sub-gate: persist always. Analyze only if the estate
+                # has access_anomaly_detection_tier_1 (security/admin).
+                anomaly = None
+                if await self._spatial_anomaly_allowed(
+                    record.get("estate_id"), auth_token
+                ):
+                    anomaly = await trigger_spatial_anomaly_check(
+                        anomaly_type="visitor",
+                        record=record,
+                        log_id=str((persist_response or {}).get("id") or ""),
+                        security_id=str(user_details.get("id")),
+                        auth_token=auth_token,
+                    )
                 await self._apply_anomaly_result(record, anomaly, "visitor")
                 # Convert the record to a GET schema model
                 return GetResponseVisitor.model_validate(
@@ -916,13 +966,19 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting resident's record to DB"
                     ) from persist_exception
-                anomaly = await trigger_spatial_anomaly_check(
-                    anomaly_type="resident",
-                    record=record,
-                    log_id=str((persist_response or {}).get("id") or ""),
-                    security_id=str(user_details.get("id")),
-                    auth_token=auth_token,
-                )
+                # Sub-gate: persist always. Analyze only if the estate
+                # has access_anomaly_detection_tier_1 (security/admin).
+                anomaly = None
+                if await self._spatial_anomaly_allowed(
+                    record.get("estate_id"), auth_token
+                ):
+                    anomaly = await trigger_spatial_anomaly_check(
+                        anomaly_type="resident",
+                        record=record,
+                        log_id=str((persist_response or {}).get("id") or ""),
+                        security_id=str(user_details.get("id")),
+                        auth_token=auth_token,
+                    )
                 await self._apply_anomaly_result(record, anomaly, "resident")
                 return GetResponseResident.model_validate(
                     record, from_attributes=True

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _PRIMARY_ADMIN_ROLES = ("primary_admin", "root")
+_SECURITY_CHECK_ROLES = ("admin", "primary_admin", "security", "root")
 
 
 class AiFeatureKeyRequest(BaseModel):
@@ -47,14 +48,19 @@ async def check_ai_feature(
     feature_key: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: EntitlementService = Depends(get_service),
+    allow_security: bool = False,
 ):
     """
     Check whether an estate may use an AI feature.
 
-    Query params: estate_id, feature_key.
-    Restricted to admin, primary_admin, and root on the caller's estate.
+    Query params: estate_id, feature_key, allow_security. When
+    ``allow_security`` is true (gate validate → analyze), admin and
+    security may check. Otherwise the lookup is admin-only.
     """
-    require_admin(current_user["role"])
+    if allow_security:
+        require_roles(current_user["role"], _SECURITY_CHECK_ROLES)
+    else:
+        require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
     try:
         return await service.check_ai_feature(estate_id, feature_key)

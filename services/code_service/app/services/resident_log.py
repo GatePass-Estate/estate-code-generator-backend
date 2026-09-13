@@ -77,6 +77,7 @@ class ResidentLogService:
     ) -> datetime | None:
         """Clamp from_date to entitled days, or the Access default.
 
+        Code-service history sub-gate: ``extended_historical_record``.
         Root may omit ``estate_id`` (cross-estate). Everyone else must
         have one so retention can be applied.
 

@@ -9,7 +9,12 @@ import httpx
 from fastapi import HTTPException
 
 from gatepass_entitlement.config import settings
-from gatepass_entitlement.http import get_json, join_url
+from gatepass_entitlement.http import (
+    error_detail,
+    get_json,
+    join_url,
+    passthrough_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +75,9 @@ async def check_service_entitlement(
         Parsed JSON body from revenue-service.
 
     Raises:
-        HTTPException: 403 when not allowed; 404 when unknown key;
-            502 when revenue-service fails.
+        HTTPException: 401 when the forwarded token is rejected;
+            403 when not allowed or not a member; 404 when unknown
+            key; 502 when revenue-service fails.
     """
     params = {"estate_id": str(estate_id), "service_key": service_key}
     try:
@@ -83,10 +89,16 @@ async def check_service_entitlement(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
+        status_code = passthrough_status(exc)
+        if status_code == 404:
             raise HTTPException(
                 status_code=404,
                 detail=f"Unknown service_key '{service_key}'.",
+            ) from exc
+        if status_code in (401, 403):
+            raise HTTPException(
+                status_code=status_code,
+                detail=error_detail(exc, "Not authorized."),
             ) from exc
         logger.exception(
             "Entitlement check HTTP error estate_id=%s service_key=%s "
@@ -134,8 +146,9 @@ async def require_service_entitlement(
     Require an estate and that it is entitled to ``service_key``.
 
     Raises:
-        HTTPException: 403 when ``estate_id`` is missing or not allowed;
-            404 when the key is unknown; 502 when revenue-service fails.
+        HTTPException: 401 when the forwarded token is rejected;
+            403 when ``estate_id`` is missing or not allowed; 404 when
+            the key is unknown; 502 when revenue-service fails.
     """
     if not estate_id:
         raise HTTPException(
