@@ -592,6 +592,20 @@ all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>
 standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "jinja2 (>=3.1.5)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
+name = "gatepass-docs"
+version = "0.1.0"
+description = "Shared document helpers for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_docs"
+
+[[package]]
 name = "google-api-core"
 version = "2.30.3"
 description = "Google API client core library"
@@ -2091,4 +2105,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "46b8369da0a52d34c0cdc61da459d29d28323f1bd090a33b6a0dd31466bf2b13"
+content-hash = "e1b738e90831a309534768c75ff169e6155af2c5bb549e654f2da3242c9e759d"
