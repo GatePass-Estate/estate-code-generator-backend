@@ -506,8 +506,15 @@ async def get_guest(
     guest_id: str,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Get guest details by ID."""
+    """Get guest details by ID. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.get_guest(guest_id, current_user["id"])
 
 
@@ -517,8 +524,15 @@ async def update_guest(
     request: UpdateGuestRequest,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Update an existing guest."""
+    """Update an existing guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.update_guest(guest_id, current_user["id"], request)
 
 
@@ -527,8 +541,15 @@ async def delete_guest(
     guest_id: str,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Soft delete a guest."""
+    """Soft delete a guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.delete_guest(guest_id, current_user["id"])
 
 
@@ -558,8 +579,16 @@ async def list_guests(
     ),
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Search and list guests with optional filters and pagination."""
+    """Search and list guests with optional filters and pagination.
+    Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     from_date_obj = None
     to_date_obj = None
 
