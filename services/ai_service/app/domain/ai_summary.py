@@ -5,11 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-ANOMALY_SUMMARY_FEATURE_KEY = "visitor_resident_anomaly_detection"
-INCIDENT_SUMMARY_FEATURE_KEY = "incident_summary_basic"
-INCIDENT_SUMMARY_TIER2_KEY = "incident_summary_basic_tier2"
-INCIDENT_SUMMARY_TIER3_KEY = "incident_summary_basic_tier3"
-
 _OPEN = "open"
 
 

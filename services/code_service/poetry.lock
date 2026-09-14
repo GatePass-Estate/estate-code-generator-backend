@@ -281,6 +281,25 @@ type = "directory"
 url = "../../shared/gatepass_auth"
 
 [[package]]
+name = "gatepass-entitlement"
+version = "0.1.0"
+description = "Shared revenue-service entitlement checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_entitlement"
+
+[[package]]
 name = "gatepass-notify"
 version = "0.1.0"
 description = "Shared notification helper for GatePass services"
@@ -310,7 +329,6 @@ develop = true
 
 [package.dependencies]
 fastapi = ">=0.115.4"
-pydantic-settings = ">=2.6.1"
 
 [package.source]
 type = "directory"
@@ -1373,4 +1391,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "24c0d08481514d82cb61677ff39bb0d3edbedb3af3d34a5c5cdc286c3a0f5305"
+content-hash = "d75992df62d0486e2ba6b30c3b18b6b318830b4a8f3c118baca9836d9fbb706b"

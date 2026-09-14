@@ -36,6 +36,9 @@ class QuoteResponse(BaseModel):
     ai_price_per_month: Any
     monthly_subtotal: Any
     period_months: int
+    subtotal: Any
+    vat_rate: Any
+    vat_amount: Any
     client_total: Any
     administrative_fee: Any
     sum_of_included_features: Any
@@ -65,6 +68,9 @@ class SeatProrateResponse(BaseModel):
     period_days: int
     remaining_days: int
     daily_seat_rate: Any
+    subtotal: Any
+    vat_rate: Any
+    vat_amount: Any
     prorated_charge: Any
     period_start: str
     period_end: str
@@ -77,6 +83,22 @@ class AiCheckoutRequest(BaseModel):
     ai_feature_keys: list[str] = Field(..., min_length=1)
     period_months: Literal[1, 3, 6, 12] = 1
     paid_at: str | None = None
+
+
+class AiQuoteResponse(BaseModel):
+    """Standalone AI feature quote with estate-type multiplier and VAT."""
+
+    estate_id: str
+    country_code: str
+    currency_code: str
+    ai_feature_keys: list[str]
+    period_months: int
+    ai_price_per_month: Any
+    subtotal: Any
+    vat_rate: Any
+    vat_amount: Any
+    client_total: Any
+    line_items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ActivateSubscriptionRequest(BaseModel):

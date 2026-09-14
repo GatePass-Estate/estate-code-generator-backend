@@ -94,13 +94,24 @@ class DbRevenueRepository:
         """
         Load active service catalog rows keyed by service_key.
 
+        List/search hide ``vat`` from FE catalogs; fetch it by key so
+        checkout quoting can still read the rate.
+
         Returns:
             Mapping of service_key -> catalog row.
         """
         items = await self._search(
             self.service_catalog, {"is_active": True, "limit": 200}
         )
-        return {i["service_key"]: i for i in items}
+        catalog = {i["service_key"]: i for i in items}
+        if "vat" not in catalog:
+            vat_rows = await self._search(
+                self.service_catalog,
+                {"service_key": "vat", "is_active": True, "limit": 1},
+            )
+            if vat_rows:
+                catalog["vat"] = vat_rows[0]
+        return catalog
 
     async def get_ai_feature_map(self) -> dict[str, dict]:
         """

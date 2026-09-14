@@ -2,14 +2,18 @@ import asyncio
 import logging
 from datetime import datetime
 
+from fastapi import HTTPException
+
+from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler
-from app.libs.revenue_entitlements import (
-    VISITOR_LOG_RETENTION_KEY,
+from gatepass_entitlement import (
+    EXTENDED_HISTORICAL_RECORD_KEY,
     resolve_retention_from_date,
 )
 from gatepass_rbac import (
     deny_roles,
     get_role_permissions,
+    is_root,
     resolve_estate_log_scope,
 )
 from app.repositories.visitor_log import (
@@ -39,8 +43,9 @@ class VisitorLogService:
     estate; root globally). Each entry carries denormalized
     ``resident_fullname``.
 
-    History windows are clamped by revenue-service
-    ``visitor_log_retention_days`` when an estate_id is known.
+    History windows are clamped by ``extended_historical_record`` when
+    an estate_id is known. Access (no paid limit) uses the configured
+    default (14 days).
     """
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
@@ -67,15 +72,32 @@ class VisitorLogService:
         self,
         estate_id: str | None,
         from_date: datetime | None,
+        requester: dict,
+        auth_token: str | None = None,
     ) -> datetime | None:
-        """Clamp from_date using visitor_log_retention_days when estate is known."""
+        """Clamp from_date to entitled days, or the Access default.
+
+        Code-service history sub-gate: ``extended_historical_record``.
+        Root may omit ``estate_id`` (cross-estate). Everyone else must
+        have one so retention can be applied.
+
+        Raises:
+            HTTPException: 403 when ``estate_id`` is missing and the
+                requester is not root.
+        """
         if not estate_id:
-            return from_date
+            if is_root(str(requester.get("role", ""))):
+                return from_date
+            raise HTTPException(
+                status_code=403,
+                detail="Estate is required to view these logs.",
+            )
         return await resolve_retention_from_date(
-            self.ahttp_client,
+            settings.REVENUE_SERVICE_URL,
             estate_id=str(estate_id),
-            service_key=VISITOR_LOG_RETENTION_KEY,
+            service_key=EXTENDED_HISTORICAL_RECORD_KEY,
             from_date=from_date,
+            auth_token=auth_token,
         )
 
     @staticmethod
@@ -127,6 +149,7 @@ class VisitorLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level personal visitor history: one entry per unique code with
@@ -136,7 +159,10 @@ class VisitorLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, from_date
+            str(estate_id) if estate_id else None,
+            from_date,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.unique_history(
             user_id=requester["id"],
@@ -154,6 +180,7 @@ class VisitorLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         Second-level personal visitor history for one ``hashed_code``, latest
@@ -162,7 +189,10 @@ class VisitorLogService:
         self._reject_personal_for_security(requester)
         estate_id = requester.get("estate_id")
         effective_from = await self._apply_retention(
-            str(estate_id) if estate_id else None, None
+            str(estate_id) if estate_id else None,
+            None,
+            requester,
+            auth_token=auth_token,
         )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
@@ -181,6 +211,7 @@ class VisitorLogService:
         to_date: datetime | None = None,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         First-level estate-wide visitor history: one entry per unique code with
@@ -188,7 +219,9 @@ class VisitorLogService:
         code. Requires permission to view other users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
-        effective_from = await self._apply_retention(estate_scope, from_date)
+        effective_from = await self._apply_retention(
+            estate_scope, from_date, requester, auth_token=auth_token
+        )
         result = await self.repository.unique_history(
             estate_id=estate_scope,
             from_date=effective_from,
@@ -205,13 +238,16 @@ class VisitorLogService:
         hashed_code: str,
         page: int = 1,
         limit: int = 20,
+        auth_token: str | None = None,
     ) -> ListResponse:
         """
         Second-level estate-wide visitor history for one ``hashed_code``,
         latest first. Requires permission to view other users' logs.
         """
         estate_scope = await self._resolve_estate_scope(requester)
-        effective_from = await self._apply_retention(estate_scope, None)
+        effective_from = await self._apply_retention(
+            estate_scope, None, requester, auth_token=auth_token
+        )
         result = await self.repository.code_history(
             hashed_code=hashed_code,
             estate_id=estate_scope,

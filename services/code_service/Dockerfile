@@ -13,6 +13,7 @@ WORKDIR /src/service
 
 # Copy the shared package so path deps resolve during poetry lock
 COPY shared/gatepass_auth /shared/gatepass_auth/
+COPY shared/gatepass_entitlement /shared/gatepass_entitlement/
 COPY shared/gatepass_notify /shared/gatepass_notify/
 COPY shared/gatepass_rbac /shared/gatepass_rbac/
 

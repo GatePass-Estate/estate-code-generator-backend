@@ -8,7 +8,13 @@ from typing import Any, Iterable, Mapping
 
 
 ADMIN_FEE_KEY = "administrative_fee"
+VAT_KEY = "vat"
 MONEY_QUANT = Decimal("0.01")
+
+
+def omit_vat(mapping: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Drop ``vat`` from an entitlements/catalog map shown to the FE."""
+    return {k: v for k, v in dict(mapping or {}).items() if k != VAT_KEY}
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -21,6 +27,19 @@ def _to_decimal(value: Any) -> Decimal:
 def round_charge(amount: Any) -> Decimal:
     """Round a billable total up to two decimal places."""
     return _to_decimal(amount).quantize(MONEY_QUANT, rounding=ROUND_UP)
+
+
+def apply_vat(amount: Any, vat_rate: Any) -> dict[str, Any]:
+    """Add percent VAT to a finished subtotal. ``vat_rate`` is e.g. 7.5."""
+    subtotal = round_charge(amount)
+    rate = _to_decimal(vat_rate)
+    vat_amount = round_charge(subtotal * rate / Decimal("100"))
+    return {
+        "subtotal": subtotal,
+        "vat_rate": rate,
+        "vat_amount": vat_amount,
+        "client_total": round_charge(subtotal + vat_amount),
+    }
 
 
 def compute_price_per_seat(

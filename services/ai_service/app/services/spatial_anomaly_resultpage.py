@@ -8,6 +8,11 @@ from typing import Any, Literal
 from uuid import UUID
 
 import httpx
+from gatepass_entitlement import (
+    ACCESS_ANOMALY_DETECTION_TIER_2_KEY,
+    ACCESS_ANOMALY_DETECTION_TIER_3_KEY,
+    is_ai_feature_allowed,
+)
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings as default_settings
@@ -19,11 +24,6 @@ from app.integrations.db_service_prediction_result import (
     fetch_overview,
     fetch_predictions,
     patch_ai_summary,
-)
-from app.integrations.revenue_service import (
-    ANOMALY_SUMMARY_TIER2_KEY,
-    ANOMALY_SUMMARY_TIER3_KEY,
-    is_ai_feature_allowed,
 )
 from app.models.spatial_anomaly_resultpage import (
     CaseDemographic,
@@ -211,10 +211,13 @@ class SpatialAnomalyResultPageService:
         *,
         prediction_id: UUID,
         estate_id: UUID,
+        auth_token: str | None = None,
     ) -> CaseSummaryResponse:
         """
         Entitlement-gated in-house and/or LLM summary for one case.
 
+        ``access_anomaly_detection_tier_2`` is in-house;
+        ``access_anomaly_detection_tier_3`` is LLM and includes tier 2.
         Re-checks the estate AI grant so a downgraded subscription
         withholds a previously generated tier. Cached ``ai_response``
         rows keyed by prediction id are reused when present; otherwise
@@ -224,16 +227,18 @@ class SpatialAnomalyResultPageService:
             # Re-check grants every call. Tier3 implies both; else
             # tier2 (in-house only); neither → 403.
             tier2_ok = await is_ai_feature_allowed(
-                client,
-                self.settings,
+                self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
-                feature_key=ANOMALY_SUMMARY_TIER3_KEY,
+                feature_key=ACCESS_ANOMALY_DETECTION_TIER_3_KEY,
+                client=client,
+                auth_token=auth_token,
             )
             tier1_ok = tier2_ok or await is_ai_feature_allowed(
-                client,
-                self.settings,
+                self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
-                feature_key=ANOMALY_SUMMARY_TIER2_KEY,
+                feature_key=ACCESS_ANOMALY_DETECTION_TIER_2_KEY,
+                client=client,
+                auth_token=auth_token,
             )
             if not tier1_ok:
                 raise EntitlementDeniedError(

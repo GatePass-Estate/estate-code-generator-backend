@@ -152,33 +152,8 @@ def test_require_estate_membership_skips_root():
 
 
 @pytest.mark.asyncio
-async def test_overview_denies_when_estate_has_no_grant(monkeypatch):
-    from app.core.exceptions import EntitlementDeniedError
-    from app.services.incident_resultpage import IncidentResultPageService
-
-    async def _denied(*_args, **_kwargs):
-        return False, False, False
-
-    monkeypatch.setattr(
-        "app.services.incident_resultpage.resolve_incident_entitlements",
-        _denied,
-    )
-    service = IncidentResultPageService()
-    with pytest.raises(EntitlementDeniedError) as denied:
-        await service.get_overview(
-            estate_id=uuid4(),
-            from_date=None,
-            to_date=None,
-        )
-    assert denied.value.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_overview_reads_summary_cache_flags(monkeypatch):
     from app.services.incident_resultpage import IncidentResultPageService
-
-    async def _allowed(*_args, **_kwargs):
-        return True, True, False
 
     async def _overview(*_args, **_kwargs):
         return {
@@ -200,10 +175,6 @@ async def test_overview_reads_summary_cache_flags(monkeypatch):
             "ai_summary": {"tier1": {"executive_summary": "topics"}},
         }
 
-    monkeypatch.setattr(
-        "app.services.incident_resultpage.resolve_incident_entitlements",
-        _allowed,
-    )
     monkeypatch.setattr(
         "app.services.incident_resultpage.fetch_incident_overview",
         _overview,

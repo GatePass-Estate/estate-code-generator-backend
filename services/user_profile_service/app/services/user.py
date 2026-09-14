@@ -44,9 +44,11 @@ from app.libs.password_utils import (
     generate_random_password,
     hash_password,
 )
-from app.libs.revenue_entitlements import assert_seat_available
 from fastapi import HTTPException
+from gatepass_entitlement import assert_seat_available
 from gatepass_rbac import require_higher_rank, same_estate
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +128,9 @@ class UserService:
         return self._get_fernet().decrypt(encrypted.encode()).decode()
 
     async def register_user(
-        self, request: RegisterUserRequest
+        self,
+        request: RegisterUserRequest,
+        auth_token: str | None = None,
     ) -> tuple[RegisterUserResponse, str]:
         """
         Handles user registration flow.
@@ -162,9 +166,10 @@ class UserService:
             )
         )
         await assert_seat_available(
-            self.repository.client,
+            settings.REVENUE_SERVICE_URL,
             estate_id=str(request.estate_id),
             current_active_users=int(active_users.total or 0),
+            auth_token=auth_token,
         )
 
         # Generate random password for new user

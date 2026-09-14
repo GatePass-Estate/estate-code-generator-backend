@@ -20,6 +20,7 @@ from app.services.entitlement_resolver import (
     resolve_entitlements,
     uses_access_fallback,
 )
+from app.services.pricing_service import VAT_KEY, omit_vat
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,10 @@ class EntitlementService:
         Raises:
             HTTPException: 404 if service_key is unknown.
         """
+        if service_key == VAT_KEY:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown service_key '{service_key}'"
+            )
         catalog = await self.repo.get_service_catalog_map()
         if service_key not in catalog:
             raise HTTPException(
@@ -165,8 +170,9 @@ class EntitlementService:
         """
         Return the full effective entitlements map for an estate.
 
-        When the estate has fallen back to Access and ``over_cap_locked`` is
-        set, includes ``locked=true`` / ``reason=over_cap`` (same signal as
+        Omits ``vat`` (a tax rate, not a product). When the estate has
+        fallen back to Access and ``over_cap_locked`` is set, includes
+        ``locked=true`` / ``reason=over_cap`` (same signal as
         ``/entitlements/check``) so callers can detect lock without a key.
 
         Args:
@@ -185,7 +191,7 @@ class EntitlementService:
         )
         return {
             "estate_id": estate_id,
-            "entitlements": ctx["entitlements"],
+            "entitlements": omit_vat(ctx["entitlements"]),
             "locked": locked,
             "reason": "over_cap" if locked else None,
             "covered_users": (sub or {}).get("covered_users"),

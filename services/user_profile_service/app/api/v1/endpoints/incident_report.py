@@ -4,6 +4,11 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
+from app.core.config import settings
+from gatepass_entitlement import (
+    INCIDENT_REPORT_KEY,
+    require_service_entitlement,
+)
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
 from app.repositories.incident_report import IncidentReportRepository
@@ -14,7 +19,7 @@ from app.schemas.incident_report import (
     IncidentReportItem,
     IncidentReportListResponse,
 )
-from app.services.auth import get_current_user
+from app.services.auth import auth_token_from_request, get_current_user
 from app.services.incident_report import IncidentReportService
 
 router = APIRouter()
@@ -40,8 +45,15 @@ async def create(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     service: IncidentReportService = Depends(get_service),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CreateIncidentReportResponse:
-    """File a new incident report. Any authenticated user may file."""
+    """File a new incident report. Requires the incident_report entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=INCIDENT_REPORT_KEY,
+        auth_token=auth_token,
+    )
     result = await service.create(
         request,
         estate_id=str(current_user.get("estate_id")),

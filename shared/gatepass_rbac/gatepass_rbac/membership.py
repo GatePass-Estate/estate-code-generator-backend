@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from gatepass_rbac.identity import is_owner, same_estate
 from gatepass_rbac.identity import estate_id as _estate_id
+from gatepass_rbac.roles import is_root
 
 
 def require_same_estate(
@@ -49,7 +50,7 @@ def require_estate_membership(
     Raises:
         HTTPException: 403 if the JWT has no estate or it does not match.
     """
-    if current_user.get("role") == "root":
+    if is_root(str(current_user.get("role", ""))):
         return
     user_estate_id = _estate_id(current_user)
     if user_estate_id is None or user_estate_id != str(estate_id):

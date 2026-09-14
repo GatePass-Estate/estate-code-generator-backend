@@ -47,5 +47,13 @@ class Settings(BaseSettings):
         os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
     )
 
+    # Applied to feature_unit_price rows (except VAT) before quote math.
+    ESTATE_TYPE_HOUSING_MULTIPLIER: float = float(
+        os.getenv("ESTATE_TYPE_HOUSING_MULTIPLIER", "1.0")
+    )
+    ESTATE_TYPE_CORPORATE_MULTIPLIER: float = float(
+        os.getenv("ESTATE_TYPE_CORPORATE_MULTIPLIER", "3.0")
+    )
+
 
 settings = Settings()

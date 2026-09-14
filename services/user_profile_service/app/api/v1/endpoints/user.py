@@ -3,10 +3,10 @@ from typing import List, Optional
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-
-from app.core.config import settings
-from app.libs.http_handler import AsyncHttpHandler, get_http_handler
-from app.libs.notify import fire_notify, fire_notify_critical
+from gatepass_entitlement import (
+    GUEST_MANAGEMENT_KEY,
+    require_service_entitlement,
+)
 from gatepass_rbac import (
     check_permission,
     require_estate_membership,
@@ -14,6 +14,10 @@ from gatepass_rbac import (
     require_roles,
     require_same_estate,
 )
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler, get_http_handler
+from app.libs.notify import fire_notify, fire_notify_critical
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.guest import GuestRepository
@@ -51,7 +55,11 @@ from app.schemas.user import (
     UserProfileRequest,
     UserProfileResponse,
 )
-from app.services.auth import get_current_user, get_current_user_unverified
+from app.services.auth import (
+    auth_token_from_request,
+    get_current_user,
+    get_current_user_unverified,
+)
 from app.services.guest import GuestService
 from app.services.user import UserService
 
@@ -88,6 +96,7 @@ async def register_user(
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
     requester_role = current_user["role"]
 
@@ -112,7 +121,7 @@ async def register_user(
             detail="Not authorized to register users for this estate.",
         )
 
-    user, token = await service.register_user(request)
+    user, token = await service.register_user(request, auth_token=auth_token)
     verification_url = (
         f"{settings.FRONTEND_BASE_URL}/activate?{urlencode({'token': token})}"
     )
@@ -479,7 +488,15 @@ async def register_guest(
     request: RegisterGuestRequest,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
+    """Register a guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     request.resident_id = current_user["id"]
     return await service.register_guest(request)
 
@@ -489,8 +506,15 @@ async def get_guest(
     guest_id: str,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Get guest details by ID."""
+    """Get guest details by ID. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.get_guest(guest_id, current_user["id"])
 
 
@@ -500,8 +524,15 @@ async def update_guest(
     request: UpdateGuestRequest,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Update an existing guest."""
+    """Update an existing guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.update_guest(guest_id, current_user["id"], request)
 
 
@@ -510,8 +541,15 @@ async def delete_guest(
     guest_id: str,
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Soft delete a guest."""
+    """Soft delete a guest. Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     return await service.delete_guest(guest_id, current_user["id"])
 
 
@@ -541,8 +579,16 @@ async def list_guests(
     ),
     service: GuestService = Depends(get_guest_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ):
-    """Search and list guests with optional filters and pagination."""
+    """Search and list guests with optional filters and pagination.
+    Requires the guest_management entitlement."""
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=GUEST_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
     from_date_obj = None
     to_date_obj = None
 

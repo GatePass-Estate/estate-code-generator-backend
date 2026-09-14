@@ -7,6 +7,7 @@ from collections.abc import Collection
 from fastapi import HTTPException
 
 ADMIN_ROLES: frozenset[str] = frozenset({"admin", "primary_admin", "root"})
+ROOT_ROLE = "root"
 
 ROLE_RANK: dict[str, int] = {
     "root": 5,
@@ -16,6 +17,11 @@ ROLE_RANK: dict[str, int] = {
     "security": 2,
     "guest": 1,
 }
+
+
+def is_root(role: str) -> bool:
+    """Return whether ``role`` is root."""
+    return str(role).lower() == ROOT_ROLE
 
 
 def is_admin(role: str) -> bool:

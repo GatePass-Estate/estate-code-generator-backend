@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
+from gatepass_auth import auth_token_from_request  # noqa: F401
 from gatepass_auth import get_current_user  # noqa: F401
 from gatepass_auth import get_current_user_unverified  # noqa: F401
 

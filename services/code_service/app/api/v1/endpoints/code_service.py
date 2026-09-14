@@ -2,13 +2,21 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import UUID4
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError, ScheduleError
-from app.libs.auth import get_current_user, get_user_details
+from app.libs.auth import (
+    auth_token_from_request,
+    get_current_user,
+    get_user_details,
+)
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
+from gatepass_entitlement import (
+    ADVANCED_CODE_MANAGEMENT_KEY,
+    require_service_entitlement,
+)
 from gatepass_rbac import check_permission, check_status
 from app.schemas.code_service import (
     CreateRequestResident,
@@ -28,7 +36,6 @@ from app.services.code_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_bearer = HTTPBearer()
 
 
 def get_service(
@@ -59,17 +66,22 @@ async def generate(
     request: CreateRequestVisitor | CreateRequestResident,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> CreateResponse:
     """
     Generate a visitor or resident access code.
 
     Visitor requests may include optional ``validity_period`` (total UTC
     range) and ``validity_window`` (daily hours). Omitted period defaults to
-    one hour from creation. The total validity period may not start or end
-    more than 2 weeks from the current time.
+    one hour from creation. A custom period, a period longer than one
+    hour, or a daily window requires ``advanced_code_management``. The
+    total validity period may not start or end more than 2 weeks from
+    the current time.
 
     Raises:
-        HTTPException: 400 if the validity period exceeds 2 weeks; 500 otherwise.
+        HTTPException: 400 if the validity period exceeds 2 weeks; 403
+            if a paid schedule is requested without entitlement; 500
+            otherwise.
     """
     try:
         # Option 1: Direct enum validation
@@ -91,7 +103,7 @@ async def generate(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -106,8 +118,13 @@ async def generate(
 
     try:
         return await service.generate(
-            request=request, receiver=receiver, user_details=user_details
+            request=request,
+            receiver=receiver,
+            user_details=user_details,
+            auth_token=auth_token,
         )
+    except HTTPException:
+        raise
     except ScheduleError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -138,14 +155,16 @@ async def validate(
     background_tasks: BackgroundTasks,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> GetResponseResident | GetResponseVisitor:
     """
     Validate an access code (security scan at the gate).
 
-    On success this persists a visitor or resident log row, then triggers
-    spatial anomaly analysis best-effort. Anomaly runs only here because a
-    real visit/access event was recorded — listing codes does not. Flagged
+    On success this persists a visitor or resident log row. Spatial
+    analyze is a code-service sub-gate: ``access_anomaly_detection_tier_1``
+    is checked before the AI trigger; deny skips analyze and still
+    returns the validation. Anomaly runs only here because a real
+    visit/access event was recorded — listing codes does not. Flagged
     events notify estate admins and primary admins.
 
     Arguments:
@@ -165,7 +184,7 @@ async def validate(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -182,7 +201,7 @@ async def validate(
         result = await service.validate(
             code=code,
             user_details=user_details,
-            auth_token=credentials.credentials,
+            auth_token=auth_token,
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"{e}") from e
@@ -298,7 +317,7 @@ async def get_all_codes_by_user(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -364,7 +383,7 @@ async def delete(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -398,19 +417,20 @@ async def delete(
         404: {"description": "Item not found"},
         200: {"description": "Extend attempted"},
     },
-    description="Extend a visitor access code by one hour",
+    description="Extend a visitor access code by one hour. Requires advanced_code_management.",
 )
 async def extend_code(
     code: str,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ExtendResponse:
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
     )
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -422,6 +442,14 @@ async def extend_code(
             status_code=403,
             detail="You are not authorized to extend codes.",
         )
+
+    # Sub-gate: extend is paid (advanced_code_management).
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
 
     try:
         logger.info(
@@ -450,19 +478,20 @@ async def extend_code(
         404: {"description": "Item not found"},
         200: {"description": "Freeze toggled"},
     },
-    description="Toggle freeze/pause on a visitor access code",
+    description="Toggle freeze/pause on a visitor access code. Requires advanced_code_management.",
 )
 async def freeze_code(
     code: str,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> FreezeResponse:
     user_details = await get_user_details(
         service.ahttp_client, current_user["id"]
     )
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )
@@ -474,6 +503,14 @@ async def freeze_code(
             status_code=403,
             detail="You are not authorized to freeze codes.",
         )
+
+    # Sub-gate: freeze is paid (advanced_code_management).
+    await require_service_entitlement(
+        settings.REVENUE_SERVICE_URL,
+        estate_id=current_user.get("estate_id"),
+        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+        auth_token=auth_token,
+    )
 
     try:
         logger.info(
@@ -532,7 +569,7 @@ async def update_resident_code(
     # Extract role of the requester
     requester_role = current_user["role"]
 
-    if not await check_status(user_details):
+    if not check_status(user_details):
         raise HTTPException(
             status_code=403, detail="Your account is not verified yet."
         )

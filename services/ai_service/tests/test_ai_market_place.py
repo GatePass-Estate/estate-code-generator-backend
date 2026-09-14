@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.libs.ai_grant_entitlement import grant_is_entitled, is_purchased
+from gatepass_entitlement import grant_is_entitled, is_purchased
 
 _FID = "feature-1"
 _FID_OTHER = "feature-2"

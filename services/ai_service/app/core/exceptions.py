@@ -1,5 +1,16 @@
 """Domain errors surfaced as HTTP errors from the AI service API."""
 
+from gatepass_entitlement import EntitlementDeniedError
+
+__all__ = [
+    "EntitlementDeniedError",
+    "FeatureStoreError",
+    "IncidentReportError",
+    "LogHistoryError",
+    "ResultPageError",
+    "VolumeForecastError",
+]
+
 
 class LogHistoryError(Exception):
     """Raised when log rows cannot be loaded for analysis (fail-closed)."""
@@ -25,15 +36,6 @@ class FeatureStoreError(Exception):
 
     def __init__(self, message: str, *, status_code: int = 502) -> None:
         """Attach ``message`` and optional HTTP status for API error mapping."""
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
-
-
-class EntitlementDeniedError(Exception):
-    """Raised when revenue-service denies an AI feature or lookup fails closed."""
-
-    def __init__(self, message: str, *, status_code: int = 403) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message

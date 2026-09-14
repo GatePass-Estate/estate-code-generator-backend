@@ -22,6 +22,7 @@ from app.services.entitlement_resolver import (
     PAID_ACCESS_STATUSES,
     resolve_entitlements,
 )
+from app.services.pricing_service import omit_vat
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ class SubscriptionService:
         self._paystack = paystack_client
 
     async def get_estate_subscription(self, estate_id: str) -> dict:
-        """Return subscription, tier, and effective entitlements for an estate."""
+        """Return subscription, tier, and entitlements (vat omitted)."""
         subscription = await self.repo.get_active_subscription(estate_id)
         tier = None
         if subscription:
@@ -162,11 +163,18 @@ class SubscriptionService:
             tier=tier,
             access_tier=access_tier,
         )
+        if subscription and isinstance(subscription.get("entitlements"), dict):
+            subscription = {
+                **subscription,
+                "entitlements": omit_vat(subscription["entitlements"]),
+            }
+        if tier and isinstance(tier.get("entitlements"), dict):
+            tier = {**tier, "entitlements": omit_vat(tier["entitlements"])}
         return {
             "estate_id": estate_id,
             "subscription": subscription,
             "tier": tier,
-            "effective_entitlements": entitlements,
+            "effective_entitlements": omit_vat(entitlements),
         }
 
     async def _latest_subscription(self, estate_id: str) -> dict | None:

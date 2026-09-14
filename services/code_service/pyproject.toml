@@ -9,6 +9,7 @@ packages = [{include = "app"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+gatepass-entitlement = {path = "../../shared/gatepass_entitlement", develop = true}
 gatepass-notify = {path = "../../shared/gatepass_notify", develop = true}
 gatepass-rbac = {path = "../../shared/gatepass_rbac", develop = true}
 fastapi = "^0.115.4"
@@ -31,6 +32,7 @@ pytest-dependency = "^0.6.0"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = [".", "../../shared/gatepass_entitlement"]
 
 [build-system]
 requires = ["poetry-core"]

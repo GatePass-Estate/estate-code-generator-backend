@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.libs.auth import get_current_user
+from app.libs.auth import auth_token_from_request, get_current_user
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.schemas.visitor_log import ListResponse
 from app.services.visitor_log import VisitorLogService as Service
@@ -45,6 +45,7 @@ async def my_history(
     limit: int = 20,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ListResponse:
     """
     First-level personal visitor history: one entry per unique code with usage
@@ -57,6 +58,7 @@ async def my_history(
             to_date=to_date,
             page=page,
             limit=limit,
+            auth_token=auth_token,
         )
     except HTTPException:
         raise
@@ -86,6 +88,7 @@ async def my_history_by_code(
     limit: int = 20,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ListResponse:
     """
     Second-level personal visitor history for a single code, latest first.
@@ -97,6 +100,7 @@ async def my_history_by_code(
             hashed_code=code,
             page=page,
             limit=limit,
+            auth_token=auth_token,
         )
     except HTTPException:
         raise
@@ -127,6 +131,7 @@ async def estate_history(
     limit: int = 20,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ListResponse:
     """
     First-level estate-wide visitor history: one entry per unique code with
@@ -140,6 +145,7 @@ async def estate_history(
             to_date=to_date,
             page=page,
             limit=limit,
+            auth_token=auth_token,
         )
     except HTTPException:
         raise
@@ -169,6 +175,7 @@ async def estate_history_by_code(
     limit: int = 20,
     service: Service = Depends(get_service),
     current_user: dict = Depends(get_current_user),
+    auth_token: str | None = Depends(auth_token_from_request),
 ) -> ListResponse:
     """
     Second-level estate-wide visitor history for a single code, latest first.
@@ -180,6 +187,7 @@ async def estate_history_by_code(
             hashed_code=code,
             page=page,
             limit=limit,
+            auth_token=auth_token,
         )
     except HTTPException:
         raise
