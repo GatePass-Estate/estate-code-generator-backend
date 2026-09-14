@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,7 +21,10 @@ from app.libs.entitlement_validation import (
     validate_entitlements,
 )
 from app.repositories.db_revenue import DbRevenueRepository
+from app.schemas.estate import EstateTypeMultiplier
 from app.services.pricing_service import (
+    VAT_KEY,
+    apply_vat,
     compute_ai_monthly,
     compute_seat_proration,
     quote_pricing,
@@ -199,7 +203,7 @@ _HANDLERS: dict[str, type[CheckoutHandler]] = {
 
 
 class CheckoutService:
-    """Builds pricing quotes from estate country, tier, and entitlements."""
+    """Builds quotes from estate type, country prices, and VAT."""
 
     def __init__(self, repo: DbRevenueRepository):
         """
@@ -213,10 +217,52 @@ class CheckoutService:
             secret_key=settings.PAYSTACK_SECRET_KEY
         )
 
+    @staticmethod
+    def _estate_multiplier(estate_type: str | None) -> float:
+        """Resolve the env-backed multiplier for the estate's type."""
+        if not estate_type:
+            raise HTTPException(
+                status_code=400,
+                detail="Estate has no estate_type set; cannot price",
+            )
+        factors = EstateTypeMultiplier(
+            housing=settings.ESTATE_TYPE_HOUSING_MULTIPLIER,
+            corporate=settings.ESTATE_TYPE_CORPORATE_MULTIPLIER,
+        )
+        key = str(estate_type).lower()
+        if key not in factors.model_fields:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown estate_type '{estate_type}'",
+            )
+        return getattr(factors, key)
+
+    async def _pricing_context(
+        self, estate_id: str
+    ) -> tuple[str, dict[str, Any], dict[str, Any], str, Any]:
+        """Country, scaled prices, currency, and VAT rate for an estate."""
+        estate = await self.repo.get_estate(estate_id)
+        country = (estate.get("country") or "").upper()
+        if not country:
+            raise HTTPException(
+                status_code=400,
+                detail="Estate has no country set; cannot price",
+            )
+        multiplier = self._estate_multiplier(estate.get("estate_type"))
+        service_prices, ai_prices, currency, vat_rate = await self._price_maps(
+            country, multiplier
+        )
+        return country, service_prices, ai_prices, currency, vat_rate
+
     async def _price_maps(
-        self, country: str
-    ) -> tuple[dict[str, Any], dict[str, Any], str]:
-        """Return service_prices, ai_prices, currency for a country."""
+        self, country: str, multiplier: float
+    ) -> tuple[dict[str, Any], dict[str, Any], str, Any]:
+        """
+        Return service_prices, ai_prices, currency, and VAT rate.
+
+        Unit prices (except VAT) are multiplied by ``multiplier`` before
+        any quote math. VAT is the catalog percent, unscaled.
+        """
         catalog = await self.repo.get_service_catalog_map()
         ai_catalog = await self.repo.get_ai_feature_map()
         prices = await self.repo.get_prices_for_country(country)
@@ -230,25 +276,41 @@ class CheckoutService:
         ai_id_to_key = {str(v["id"]): k for k, v in ai_catalog.items()}
         service_prices: dict[str, Any] = {}
         ai_prices: dict[str, Any] = {}
+        vat_rate: Any = None
+        factor = Decimal(str(multiplier))
         for row in prices:
             amount = row["feature_unit_price"]
             if row.get("service_catalog_id"):
                 key = service_id_to_key.get(str(row["service_catalog_id"]))
-                if key:
-                    service_prices[key] = amount
+                if not key:
+                    continue
+                if key == VAT_KEY:
+                    vat_rate = amount  # percent; do not scale
+                    continue
+                service_prices[key] = round_charge(
+                    Decimal(str(amount)) * factor
+                )
             if row.get("ai_feature_id"):
                 key = ai_id_to_key.get(str(row["ai_feature_id"]))
                 if key:
-                    ai_prices[key] = amount
-        return service_prices, ai_prices, currency
+                    ai_prices[key] = round_charge(
+                        Decimal(str(amount)) * factor
+                    )
+        if vat_rate is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No VAT rate for country {country}",
+            )
+        return service_prices, ai_prices, currency, vat_rate
 
     async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
         """
         Produce a checkout quote for an estate subscription purchase.
 
-        Resolves country pricing, validates entitlements against the catalog,
-        includes administrative_fee when the entitlements map sets it True,
-        and returns a float-serialized breakdown.
+        Resolves country pricing, scales unit prices by estate type (VAT
+        excluded), validates entitlements against the catalog, includes
+        administrative_fee when the entitlements map sets it True, then
+        applies country VAT to the finished total.
 
         Args:
             request: Quote request dict (estate_id, covered_users,
@@ -262,16 +324,15 @@ class CheckoutService:
             HTTPException: 400/404 on validation or missing pricing data.
         """
         estate_id = request["estate_id"]
-        estate = await self.repo.get_estate(estate_id)
-        country = (estate.get("country") or "").upper()
-        if not country:
-            raise HTTPException(
-                status_code=400,
-                detail="Estate has no country set; cannot price",
-            )
+        (
+            country,
+            service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+        ) = await self._pricing_context(estate_id)
 
         catalog = await self.repo.get_service_catalog_map()
-        service_prices, ai_prices, currency = await self._price_maps(country)
 
         tier_slug = request.get("tier_slug")
         entitlements = request.get("entitlements")
@@ -298,14 +359,18 @@ class CheckoutService:
         else:
             entitlements = entitlements or {}
 
-        # Validate custom/tier entitlements against catalog
-        limit_map = {k: v["limit_type"] for k, v in catalog.items()}
+        # VAT is a rate, not a purchasable entitlement.
+        limit_map = {
+            k: v["limit_type"] for k, v in catalog.items() if k != VAT_KEY
+        }
         validate_entitlements(entitlements, limit_map)
 
         # Included product keys: enabled booleans / positive limits.
         # administrative_fee is in entitlements (True/False), not tier slug.
         included_keys: list[str] = []
         for key, value in entitlements.items():
+            if key == VAT_KEY:
+                continue
             if isinstance(value, bool) and value:
                 included_keys.append(key)
             elif isinstance(value, int) and value > 0:
@@ -325,6 +390,7 @@ class CheckoutService:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+        vat = apply_vat(breakdown["client_total"], vat_rate)
         return {
             "estate_id": estate_id,
             "tier_slug": tier_slug,
@@ -333,7 +399,10 @@ class CheckoutService:
             "price_per_seat": float(breakdown["price_per_seat"]),
             "ai_price_per_month": float(breakdown["ai_price_per_month"]),
             "monthly_subtotal": float(breakdown["monthly_subtotal"]),
-            "client_total": float(breakdown["client_total"]),
+            "subtotal": float(vat["subtotal"]),
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": float(vat["vat_amount"]),
+            "client_total": float(vat["client_total"]),
             "administrative_fee": float(breakdown["administrative_fee"]),
             "sum_of_included_features": float(
                 breakdown["sum_of_included_features"]
@@ -341,6 +410,13 @@ class CheckoutService:
             "line_items": [
                 {**li, "unit_price": float(li["unit_price"])}
                 for li in breakdown["line_items"]
+            ]
+            + [
+                {
+                    "key": VAT_KEY,
+                    "kind": "vat",
+                    "unit_price": float(vat["vat_amount"]),
+                }
             ],
         }
 
@@ -349,6 +425,7 @@ class CheckoutService:
         Quote a mid-period seat add (AI excluded from proration).
 
         Uses the active subscription period and current tier seat price.
+        Estate-type multiplier applies to unit prices; VAT is added last.
         """
         estate_id = request["estate_id"]
         seats_added = int(request["seats_added"])
@@ -377,13 +454,13 @@ class CheckoutService:
             str(period_end_raw).replace("Z", "+00:00")
         )
 
-        estate = await self.repo.get_estate(estate_id)
-        country = (estate.get("country") or "").upper()
-        if not country:
-            raise HTTPException(
-                status_code=400,
-                detail="Estate has no country set; cannot price",
-            )
+        (
+            country,
+            service_prices,
+            _ai_prices,
+            currency,
+            vat_rate,
+        ) = await self._pricing_context(estate_id)
 
         tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
         if not tier:
@@ -398,9 +475,10 @@ class CheckoutService:
         else:
             entitlements = dict(tier.get("entitlements") or {})
 
-        service_prices, _ai_prices, currency = await self._price_maps(country)
         included_keys: list[str] = []
         for key, value in entitlements.items():
+            if key == VAT_KEY:
+                continue
             if isinstance(value, bool) and value:
                 included_keys.append(key)
             elif isinstance(value, int) and value > 0:
@@ -433,6 +511,7 @@ class CheckoutService:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+        vat = apply_vat(prorated["prorated_charge"], vat_rate)
         return {
             "estate_id": estate_id,
             "subscription_id": str(subscription["id"]),
@@ -448,7 +527,10 @@ class CheckoutService:
             "period_days": prorated["period_days"],
             "remaining_days": prorated["remaining_days"],
             "daily_seat_rate": float(prorated["daily_seat_rate"]),
-            "prorated_charge": float(prorated["prorated_charge"]),
+            "subtotal": float(vat["subtotal"]),
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": float(vat["vat_amount"]),
+            "prorated_charge": float(vat["client_total"]),
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
         }
@@ -456,7 +538,11 @@ class CheckoutService:
     async def quote_ai_features(
         self, request: dict[str, Any]
     ) -> dict[str, Any]:
-        """Quote standalone AI feature flats (not × seats)."""
+        """
+        Quote standalone AI feature flats (not × seats).
+
+        Estate-type multiplier applies to unit prices; VAT is added last.
+        """
         estate_id = request["estate_id"]
         feature_keys = list(request.get("ai_feature_keys") or [])
         if not feature_keys:
@@ -469,14 +555,13 @@ class CheckoutService:
                 status_code=400, detail="period_months must be >= 1"
             )
 
-        estate = await self.repo.get_estate(estate_id)
-        country = (estate.get("country") or "").upper()
-        if not country:
-            raise HTTPException(
-                status_code=400,
-                detail="Estate has no country set; cannot price",
-            )
-        _service_prices, ai_prices, currency = await self._price_maps(country)
+        (
+            country,
+            _service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+        ) = await self._pricing_context(estate_id)
         try:
             ai = compute_ai_monthly(ai_prices, feature_keys)
         except ValueError as e:
@@ -484,6 +569,7 @@ class CheckoutService:
 
         monthly = float(round_charge(ai["ai_price_per_month"]))
         total = round_charge(ai["ai_price_per_month"] * period_months)
+        vat = apply_vat(total, vat_rate)
         return {
             "estate_id": estate_id,
             "country_code": country,
@@ -491,10 +577,20 @@ class CheckoutService:
             "ai_feature_keys": feature_keys,
             "period_months": period_months,
             "ai_price_per_month": monthly,
-            "client_total": float(total),
+            "subtotal": float(vat["subtotal"]),
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": float(vat["vat_amount"]),
+            "client_total": float(vat["client_total"]),
             "line_items": [
                 {**li, "unit_price": float(li["unit_price"])}
                 for li in ai["line_items"]
+            ]
+            + [
+                {
+                    "key": VAT_KEY,
+                    "kind": "vat",
+                    "unit_price": float(vat["vat_amount"]),
+                }
             ],
         }
 

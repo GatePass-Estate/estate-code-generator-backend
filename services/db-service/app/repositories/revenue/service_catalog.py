@@ -192,10 +192,10 @@ class ServiceCatalogRepository:
             raise DatabaseError(message) from e
 
     async def list(self, page: int = 1, limit: int = 20) -> ListResponse:
+        # vat is a rate row, not a user-facing catalog feature.
         query = select(TableModel).where(
-            (
-                TableModel.is_deleted == False  # noqa E712
-            )
+            TableModel.is_deleted == False,  # noqa E712
+            TableModel.service_key != "vat",
         )
         order_by = (TableModel.created_at.desc(),)
         try:
@@ -236,6 +236,10 @@ class ServiceCatalogRepository:
                     )
                 else:
                     query = query.where(column == field_value)
+
+        # Hide vat from FE listings unless this search asked for it by key.
+        if request.service_key != "vat":
+            query = query.where(TableModel.service_key != "vat")
 
         order_by = (TableModel.created_at.desc(),)
         try:

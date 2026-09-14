@@ -50,7 +50,13 @@ class Estates(BaseModelDB):
         UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
     )
     estate_type = Column(
-        Enum(EstateType, name="estatetype", schema="core", create_type=False),
+        Enum(
+            EstateType,
+            name="estatetype",
+            schema="core",
+            create_type=False,
+            values_callable=lambda obj: [m.value for m in obj],
+        ),
         nullable=True,
     )
     is_active = Column(

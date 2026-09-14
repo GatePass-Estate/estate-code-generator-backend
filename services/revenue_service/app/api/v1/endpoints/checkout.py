@@ -11,6 +11,7 @@ from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.checkout import (
     AiCheckoutRequest,
+    AiQuoteResponse,
     CheckoutInitializeRequest,
     CheckoutInitializeResponse,
     CheckoutStatusResponse,
@@ -38,7 +39,11 @@ async def quote(
     current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
-    """Compute a pricing quote for a subscription / custom purchase."""
+    """Compute a pricing quote for a subscription / custom purchase.
+
+    Unit prices are scaled by the caller's estate type, then country VAT
+    is applied to the finished total.
+    """
     require_admin(current_user["role"])
     require_estate_membership(current_user, request.estate_id)
     try:
@@ -75,7 +80,10 @@ async def prorate_seats(
     current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
-    """Quote mid-period seat add (remaining days × daily rate; AI excluded)."""
+    """Quote mid-period seat add (remaining days × daily rate; AI excluded).
+
+    Estate-type multiplier applies to unit prices; VAT is added last.
+    """
     require_admin(current_user["role"])
     require_estate_membership(current_user, request.estate_id)
     try:
@@ -93,13 +101,16 @@ async def prorate_seats(
         ) from e
 
 
-@router.post("/ai/quote")
+@router.post("/ai/quote", response_model=AiQuoteResponse)
 async def quote_ai(
     request: AiCheckoutRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: CheckoutService = Depends(get_service),
 ):
-    """Quote standalone AI feature purchase (flat monthly × months)."""
+    """Quote standalone AI feature purchase (flat monthly × months).
+
+    Estate-type multiplier applies to unit prices; VAT is added last.
+    """
     require_admin(current_user["role"])
     require_estate_membership(current_user, request.estate_id)
     try:

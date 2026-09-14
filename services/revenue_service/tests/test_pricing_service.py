@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from app.services.pricing_service import (
+    apply_vat,
     compute_ai_monthly,
     compute_client_total,
     compute_price_per_seat,
@@ -120,3 +121,18 @@ def test_invalid_period():
         compute_client_total(
             price_per_seat=1, seats=1, ai_price_per_month=0, period_months=0
         )
+
+
+def test_apply_vat_percent_after_subtotal():
+    vat = apply_vat(4000, "7.5")
+    assert vat["subtotal"] == Decimal("4000.00")
+    assert vat["vat_rate"] == Decimal("7.5")
+    assert vat["vat_amount"] == Decimal("300.00")
+    assert vat["client_total"] == Decimal("4300.00")
+
+
+def test_apply_vat_rounds_amount_up():
+    vat = apply_vat("33.34", "7.5")
+    # 33.34 * 7.5 / 100 = 2.5005 → 2.51
+    assert vat["vat_amount"] == Decimal("2.51")
+    assert vat["client_total"] == Decimal("35.85")
