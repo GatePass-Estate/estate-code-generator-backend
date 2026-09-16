@@ -274,6 +274,48 @@ class DbRevenueRepository:
         url = f"{self.estate_ai_feature}/{grant_id}"
         await self.client.async_delete(url)
 
+    async def search_subscriptions(
+        self, *, statuses: list[str], period_end_before: str
+    ) -> list[dict]:
+        """Fetch subscriptions matching any of the given statuses
+        with period_end before cutoff."""
+        results = []
+        for status in statuses:
+            items = await self._search(
+                self.estate_subscription,
+                {
+                    "status": status,
+                    "period_end_before": period_end_before,
+                    "limit": 500,
+                },
+            )
+            results.extend(items)
+        return results
+
+    async def search_ai_grants(
+        self, *, status: str, is_free: bool, expires_at_before: str
+    ) -> list[dict]:
+        """Fetch AI grants with status, is_free flag,
+        and expires_at before cutoff."""
+        return await self._search(
+            self.estate_ai_feature,
+            {
+                "status": status,
+                "is_free": is_free,
+                "expires_at_before": expires_at_before,
+                "limit": 500,
+            },
+        )
+
+    async def get_estate_active_user_count(self, estate_id: str) -> int:
+        """Return count of active (non-deleted) users for an estate."""
+        url = (
+            f"{self.base}api/v1/userprofile/users/search"
+            f"?estate_id={estate_id}&limit=1&page=1"
+        )
+        response = await self.client.async_get(url)
+        return (response or {}).get("total", 0)
+
     async def list_estate_subscriptions(self, estate_id: str) -> list[dict]:
         """List subscriptions for an estate (any status)."""
         return await self._search(

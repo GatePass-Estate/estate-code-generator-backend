@@ -185,6 +185,9 @@ class SearchRequest(BaseSearchRequest):
     paystack_customer_code: Optional[str] = Field(
         None, description="Paystack customer code"
     )
+    period_end_before: Optional[datetime] = Field(
+        None, description="Filter: period_end < this value"
+    )
 
 
 class ListResponse(BaseListResponse):

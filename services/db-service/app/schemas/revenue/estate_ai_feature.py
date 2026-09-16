@@ -171,6 +171,12 @@ class SearchRequest(BaseSearchRequest):
     is_installed: Optional[bool] = Field(None, description="Installed flag")
     status: Optional[AiGrantStatus] = Field(None, description="Grant status")
     source: str | None = Field(None, description="tier_bundle|standalone")
+    is_free: Optional[bool] = Field(
+        None, description="Filter by free grant flag"
+    )
+    expires_at_before: Optional[datetime] = Field(
+        None, description="Filter: expires_at < this value"
+    )
 
 
 class ListResponse(BaseListResponse):
