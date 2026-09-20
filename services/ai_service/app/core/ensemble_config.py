@@ -29,13 +29,13 @@ SCOPE_BASE_WEIGHTS_BY_ANOMALY_TYPE: dict[
         AnalysisScope.VISITOR: 0.30,
         AnalysisScope.RESIDENT: 0.15,
         AnalysisScope.SECURITY: 0.15,
-        AnalysisScope.ESTATE_WIDE: 0.20,
+        AnalysisScope.ESTATE_WIDE: 0.10,
     },
     AnomalyType.RESIDENT: {
         AnalysisScope.TEMPORAL: 0.20,
         AnalysisScope.RESIDENT: 0.35,
         AnalysisScope.SECURITY: 0.15,
-        AnalysisScope.ESTATE_WIDE: 0.30,
+        AnalysisScope.ESTATE_WIDE: 0.12,
     },
 }
 
@@ -57,14 +57,12 @@ _SCOPE_FEATURE_BASE_WEIGHTS: dict[AnalysisScope, dict[str, float]] = {
     },
     AnalysisScope.VISITOR: {
         feat.RELATIONSHIP_TRANSITION: 1.4,
-        feat.VISITOR_TIME_SINCE_LAST_VISIT: 0.6,
         feat.VISIT_INTERARRIVAL_TIME: 0.6,
-        feat.VISITOR_WEEKLY_FREQUENCY: 1.0,
+        feat.VISITOR_WEEKLY_FREQUENCY: 0.6,
     },
     AnalysisScope.RESIDENT: {
-        feat.RESIDENT_TIME_SINCE_LAST_VISIT: 0.6,
         feat.VISIT_INTERARRIVAL_TIME: 0.6,
-        feat.RESIDENT_VISIT_FREQUENCY: 1.0,
+        feat.RESIDENT_VISIT_FREQUENCY: 0.6,
     },
     AnalysisScope.SECURITY: {
         feat.GUARD_NIGHT_VALIDATION_FREQUENCY: 1.6,
@@ -72,9 +70,8 @@ _SCOPE_FEATURE_BASE_WEIGHTS: dict[AnalysisScope, dict[str, float]] = {
     },
     AnalysisScope.ESTATE_WIDE: {
         feat.GUARD_NIGHT_VALIDATION_SHARE: 1.5,
-        feat.RESIDENT_TIME_SINCE_LAST_VISIT: 0.6,
-        feat.VISITOR_WEEKLY_FREQUENCY: 1.0,
-        feat.RESIDENT_VISIT_FREQUENCY: 1.0,
+        feat.VISITOR_WEEKLY_FREQUENCY: 0.6,
+        feat.RESIDENT_VISIT_FREQUENCY: 0.6,
         feat.VISIT_INTERARRIVAL_TIME: 0.6,
         feat.GUARD_NIGHT_VALIDATION_FREQUENCY: 1.4,
     },

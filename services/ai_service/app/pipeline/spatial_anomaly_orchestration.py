@@ -64,7 +64,7 @@ from app.pipeline.transparency_manager import explain
 def _trace_log_slices(log_slices: Any) -> None:
     trace(
         "log-history",
-        "wrangled slices loaded from db-service",
+        "per-scope wrangled slices loaded from db-service",
         source=log_slices.source,
         focal_log_id=log_slices.focal_record.get("id"),
         merged_full_rows=len(log_slices.merged_full),
@@ -147,7 +147,8 @@ class SpatialAnomalyOrchestrator:
                 pipeline, scope, scope_rows, ctx
             )
             focal_features_by_scope[scope.value] = feats
-            prev_log_ids = previous_anchor_log_ids(scope_rows, focal_record)
+            history_rows = log_slices.rows_for_history_lookup(scope)
+            prev_log_ids = previous_anchor_log_ids(history_rows, focal_record)
             stored_rows = await batch_lookup_engineered_features(
                 client,
                 settings,

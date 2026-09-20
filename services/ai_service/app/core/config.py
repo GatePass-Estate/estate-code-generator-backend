@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     SPATIAL_MIN_MATCHED_TO_SCORE: int = 5
     #: Floor on history-confidence when matched >= MIN (0 = fully exclude thin scopes).
     SPATIAL_HISTORY_CONFIDENCE_FLOOR: float = 0.0
+    #: Max prior log rows fetched per analysis scope (scope-specific search filters).
+    SPATIAL_SCOPE_HISTORY_LIMIT: int = 40
     #: Print payload / feature-engineering / history trace to stdout.
     SPATIAL_ANOMALY_PAYLOAD_DEBUG: bool = (
         os.getenv("SPATIAL_ANOMALY_PAYLOAD_DEBUG", "").lower()

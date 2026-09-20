@@ -417,10 +417,10 @@ def test_case_spider_plot_skips_features_missing_on_instance():
 
     ranked = [
         ("visitor_weekly_frequency", 0.9, 1.0),
-        ("visitor_total_visits", 0.8, 2.0),
+        ("relationship_transition", 0.8, 2.0),
         ("visit_interarrival_time", 0.7, 0.1),
         ("visit_hour_bucket", 0.6, 2.0),
-        ("time_since_last_visit", 0.5, 0.1),
+        ("night_visit_flag", 0.5, 0.1),
         ("resident_visit_frequency", 0.4, 1.0),
         ("hour_of_day", 0.3, 8.0),
     ]
@@ -446,7 +446,7 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     instance_feats = [
         _fc(name, value + 1.0, weight)
         for name, weight, value in ranked
-        if name != "visitor_total_visits"
+        if name != "relationship_transition"
     ]
     instance = {
         "result": {
@@ -466,7 +466,7 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     )
     names = [p.feature_name for p in overview.spider_plot]
     assert len(names) == SPIDER_TOP_N
-    assert "visitor_total_visits" not in names
+    assert "relationship_transition" not in names
     assert "hour_of_day" in names
     assert all(p.instance_value is not None for p in overview.spider_plot)
 

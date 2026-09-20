@@ -21,7 +21,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from app.core.feature_config import feature_label, scope_label
+from app.core.feature_config import (
+    feature_label,
+    is_active_feature,
+    scope_label,
+)
 from app.core.spatial_anomaly_trace import trace, trace_json
 from app.core.scope_config import scopes_for_anomaly_type
 from app.domain.anomaly_types import AnomalyType
@@ -269,6 +273,8 @@ def build_anomaly_overview(
                     continue
                 name = fc.get("feature_name")
                 if not isinstance(name, str) or not name:
+                    continue
+                if not is_active_feature(name):
                     continue
                 value = _to_float(fc.get("value"))
                 weight = _to_float(fc.get("weight"))
@@ -532,6 +538,8 @@ def _instance_maps(
                 continue
             name = fc.get("feature_name")
             if not isinstance(name, str) or not name:
+                continue
+            if not is_active_feature(name):
                 continue
             value = _to_float(fc.get("value"))
             if value is None:

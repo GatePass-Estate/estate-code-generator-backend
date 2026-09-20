@@ -18,8 +18,14 @@ def test_active_features_exclude_retired_cumulative_keys():
     visitor_keys = set(active_features_for_scope(AnalysisScope.VISITOR))
     assert feat.VISITOR_TOTAL_VISITS not in visitor_keys
     assert feat.HOUR_OF_DAY not in visitor_keys
-    assert feat.VISITOR_TIME_SINCE_LAST_VISIT in visitor_keys
+    assert feat.VISITOR_TIME_SINCE_LAST_VISIT not in visitor_keys
     assert feat.RELATIONSHIP_FREQUENCY not in visitor_keys
+
+    resident_keys = set(active_features_for_scope(AnalysisScope.RESIDENT))
+    assert feat.RESIDENT_TIME_SINCE_LAST_VISIT not in resident_keys
+
+    estate_keys = set(active_features_for_scope(AnalysisScope.ESTATE_WIDE))
+    assert feat.RESIDENT_TIME_SINCE_LAST_VISIT not in estate_keys
 
     security_keys = set(active_features_for_scope(AnalysisScope.SECURITY))
     assert feat.GUARD_TOTAL_VALIDATIONS not in security_keys

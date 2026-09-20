@@ -20,6 +20,8 @@ INACTIVE_FEATURES: frozenset[str] = frozenset(
         feat.GUARD_NIGHT_VALIDATIONS,
         feat.TIME_SINCE_LAST_VISIT,
         feat.RELATIONSHIP_FREQUENCY,
+        feat.RESIDENT_TIME_SINCE_LAST_VISIT,
+        feat.VISITOR_TIME_SINCE_LAST_VISIT,
     }
 )
 
@@ -35,13 +37,11 @@ _TEMPORAL_FEATURES: tuple[str, ...] = (
 ACTIVE_FEATURES: dict[AnalysisScope, tuple[str, ...]] = {
     AnalysisScope.TEMPORAL: _TEMPORAL_FEATURES,
     AnalysisScope.VISITOR: (
-        feat.VISITOR_TIME_SINCE_LAST_VISIT,
         feat.VISIT_INTERARRIVAL_TIME,
         feat.VISITOR_WEEKLY_FREQUENCY,
         feat.RELATIONSHIP_TRANSITION,
     ),
     AnalysisScope.RESIDENT: (
-        feat.RESIDENT_TIME_SINCE_LAST_VISIT,
         feat.VISIT_INTERARRIVAL_TIME,
         feat.RESIDENT_VISIT_FREQUENCY,
     ),
@@ -51,7 +51,6 @@ ACTIVE_FEATURES: dict[AnalysisScope, tuple[str, ...]] = {
     ),
     AnalysisScope.ESTATE_WIDE: (
         feat.VISIT_INTERARRIVAL_TIME,
-        feat.RESIDENT_TIME_SINCE_LAST_VISIT,
         feat.RESIDENT_VISIT_FREQUENCY,
         feat.VISITOR_WEEKLY_FREQUENCY,
         feat.GUARD_NIGHT_VALIDATION_FREQUENCY,

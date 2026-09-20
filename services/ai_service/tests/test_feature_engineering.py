@@ -57,7 +57,8 @@ async def test_visitor_scope_focal_not_mean_of_all_rows():
         records,
         ctx,
     )
-    assert feats["visitor_time_since_last_visit"] == pytest.approx(61.0)
+    assert "visitor_time_since_last_visit" not in feats
+    assert feats["visit_interarrival_time"] == pytest.approx(61.0)
     assert "hour_of_day" not in feats
     assert feats["relationship_transition"] == 0.0
     assert "visitor_total_visits" not in feats
@@ -97,7 +98,8 @@ async def test_resident_scope_uses_focal_hour():
         records,
         ctx,
     )
-    assert feats["resident_time_since_last_visit"] == pytest.approx(62.0)
+    assert "resident_time_since_last_visit" not in feats
+    assert feats["visit_interarrival_time"] == pytest.approx(62.0)
     assert "hour_of_day" not in feats
     assert feats["resident_visit_frequency"] > 0
     assert "visitor_total_visits" not in feats
