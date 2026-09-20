@@ -21,10 +21,13 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from app.core.feature_config import feature_label
 from app.core.scope_config import scopes_for_anomaly_type
 from app.domain.anomaly_types import AnomalyType
 from app.domain.features import (
     DAY_OF_WEEK,
+    GUARD_NIGHT_VALIDATION_FREQUENCY,
+    GUARD_NIGHT_VALIDATION_SHARE,
     GUARD_NIGHT_VALIDATIONS,
     GUARD_TOTAL_VALIDATIONS,
     HOUR_OF_DAY,
@@ -32,10 +35,12 @@ from app.domain.features import (
     NIGHT_VISIT_FLAG,
     RELATIONSHIP_FREQUENCY,
     RELATIONSHIP_TRANSITION,
+    RESIDENT_TIME_SINCE_LAST_VISIT,
     RESIDENT_VISIT_FREQUENCY,
     TIME_SINCE_LAST_VISIT,
     VISIT_HOUR_BUCKET,
     VISIT_INTERARRIVAL_TIME,
+    VISITOR_TIME_SINCE_LAST_VISIT,
     VISITOR_TOTAL_VISITS,
     VISITOR_WEEKLY_FREQUENCY,
 )
@@ -60,6 +65,9 @@ from app.models.spatial_anomaly_resultpage import (
 SPIDER_TOP_N = 6
 
 SCOPE_DESCRIPTIONS = {
+    AnalysisScope.TEMPORAL.value: (
+        "Focal visit clock and calendar features (hour, weekday, night flag)."
+    ),
     AnalysisScope.VISITOR.value: (
         "Visitor-centred timing, frequency, and relationship patterns."
     ),
@@ -80,6 +88,12 @@ FEATURE_DESCRIPTIONS = {
     IS_WEEKEND: "Whether the visit fell on a weekend (1) or weekday (0).",
     VISIT_HOUR_BUCKET: "Coarse bucket of the visit hour.",
     TIME_SINCE_LAST_VISIT: "Elapsed time since this actor's previous visit.",
+    VISITOR_TIME_SINCE_LAST_VISIT: (
+        "Hours since this visitor's previous visit in the window."
+    ),
+    RESIDENT_TIME_SINCE_LAST_VISIT: (
+        "Hours since the resident was last visited by anyone in the window."
+    ),
     VISIT_INTERARRIVAL_TIME: "Gap between consecutive visits in the cohort.",
     NIGHT_VISIT_FLAG: "Whether the visit occurred during night hours.",
     VISITOR_TOTAL_VISITS: "Lifetime visit count for this visitor.",
@@ -87,6 +101,12 @@ FEATURE_DESCRIPTIONS = {
     RESIDENT_VISIT_FREQUENCY: "Average visit rate for this resident.",
     GUARD_TOTAL_VALIDATIONS: "Total validations performed by the guard.",
     GUARD_NIGHT_VALIDATIONS: "Night-hour validations performed by the guard.",
+    GUARD_NIGHT_VALIDATION_FREQUENCY: (
+        "Night validations per week for the guard in the window."
+    ),
+    GUARD_NIGHT_VALIDATION_SHARE: (
+        "Fraction of the guard's validations that occurred at night."
+    ),
     RELATIONSHIP_FREQUENCY: (
         "How often this resident-visitor relation appears."
     ),
@@ -111,8 +131,8 @@ def _mean(values: list[float]) -> float | None:
 
 
 def _describe_feature(name: str) -> str:
-    """Human-readable copy for a feature key; falls back to the name."""
-    return FEATURE_DESCRIPTIONS.get(name, name.replace("_", " ").capitalize())
+    """Human-readable copy for a feature key; falls back to config label."""
+    return FEATURE_DESCRIPTIONS.get(name, feature_label(name))
 
 
 def _describe_scope(name: str) -> str:
@@ -201,7 +221,7 @@ def build_anomaly_overview(
     ``top_contributing_factors`` are the same top ``spider_limit``
     points (default ``SPIDER_TOP_N`` / 6). Pass ``spider_limit=None``
     to keep every ranked feature. ``contributing_factors`` always lists
-    all four analysis scopes in canonical order. Sub-factors are the
+    all analysis scopes in canonical order. Sub-factors are the
     union of sample features and period-max keys for that scope.
 
     Scale maps are period maxima from *all* predictions, not the sample:
@@ -294,8 +314,8 @@ def build_anomaly_overview(
         spider_points if spider_limit is None else spider_points[:spider_limit]
     )
 
-    # 3. Average per analysis scope. First-level always includes all four
-    #    known scopes (empty sample still yields four sections). Extra
+    # 3. Average per analysis scope. First-level always includes all
+    #    known scopes (empty sample still yields every section). Extra
     #    unknown scopes from the sample append alphabetically.
     factors: list[ContributingFactor] = []
     seen: set[str] = set()
@@ -504,13 +524,13 @@ def _case_factor_scopes(
     Scopes to emit for this case.
 
     Same resolver as spatial analyze: ``scopes_for_anomaly_type``.
-    Unknown type falls back to all four scopes (first-level set).
+    Unknown type falls back to all scopes (first-level set).
     """
     anomaly_type = _anomaly_type_of(instance, prediction_type)
     if anomaly_type is None:
-        # Unknown type: same four sections as first-level overview.
+        # Unknown type: same sections as first-level overview.
         return list(_SCOPE_ORDER)
-    # Visitor → all four; resident → drop visitor_specific.
+    # Visitor → all scopes; resident → drop visitor_specific.
     return [s.value for s in scopes_for_anomaly_type(anomaly_type)]
 
 

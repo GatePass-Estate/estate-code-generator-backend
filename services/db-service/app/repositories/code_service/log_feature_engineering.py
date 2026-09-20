@@ -37,6 +37,7 @@ class LogFeatureEngineeringRepository:
             resident_log_id=row.resident_log_id,
             anomaly_type=row.anomaly_type,
             log_kind=row.log_kind,
+            features_temporal=row.features_temporal,
             features_visitor_specific=row.features_visitor_specific,
             features_resident_specific=row.features_resident_specific,
             features_security_specific=row.features_security_specific,
@@ -103,6 +104,7 @@ class LogFeatureEngineeringRepository:
                     resident_log_id=request.resident_log_id,
                     anomaly_type=request.anomaly_type,
                     log_kind=request.log_kind,
+                    features_temporal=request.features_temporal,
                     features_visitor_specific=(
                         request.features_visitor_specific
                     ),
@@ -123,6 +125,8 @@ class LogFeatureEngineeringRepository:
             else:
                 row.anomaly_type = request.anomaly_type
                 row.log_kind = request.log_kind
+                if request.features_temporal is not None:
+                    row.features_temporal = request.features_temporal
                 if request.features_visitor_specific is not None:
                     row.features_visitor_specific = (
                         request.features_visitor_specific

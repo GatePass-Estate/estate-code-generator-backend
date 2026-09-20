@@ -2,14 +2,15 @@
 """
 Backfill ``core.logfeatureengineering`` from visitor or resident log rows.
 
-1. Lists all rows from ``GET .../codeservice/{visitorlog|residentlog}``.
-2. Sorts by event time descending and drops the single most recent row.
-3. For each remaining id, loads history, engineers features, and upserts.
+Lists log rows from db-service, keeps those whose event time falls within the
+last ``history_days`` (default 30, matching the spatial analysis window),
+engineers **all active scopes** (including ``temporal`` → ``features_temporal``),
+and upserts each row.
 
 Run from ``services/ai_service``::
 
     python scripts/upsert_visitor_log_features.py visitor visitor \\
-        [--is-anomalous] [--estate-id <uuid>] [--page-size 100]
+        [--is-anomalous] [--estate-id <uuid>] [--history-days 30] [--page-size 100]
 
 First positional is log source (visitor or resident), second is anomaly type.
 """
@@ -20,7 +21,7 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -40,8 +41,10 @@ if "DB_SERVICE_URL" not in os.environ:
 import httpx  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
+from app.core.feature_config import active_feature_set_for_scope  # noqa: E402
 from app.domain.anomaly_types import AnomalyType  # noqa: E402
 from app.domain.log_kind import LogKind  # noqa: E402
+from app.domain.scopes import AnalysisScope  # noqa: E402
 from app.integrations.db_service_feature_engineering import (  # noqa: E402
     upsert_focal_engineered_features,
 )
@@ -75,27 +78,64 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return data
 
 
-def _event_time_sort_key(rec: dict[str, Any]) -> tuple[datetime, str]:
-    """Descending sort by event timestamp; tie-break on id string."""
+def _parse_event_time(rec: dict[str, Any]) -> datetime | None:
+    """Parse visit/access/created timestamp to UTC."""
     raw = (
         rec.get("visit_time")
         or rec.get("access_time")
         or rec.get("created_at")
     )
-    ts: datetime
+    if raw is None:
+        return None
     if isinstance(raw, datetime):
-        ts = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    elif isinstance(raw, str):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str):
         v = raw.replace("Z", "+00:00")
         try:
-            parsed = datetime.fromisoformat(v)
+            ts = datetime.fromisoformat(v)
         except ValueError:
-            parsed = datetime.min.replace(tzinfo=timezone.utc)
-        ts = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    else:
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _event_time_sort_key(rec: dict[str, Any]) -> tuple[datetime, str]:
+    """Ascending sort by event timestamp; tie-break on id string."""
+    ts = _parse_event_time(rec)
+    if ts is None:
         ts = datetime.min.replace(tzinfo=timezone.utc)
     rid = rec.get("id")
     return (ts, str(rid) if rid is not None else "")
+
+
+def _filter_rows_in_window(
+    rows: list[dict[str, Any]],
+    *,
+    history_days: int,
+    estate_id: UUID | None,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Keep rows with a parseable event time in ``[now - history_days, now]``.
+
+    When ``estate_id`` is set, also require a matching ``estate_id`` on the row
+    when that field is present.
+    """
+    end = now or datetime.now(timezone.utc)
+    start = end - timedelta(days=history_days)
+    estate_s = str(estate_id) if estate_id is not None else None
+    kept: list[dict[str, Any]] = []
+    for rec in rows:
+        if estate_s is not None:
+            row_estate = rec.get("estate_id")
+            if row_estate is not None and str(row_estate) != estate_s:
+                continue
+        ts = _parse_event_time(rec)
+        if ts is None:
+            continue
+        if start <= ts <= end:
+            kept.append(rec)
+    return kept
 
 
 async def _fetch_all_logs(
@@ -132,6 +172,25 @@ def _as_iso_z(value: object) -> str:
             return value.replace("+00:00", "Z")
         return value
     return str(value)
+
+
+def _validate_scope_features(
+    features_by_scope: dict[str, dict[str, float]],
+    scopes: list[AnalysisScope],
+) -> None:
+    """Ensure engineered keys match the active schema (incl. temporal)."""
+    for scope in scopes:
+        feats = features_by_scope.get(scope.value)
+        if feats is None:
+            raise SystemExit(
+                f"Missing engineered features for scope {scope.value!r}."
+            )
+        expected = active_feature_set_for_scope(scope)
+        if frozenset(feats.keys()) != expected:
+            raise SystemExit(
+                f"Schema mismatch for scope {scope.value!r}: "
+                f"got {sorted(feats.keys())}, expected {sorted(expected)}."
+            )
 
 
 async def _resolve_estate_id(
@@ -219,11 +278,14 @@ async def upsert_one_log(
         RECORDS_PRE_SLICED_CONTEXT_KEY: True,
     }
 
+    resolved = resolve_scopes_for_pipeline(pipeline)
     focal_features_by_scope: dict[str, dict[str, float]] = {}
-    for scope in resolve_scopes_for_pipeline(pipeline):
+    for scope in resolved:
         scope_rows = log_slices.rows_for_analysis_scope(scope)
         feats = await build_feature_vector(pipeline, scope, scope_rows, ctx)
         focal_features_by_scope[scope.value] = feats
+
+    _validate_scope_features(focal_features_by_scope, resolved)
 
     await upsert_focal_engineered_features(
         client,
@@ -240,11 +302,14 @@ async def upsert_one_log(
         },
     )
 
-    keys = list(focal_features_by_scope.keys())
+    scope_summary = ", ".join(
+        f"{name}({len(focal_features_by_scope[name])} keys)"
+        for name in focal_features_by_scope
+    )
     print(
         f"Upserted {resource}_id={anchor_log_id} "
-        f"anomaly_type={anomaly_type.value} scopes={keys} "
-        f"is_anomalous={is_anomalous}"
+        f"anomaly_type={anomaly_type.value} "
+        f"scopes=[{scope_summary}] is_anomalous={is_anomalous}"
     )
 
 
@@ -254,39 +319,47 @@ async def run(
     anomaly_type: AnomalyType,
     is_anomalous: bool,
     estate_id_override: UUID | None,
+    history_days: int,
     page_size: int,
 ) -> None:
     async with httpx.AsyncClient(timeout=120.0) as client:
         rows = await _fetch_all_logs(
             client, log_source=log_source, page_size=page_size
         )
-        if len(rows) < 2:
+        targets = _filter_rows_in_window(
+            rows,
+            history_days=history_days,
+            estate_id=estate_id_override,
+        )
+        if not targets:
             label = (
                 "visitor logs"
                 if log_source == LogKind.VISITOR
                 else "resident logs"
             )
             print(
-                f"Need at least 2 {label} (after list); got {len(rows)}. "
-                "Nothing to upsert."
+                f"No {label} with an event time in the last {history_days} "
+                f"day(s). Listed {len(rows)} row(s) total; nothing to upsert."
             )
             return
 
-        ordered = sorted(rows, key=_event_time_sort_key, reverse=True)
-        skipped = ordered[0]
-        targets = ordered[1:]
-        event_key = (
-            "visit_time" if log_source == LogKind.VISITOR else "access_time"
-        )
-        print(
-            f"Skipping most recent {event_key}: "
-            f"id={skipped.get('id')!r} {event_key}={skipped.get(event_key)!r}"
-        )
+        # Oldest first so later live analyzes see more matching history.
+        targets.sort(key=_event_time_sort_key)
         source_label = (
             "visitor" if log_source == LogKind.VISITOR else "resident"
         )
-        print(f"Upserting {len(targets)} {source_label} log(s).")
+        print(
+            f"Upserting {len(targets)} {source_label} log(s) from the last "
+            f"{history_days} day(s)"
+            + (
+                f" for estate_id={estate_id_override}"
+                if estate_id_override
+                else ""
+            )
+            + "."
+        )
 
+        ok = 0
         for rec in targets:
             rid = rec.get("id")
             if rid is None:
@@ -297,20 +370,30 @@ async def run(
             except ValueError:
                 print(f"Skipping non-UUID id {rid!r}")
                 continue
-            await upsert_one_log(
-                client,
-                log_source=log_source,
-                anchor_log_id=anchor_id,
-                anomaly_type=anomaly_type,
-                is_anomalous=is_anomalous,
-                estate_id_override=estate_id_override,
-            )
+            try:
+                await upsert_one_log(
+                    client,
+                    log_source=log_source,
+                    anchor_log_id=anchor_id,
+                    anomaly_type=anomaly_type,
+                    is_anomalous=is_anomalous,
+                    estate_id_override=estate_id_override,
+                )
+            except SystemExit:
+                raise
+            except Exception as exc:  # noqa: BLE001 - batch backfill continues
+                print(f"Failed log_id={anchor_id}: {exc}")
+                continue
+            ok += 1
+
+        print(f"Done. Upserted {ok}/{len(targets)} log(s).")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
         description=(
-            "List visitor/resident logs, drop latest event, upsert features."
+            "Backfill logfeatureengineering for logs in the last N days "
+            "(default: spatial history window)."
         ),
     )
     p.add_argument(
@@ -334,14 +417,27 @@ def main() -> None:
         "--estate-id",
         type=UUID,
         default=None,
-        help="Override estate UUID for every row; default: from user profile.",
+        help=(
+            "Only backfill logs for this estate; also used as estate_id on "
+            "each upsert when set."
+        ),
+    )
+    p.add_argument(
+        "--history-days",
+        type=int,
+        default=history_window_days(),
+        metavar="N",
+        help=(
+            "Include logs whose event time falls within the last N days "
+            f"(default: {history_window_days()}, same as spatial analysis)."
+        ),
     )
     p.add_argument(
         "--page-size",
         type=int,
         default=100,
         metavar="N",
-        help="Page size when listing visitor logs (default: 100).",
+        help="Page size when listing log rows (default: 100).",
     )
     args = p.parse_args()
     asyncio.run(
@@ -350,6 +446,7 @@ def main() -> None:
             anomaly_type=AnomalyType(args.anomaly_type),
             is_anomalous=bool(args.is_anomalous),
             estate_id_override=args.estate_id,
+            history_days=max(1, args.history_days),
             page_size=max(1, args.page_size),
         )
     )

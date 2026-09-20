@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.feature_config import active_features_for_scope
 from app.core.scope_config import scopes_for_anomaly_type
 from app.domain import features as feat
 from app.domain.anomaly_types import AnomalyType
@@ -30,6 +31,8 @@ _FEATURE_METHOD_NAMES: dict[str, str] = {
     feat.IS_WEEKEND: "_feature_is_weekend",
     feat.VISIT_HOUR_BUCKET: "_feature_visit_hour_bucket",
     feat.TIME_SINCE_LAST_VISIT: "_feature_time_since_last_visit",
+    feat.VISITOR_TIME_SINCE_LAST_VISIT: "_feature_visitor_time_since_last_visit",
+    feat.RESIDENT_TIME_SINCE_LAST_VISIT: "_feature_resident_time_since_last_visit",
     feat.VISIT_INTERARRIVAL_TIME: "_feature_visit_interarrival_time",
     feat.NIGHT_VISIT_FLAG: "_feature_night_visit_flag",
     feat.VISITOR_TOTAL_VISITS: "_feature_visitor_total_visits",
@@ -37,6 +40,8 @@ _FEATURE_METHOD_NAMES: dict[str, str] = {
     feat.RESIDENT_VISIT_FREQUENCY: "_feature_resident_visit_frequency",
     feat.GUARD_TOTAL_VALIDATIONS: "_feature_guard_total_validations",
     feat.GUARD_NIGHT_VALIDATIONS: "_feature_guard_night_validations",
+    feat.GUARD_NIGHT_VALIDATION_FREQUENCY: "_feature_guard_night_validation_frequency",
+    feat.GUARD_NIGHT_VALIDATION_SHARE: "_feature_guard_night_validation_share",
     feat.RELATIONSHIP_FREQUENCY: "_feature_relationship_frequency",
     feat.RELATIONSHIP_TRANSITION: "_feature_relationship_transition",
 }
@@ -137,49 +142,8 @@ class SpatialAnomalyPipelineBase(ABC):
         return records
 
     def _scope_feature_keys(self, scope: AnalysisScope) -> list[str]:
-        """Design-doc feature keys to compute for the given analysis scope."""
-        if scope == AnalysisScope.VISITOR:
-            return [
-                feat.HOUR_OF_DAY,
-                feat.DAY_OF_WEEK,
-                feat.IS_WEEKEND,
-                feat.VISIT_HOUR_BUCKET,
-                feat.TIME_SINCE_LAST_VISIT,
-                feat.VISIT_INTERARRIVAL_TIME,
-                feat.NIGHT_VISIT_FLAG,
-                feat.VISITOR_TOTAL_VISITS,
-                feat.VISITOR_WEEKLY_FREQUENCY,
-                feat.RELATIONSHIP_FREQUENCY,
-                feat.RELATIONSHIP_TRANSITION,
-            ]
-        if scope == AnalysisScope.RESIDENT:
-            return [
-                feat.HOUR_OF_DAY,
-                feat.DAY_OF_WEEK,
-                feat.IS_WEEKEND,
-                feat.VISIT_HOUR_BUCKET,
-                feat.TIME_SINCE_LAST_VISIT,
-                feat.VISIT_INTERARRIVAL_TIME,
-                feat.NIGHT_VISIT_FLAG,
-                feat.RESIDENT_VISIT_FREQUENCY,
-            ]
-        if scope == AnalysisScope.SECURITY:
-            return [
-                feat.GUARD_TOTAL_VALIDATIONS,
-                feat.GUARD_NIGHT_VALIDATIONS,
-                feat.NIGHT_VISIT_FLAG,
-                feat.HOUR_OF_DAY,
-            ]
-        return [
-            feat.HOUR_OF_DAY,
-            feat.DAY_OF_WEEK,
-            feat.IS_WEEKEND,
-            feat.VISIT_INTERARRIVAL_TIME,
-            feat.RESIDENT_VISIT_FREQUENCY,
-            feat.VISITOR_WEEKLY_FREQUENCY,
-            feat.GUARD_TOTAL_VALIDATIONS,
-            feat.NIGHT_VISIT_FLAG,
-        ]
+        """Active feature keys for ``scope`` (see ``app.core.feature_config``)."""
+        return list(active_features_for_scope(scope))
 
     def _parse_ts(self, value: Any) -> datetime | None:
         """Parse API/JSON timestamps to timezone-aware UTC ``datetime``."""
@@ -355,6 +319,68 @@ class SpatialAnomalyPipelineBase(ABC):
                 continue
             gaps.append((t1 - t0).total_seconds() / 3600.0)
         return gaps
+
+    def _hours_since_previous_event(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> float:
+        """Hours from the chronologically previous row to the focal event."""
+        c = context.get(_FE_SCOPE_ROW_CACHE_KEY)
+        if isinstance(c, dict):
+            focal_ts = c.get("focal_event_ts")
+            prev_ts = c.get("prev_event_ts")
+            if focal_ts is not None and prev_ts is not None:
+                return (focal_ts - prev_ts).total_seconds() / 3600.0
+        ordered = self._ordered_for_features(records, context)
+        idx = self._focal_index_for_features(ordered, context)
+        focal_ts = self._focal_event_ts(context)
+        prev_ts = self._prev_event_ts(ordered, idx)
+        if focal_ts is None or prev_ts is None:
+            return 0.0
+        return (focal_ts - prev_ts).total_seconds() / 3600.0
+
+    def _guard_validation_counts(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> tuple[int, int]:
+        """Return ``(night_validations, total_validations)`` for the focal guard."""
+        sec = context.get("security_id")
+        total = 0
+        night = 0
+        for r in records:
+            if sec is not None and str(r.get("security_id")) != str(sec):
+                continue
+            total += 1
+            ts = self._event_ts_of_record(r)
+            if ts is not None and (ts.hour < 6 or ts.hour >= 22):
+                night += 1
+        return night, total
+
+    def _feature_visitor_time_since_last_visit(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> float:
+        """Hours since this visitor's previous visit in the cohort."""
+        return self._hours_since_previous_event(records, context)
+
+    def _feature_resident_time_since_last_visit(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> float:
+        """Hours since the resident was last visited by anyone in the cohort."""
+        return self._hours_since_previous_event(records, context)
+
+    def _feature_guard_night_validation_frequency(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> float:
+        """Night validations per week for the focal guard in the window."""
+        night, _ = self._guard_validation_counts(records, context)
+        return float(night / self._history_weeks(context))
+
+    def _feature_guard_night_validation_share(
+        self, records: list[dict[str, Any]], context: dict[str, Any]
+    ) -> float:
+        """Share of the guard's validations that occurred at night."""
+        night, total = self._guard_validation_counts(records, context)
+        if total < 1:
+            return 0.0
+        return float(night / total)
 
 
 class VisitorAnomalyPipeline(SpatialAnomalyPipelineBase):

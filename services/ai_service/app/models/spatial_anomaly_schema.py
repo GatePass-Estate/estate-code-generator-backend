@@ -16,6 +16,7 @@ class FeatureContribution(BaseModel):
     """One engineered feature value for transparency payloads."""
 
     feature_name: str
+    label: str
     value: float
     weight: float | None = None
     contribution: float | None = None

@@ -20,9 +20,10 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
+from app.core.feature_config import feature_label
 from app.domain.anomaly_types import AnomalyType
 from app.domain.log_feature_store import (
-    historical_vectors_for_scope,
+    historical_vectors_for_scope_matching_active,
     previous_anchor_log_ids,
 )
 from app.integrations.db_service_feature_engineering import (
@@ -114,13 +115,18 @@ class SpatialAnomalyOrchestrator:
                 anomaly_type=anomaly_type,
                 log_kind=log_kind,
             )
-            historical_vectors = historical_vectors_for_scope(
-                stored_rows, scope
+            historical_vectors, schema_excluded = (
+                historical_vectors_for_scope_matching_active(
+                    stored_rows, scope
+                )
             )
             model_outputs = await run_models(
                 scope=scope,
                 focal_features=feats,
                 historical_features=historical_vectors,
+            )
+            model_outputs["historical_excluded_schema_mismatch_count"] = float(
+                schema_excluded
             )
             for k, v in model_outputs.items():
                 global_model_outputs[f"{scope.value}:{k}"] = v
@@ -135,6 +141,7 @@ class SpatialAnomalyOrchestrator:
                     feature_contributions=[
                         FeatureContribution(
                             feature_name=name,
+                            label=feature_label(name),
                             value=float(val),
                             weight=None,
                             contribution=None,

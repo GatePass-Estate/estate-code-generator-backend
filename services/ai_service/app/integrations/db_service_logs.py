@@ -34,6 +34,7 @@ class LogHistorySlices:
     payload: CodeValidationPayload
     focal_record: dict[str, Any]
     merged_full: list[dict[str, Any]]
+    temporal: list[dict[str, Any]]
     estate_wide: list[dict[str, Any]]
     visitor_specific: list[dict[str, Any]]
     resident_specific: list[dict[str, Any]]
@@ -44,6 +45,7 @@ class LogHistorySlices:
     ) -> list[dict[str, Any]]:
         """Wrangled rows to pass into feature engineering for ``scope``."""
         mapping: dict[AnalysisScope, list[dict[str, Any]]] = {
+            AnalysisScope.TEMPORAL: self.temporal,
             AnalysisScope.ESTATE_WIDE: self.estate_wide,
             AnalysisScope.VISITOR: self.visitor_specific,
             AnalysisScope.RESIDENT: self.resident_specific,
@@ -191,6 +193,7 @@ def _split_visitor_log_cleaned(
         payload=payload,
         focal_record=anchor,
         merged_full=estate,
+        temporal=estate,
         estate_wide=estate,
         visitor_specific=visitor_specific,
         resident_specific=resident_specific,
@@ -229,6 +232,7 @@ def _split_resident_log_cleaned(
         payload=payload,
         focal_record=anchor,
         merged_full=estate,
+        temporal=estate,
         estate_wide=estate,
         visitor_specific=visitor_specific,
         resident_specific=resident_specific,

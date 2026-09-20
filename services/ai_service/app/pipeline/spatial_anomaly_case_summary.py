@@ -91,14 +91,12 @@ def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
             )
             for fc in ranked[:8]:
                 fname = str(fc.get("feature_name"))
+                display = fc.get("label") or _describe_feature(fname)
                 value = _to_float(fc.get("value"))
                 weight = _to_float(fc.get("weight"))
                 v_txt = f"{value:.3f}" if value is not None else "n/a"
                 w_txt = f"{weight:.3f}" if weight is not None else "n/a"
-                lines.append(
-                    f"  - {_describe_feature(fname)}: value {v_txt}, "
-                    f"weight {w_txt}"
-                )
+                lines.append(f"  - {display}: value {v_txt}, weight {w_txt}")
     return InhouseSummary(
         executive_summary=executive,
         detailed_insight="\n".join(lines),
