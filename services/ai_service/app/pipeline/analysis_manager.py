@@ -1,4 +1,13 @@
-"""Ensemble of per-model scores (K-means, DBSCAN, LOF) with history-aware weights."""
+"""
+Ensemble of per-model scores (K-means, DBSCAN, LOF) with history-aware weights.
+
+Two aggregation layers:
+
+* **Within scope** — weighted mean of detector outputs
+  (:func:`score_from_model_outputs`).
+* **Across scopes** — base scope prior × ``history_confidence``
+  (:func:`weighted_ensemble_score`).
+"""
 
 from __future__ import annotations
 
@@ -24,7 +33,12 @@ _DETECTOR_KEYS = ("kmeans", "dbscan", "lof")
 
 @dataclass(frozen=True)
 class ScopeEnsembleContext:
-    """Per-scope inputs for history-confidence weighting."""
+    """
+    Per-scope inputs for history-confidence weighting.
+
+    ``matched_count`` — stored vectors passing schema filter (detector input).
+    ``eligible_count`` — prior log ids in the wrangled cohort (denominator).
+    """
 
     scope: AnalysisScope
     score: float
@@ -53,12 +67,19 @@ def history_confidence(*, matched: int, eligible: int) -> float:
     """
     Map stored reference depth to ``[0, 1]`` for ensemble down-weighting.
 
-    Thin cohorts (new visitors, post-migration cold scopes) receive low
-    confidence so DBSCAN/LOF spikes do not flag benign first visits.
+    Thin cohorts (new visitors, sparse guard history) receive low confidence
+    so DBSCAN/LOF spikes on 0–4 reference vectors do not dominate
+    ``final_score``.
 
-    Uses:
-    - ``coverage`` = matched / eligible prior logs in the 30-day slice
-    - ``fullness`` = matched / min(eligible, EXPECTED_REFERENCE_CAP)
+    Algorithm (Phase 3a finetuning):
+
+    1. **Gate** — if ``matched < SPATIAL_MIN_MATCHED_TO_SCORE`` (default 5),
+       return ``0.0`` (scope excluded from weighted ensemble).
+    2. **Coverage** — ``matched / eligible`` prior log ids in the scope cohort.
+    3. **Fullness** — ``matched / min(eligible, SPATIAL_EXPECTED_REFERENCE_CAP)``
+       so scopes with 40 eligible but only 6 stored refs are penalised.
+    4. **Blend** — ``raw = min(coverage, fullness)``; scale between
+       ``SPATIAL_HISTORY_CONFIDENCE_FLOOR`` and ``1.0``.
     """
     min_matched = int(settings.SPATIAL_MIN_MATCHED_TO_SCORE)
     if matched < min_matched:
@@ -68,7 +89,9 @@ def history_confidence(*, matched: int, eligible: int) -> float:
     elig = max(0, eligible)
     match = max(0, matched)
 
+    # Step 2 — how much of the wrangled cohort has usable feature-store rows.
     coverage = match / max(1, elig)
+    # Step 3 — how close we are to a "mature" reference depth (cap default 10).
     fullness = match / max(1, min(elig, cap) if elig > 0 else cap)
     raw = min(coverage, fullness)
 
@@ -91,8 +114,9 @@ def weighted_ensemble_score(contexts: list[ScopeEnsembleContext]) -> float:
     """
     History-confidence weighted mean of per-scope scores.
 
-    Scopes with ``history_confidence=0`` are excluded. When every scope is
-    excluded, returns ``0.0`` (not anomalous by default).
+    ``effective_weight = scope_base_weight × history_confidence`` (see
+    :class:`ScopeEnsembleContext`). Scopes with zero effective weight are
+    skipped entirely. When every scope is excluded, returns ``0.0``.
     """
     num = 0.0
     den = 0.0
@@ -116,6 +140,10 @@ async def run_models(
     """
     Run K-means, DBSCAN, and LOF detectors on aligned feature matrices.
 
+    Each model refits on ``historical_features`` then scores ``focal_features``.
+    Historical rows are already filtered to the active schema and exclude prior
+    anomalies. Empty history yields detector-specific fallbacks (see model modules).
+
     Returns:
         Dict with ``kmeans``, ``dbscan``, ``lof``, and
         ``historical_reference_count``.
@@ -136,7 +164,11 @@ async def run_models(
 
 def score_from_model_outputs(model_outputs: dict[str, float]) -> float:
     """
-    Collapse detector outputs to one score in ``[0, 1]`` using configured weights.
+    Collapse detector outputs to one scope score in ``[0, 1]``.
+
+    Weighted mean over ``kmeans``, ``dbscan``, ``lof`` using
+    :data:`ensemble_config.DETECTOR_WEIGHTS` (default ~0.35/0.30/0.35).
+    Missing detector keys are skipped.
     """
     num = 0.0
     den = 0.0

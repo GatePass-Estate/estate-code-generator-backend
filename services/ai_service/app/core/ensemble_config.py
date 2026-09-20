@@ -1,9 +1,22 @@
 """
-Spatial anomaly ensemble weights (scope, detector, and feature level).
+Spatial anomaly ensemble weights (detector, scope, and feature transparency).
 
-Tuned defaults for finetuning; override via env-backed :mod:`app.core.config`
-for history-confidence knobs. Scope/detector/feature priors live here so
-harness runs can swap this module or extend with estate-specific tables later.
+Three independent weight layers (finetuning Phase 3–4):
+
+1. **Detector weights** (:data:`DETECTOR_WEIGHTS`) — collapse K-means, DBSCAN,
+   and LOF into one per-scope score inside :func:`analysis_manager.score_from_model_outputs`.
+2. **Scope base weights** (:data:`SCOPE_BASE_WEIGHTS_BY_ANOMALY_TYPE`) —
+   prior importance of each behavioural lens *before* history depth is known.
+   Multiplied at runtime by ``history_confidence`` (see
+   :func:`analysis_manager.weighted_ensemble_score`). Estate-wide is
+   intentionally low (noisy broad cohort).
+3. **Feature priors** (:data:`_SCOPE_FEATURE_BASE_WEIGHTS`) — affect
+   **transparency only** (spider plot / contribution ranking), not detector
+   inputs. Night-activity features boosted; cadence features down-weighted.
+
+Runtime knobs (threshold, min matched refs, confidence floor) live in
+:mod:`app.core.config`. This file holds static priors tuned during the
+finetuning session; swap or extend for estate-specific tables later.
 """
 
 from __future__ import annotations

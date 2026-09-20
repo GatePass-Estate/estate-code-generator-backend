@@ -304,6 +304,19 @@ async def upsert_one_log(
     estate_id_override: UUID | None,
     features_only: bool,
 ) -> None:
+    """
+    Engineer and upsert one log row into ``core.logfeatureengineering``.
+
+    Mirrors live ``/analyze`` feature engineering (per-scope slices + active
+    schema validation) but skips detector scoring unless ``features_only`` is
+    false. Used by 30-day backfill and schema-refresh runs.
+
+    Steps:
+    1. Load anchor row + build :class:`CodeValidationPayload`.
+    2. Fetch per-scope history via :func:`load_log_records_for_analysis`.
+    3. Engineer all pipeline scopes; validate keys against active config.
+    4. Upsert JSON columns (and optional prediction stub) to db-service.
+    """
     resource = "visitorlog" if log_source == LogKind.VISITOR else "residentlog"
     anchor = await _get_json(
         client,
@@ -352,6 +365,7 @@ async def upsert_one_log(
         ),
     )
 
+    # Step 2 — same per-scope fetch path as live analyze.
     log_slices = await load_log_records_for_analysis(client, settings, payload)
     focal_record = log_slices.focal_record
     pipeline = pipeline_for_type(anomaly_type)
@@ -363,6 +377,7 @@ async def upsert_one_log(
         RECORDS_PRE_SLICED_CONTEXT_KEY: True,
     }
 
+    # Step 3 — engineer active features only; validate before persist.
     resolved = resolve_scopes_for_pipeline(pipeline)
     focal_features_by_scope: dict[str, dict[str, float]] = {}
     for scope in resolved:
@@ -420,6 +435,14 @@ async def run(
     features_only: bool,
     include_stored_outside_window: bool,
 ) -> None:
+    """
+    Batch backfill or schema refresh for one estate (optional) and log kind.
+
+    1. List all log rows from db-service (paginated).
+    2. Filter to ``history_days`` window (+ stored-outside-window union when flagged).
+    3. Sort oldest-first so later rows see richer reference history on replay.
+    4. Call :func:`upsert_one_log` for each target (continues on individual failures).
+    """
     async with httpx.AsyncClient(timeout=120.0) as client:
         rows = await _fetch_all_logs(
             client, log_source=log_source, page_size=page_size

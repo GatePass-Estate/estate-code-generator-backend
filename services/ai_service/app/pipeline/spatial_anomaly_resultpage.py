@@ -10,10 +10,14 @@ values across *all* predictions in the window (anomalous included).
 averages the sample into spider-plot points, top contributing factors, and
 nested scope sub-factors.
 
+Inactive features (retired during finetuning — e.g. raw time-since-last-visit)
+are filtered via :func:`is_active_feature` so legacy prediction JSON does not
+surface retired keys in spider plots or contributing-factor lists.
+
 Normal behaviour (``normal_value``) always comes from the non-anomalous
 sample. ``scale`` is the period max for that feature or scope score.
 ``percentage`` is ``normal_value / scale * 100``. Spider plot and top
-factors share the same top six features, ranked by mean weight.
+factors share the same top six **active** features, ranked by mean weight.
 """
 
 from __future__ import annotations

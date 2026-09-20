@@ -1,4 +1,9 @@
-"""Map spatial ``final_score`` to severity bands aligned with the anomaly threshold."""
+"""
+Map spatial ``final_score`` to severity bands aligned with the anomaly threshold.
+
+Severity bands mirror ai-service and db-service so result pages and stored
+predictions stay consistent after finetuning (threshold 0.74, high at 0.80).
+"""
 
 from __future__ import annotations
 

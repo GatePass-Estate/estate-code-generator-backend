@@ -1,4 +1,10 @@
-"""Feature-store column mapping and cohort helpers (no HTTP)."""
+"""
+Feature-store column mapping and historical-vector helpers (no HTTP).
+
+Bridges db-service ``core.logfeatureengineering`` JSON columns to sklearn
+detector inputs. Schema enforcement (exact active-key match) prevents legacy
+rows from polluting reference matrices after finetuning migrations.
+"""
 
 from __future__ import annotations
 
@@ -76,10 +82,11 @@ def filter_vectors_by_active_keys(
     active_keys: frozenset[str],
 ) -> tuple[list[dict[str, float]], int]:
     """
-    Keep only vectors whose keys exactly match ``active_keys``.
+    Keep only vectors whose keys **exactly** match ``active_keys``.
 
-    Legacy rows with inactive or partial schemas are excluded so sklearn
-    preprocessing does not union keys and zero-impute mismatched dimensions.
+    Partial or legacy schemas (e.g. rows still carrying retired
+    ``time_since_last_visit`` keys) are excluded rather than zero-imputed.
+    sklearn preprocessing would otherwise union all keys and dilute distances.
 
     Returns:
         ``(matched_vectors, excluded_count)``

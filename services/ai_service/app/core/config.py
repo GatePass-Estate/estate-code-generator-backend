@@ -6,7 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime config for anomaly, incident, and volume-forecast pipelines."""
+    """
+    Runtime config for anomaly, incident, and volume-forecast pipelines.
+
+    Spatial anomaly finetuning knobs (history confidence, threshold, per-scope
+    fetch cap) are grouped below ``ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD``.
+    Static scope/detector/feature priors live in :mod:`app.core.ensemble_config`.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env.localdocker", extra="ignore"

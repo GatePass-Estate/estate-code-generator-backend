@@ -1,4 +1,10 @@
-"""Per-feature weights and contributions for spatial anomaly transparency."""
+"""
+Per-feature weights and contributions for spatial anomaly transparency.
+
+These values explain *why* a scope scored high in UI spider plots; they do
+**not** feed K-means/DBSCAN/LOF inputs. Priors come from
+:mod:`app.core.ensemble_config`; deviation comes from focal z-scores vs history.
+"""
 
 from __future__ import annotations
 
@@ -27,9 +33,14 @@ def compute_feature_contributions(
     """
     Derive feature ``weight`` and ``contribution`` for transparency payloads.
 
-    ``weight`` combines a configured feature prior with normalized absolute
-    z-score vs historical cohort (uniform when no history). ``contribution`` is
-    ``weight * scope_score``.
+    Algorithm:
+
+    1. For each active focal feature, compute absolute z-score vs stored history
+       (0 when no history or zero variance).
+    2. Normalise z-scores to ``dev_weights`` (uniform split when all zero).
+    3. Multiply each ``dev_weight`` by :func:`feature_base_weight` prior.
+    4. Renormalise to effective weights summing to 1.
+    5. ``contribution = effective_weight × scope_score``.
 
     Returns:
         List of dicts with ``feature_name``, ``value``, ``weight``,
@@ -39,6 +50,7 @@ def compute_feature_contributions(
         return []
 
     names = sorted(focal_features.keys())
+    # Step 1 — absolute z-scores per feature vs historical cohort.
     abs_z: list[float] = []
     for name in names:
         focal_val = float(focal_features[name])
@@ -56,12 +68,14 @@ def compute_feature_contributions(
         else:
             abs_z.append(abs((focal_val - mu) / sigma))
 
+    # Step 2 — normalise deviations; uniform when focal matches history mean.
     z_sum = sum(abs_z)
     if z_sum < 1e-9:
         dev_weights = [1.0 / len(names)] * len(names)
     else:
         dev_weights = [z / z_sum for z in abs_z]
 
+    # Steps 3–4 — blend configured priors with deviation weights.
     combined = [
         feature_base_weight(scope, name) * dev
         for name, dev in zip(names, dev_weights)

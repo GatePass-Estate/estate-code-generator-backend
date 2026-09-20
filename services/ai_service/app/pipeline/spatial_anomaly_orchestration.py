@@ -1,4 +1,15 @@
-"""Spatial anomaly orchestration: log fetch → scopes → features → detector scoring."""
+"""
+End-to-end spatial anomaly orchestration.
+
+Pipeline stages (see :meth:`SpatialAnomalyOrchestrator.analyze`):
+
+1. **Fetch** — per-scope log cohorts via :func:`load_log_records_for_analysis`.
+2. **Engineer** — active features only (:mod:`app.core.feature_config`).
+3. **Reference** — batch-load stored non-anomalous vectors; exact-key schema match.
+4. **Detect** — K-means, DBSCAN, LOF per scope (:mod:`app.pipeline.analysis_manager`).
+5. **Ensemble** — history-confidence weighted scope mean.
+6. **Persist** — upsert focal features + prediction payload to db-service.
+"""
 
 from __future__ import annotations
 
@@ -78,8 +89,11 @@ def _trace_log_slices(log_slices: Any) -> None:
 
 class SpatialAnomalyOrchestrator:
     """
-    Coordinates visit log fetch, per-scope feature engineering, K-means/DBSCAN/LOF
-    scoring, ensemble aggregation, transparency, and feature-store persistence.
+    Coordinates the spatial anomaly ``/analyze`` path.
+
+    Owns HTTP I/O to db-service (logs + feature store), delegates detector math
+    to :mod:`app.pipeline.analysis_manager`, and writes engineered features back
+    after scoring. Does not render result-page UI payloads.
     """
 
     async def analyze(
@@ -90,13 +104,23 @@ class SpatialAnomalyOrchestrator:
         code_validation: CodeValidationPayload,
     ) -> dict[str, Any]:
         """
-        End-to-end analysis: fetch logs, clean rows, engineer per-scope features,
-        run detector models (K-means, DBSCAN, LOF), aggregate scores, and attach
-        transparency payloads.
+        Run full spatial anomaly analysis for one gate validation.
+
+        Step-by-step:
+
+        1. Load anchor + per-scope history (:class:`LogHistorySlices`).
+        2. For each pipeline scope — engineer focal vector, resolve prior log ids,
+           batch-load stored vectors (schema-filtered), run three detectors.
+        3. Build :class:`ScopeEnsembleContext` rows (matched/eligible counts feed
+           ``history_confidence``).
+        4. Compute :func:`weighted_ensemble_score` → compare to
+           ``ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD``.
+        5. Attach transparency (scope scores, weights, feature contributions).
+        6. Upsert focal features and prediction JSON to the feature store.
 
         Returns:
-            A dict compatible with ``SpatialAnalyzeResponse`` (including nested
-            ``transparency``).
+            Dict compatible with ``SpatialAnalyzeResponse`` (includes
+            ``transparency``, ``prediction_result_id`` after persist).
         """
         trace(
             "analyze-in",
@@ -109,6 +133,7 @@ class SpatialAnomalyOrchestrator:
             hashed_code=code_validation.hashed_code,
         )
 
+        # Step 1 — parallel per-scope db fetches ending at anchor time.
         log_slices = await load_log_records_for_analysis(
             client, settings, code_validation
         )
@@ -139,14 +164,14 @@ class SpatialAnomalyOrchestrator:
         focal_features_by_scope: dict[str, dict[str, float]] = {}
         log_kind = log_kind_from_slices_source(log_slices.source)
 
-        # Per scope: focal vector → batch-load prior engineered rows (non-anomalous)
-        # → K-means / DBSCAN / LOF vs history → pipeline score → transparency row.
+        # Step 2 — per-scope feature engineering, history lookup, detector scoring.
         for scope in resolved:
             scope_rows = log_slices.rows_for_analysis_scope(scope)
             feats = await build_feature_vector(
                 pipeline, scope, scope_rows, ctx
             )
             focal_features_by_scope[scope.value] = feats
+            # Temporal uses resident cohort ids; other scopes use their own slice.
             history_rows = log_slices.rows_for_history_lookup(scope)
             prev_log_ids = previous_anchor_log_ids(history_rows, focal_record)
             stored_rows = await batch_lookup_engineered_features(
@@ -250,6 +275,7 @@ class SpatialAnomalyOrchestrator:
                 weight=ctx_row.effective_weight,
             )
 
+        # Step 3 — collapse scopes with history-confidence weighting.
         final = weighted_ensemble_score(ensemble_contexts)
         trace(
             "ensemble",
@@ -297,6 +323,7 @@ class SpatialAnomalyOrchestrator:
             }
         )
         trace_json("analyze-out", "final response payload (pre-persist)", out)
+        # Step 4 — persist focal vectors so future runs can reference this visit.
         prediction_result_id = await upsert_focal_engineered_features(
             client,
             settings,

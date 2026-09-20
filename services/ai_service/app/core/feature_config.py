@@ -1,10 +1,28 @@
 """
 Active feature sets per analysis scope and human-readable labels.
 
-Inactive features remain in ``app.domain.features`` and pipeline helpers for
-legacy stored rows and future reuse; only keys listed in ``ACTIVE_FEATURES``
-are engineered at runtime and used to filter historical vectors (exact-key
-match).
+This module is the **single source of truth** for which features participate
+in spatial anomaly scoring (Phase 0.5 schema refactor).
+
+Design rules
+------------
+* **Active features** — engineered at ``/analyze`` time, persisted to the
+  matching ``features_*`` JSON column, and required for exact-key historical
+  vector matching.
+* **Inactive features** — retired from scoring but kept in
+  ``app.domain.features`` and pipeline helpers so legacy DB rows and future
+  experiments remain readable. Inactive keys are filtered from result-page
+  spider plots via :func:`is_active_feature`.
+* **Temporal scope** — clock/calendar features live only under
+  ``AnalysisScope.TEMPORAL`` (not duplicated in visitor/resident/security).
+
+Retired feature rationale (finetuning session)
+--------------------------------------------
+* Cumulative window counts (``visitor_total_visits``, guard totals) — monotonic
+  within a cohort; skew normals as history grows.
+* ``relationship_frequency`` — controlled by structured relationship input.
+* Raw ``*_time_since_last_visit`` — penalised long gaps; product policy prefers
+  rate/interarrival features instead (see inactive list).
 """
 
 from __future__ import annotations
@@ -114,7 +132,13 @@ def scope_label(scope_name: str) -> str:
 
 
 def is_active_feature(feature_name: str) -> bool:
-    """True when ``feature_name`` is active in at least one scope."""
+    """
+    True when ``feature_name`` is active in at least one scope.
+
+    Used by result-page builders to hide retired keys still present in
+    historical prediction JSON (transparency payloads written before schema
+    migration).
+    """
     return feature_name not in INACTIVE_FEATURES and any(
         feature_name in keys for keys in ACTIVE_FEATURES.values()
     )
