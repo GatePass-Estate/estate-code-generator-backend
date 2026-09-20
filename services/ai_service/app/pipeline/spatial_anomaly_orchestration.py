@@ -20,7 +20,8 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
-from app.core.feature_config import feature_label
+from app.core.ensemble_config import DETECTOR_WEIGHTS
+from app.core.feature_config import feature_label, scope_label
 from app.domain.anomaly_types import AnomalyType
 from app.domain.log_feature_store import (
     historical_vectors_for_scope_matching_active,
@@ -39,20 +40,40 @@ from app.models.code_validation import CodeValidationPayload, Receiver
 from app.models.spatial_anomaly_schema import (
     AnalysisTransparency,
     FeatureContribution,
+    ScopeEnsembleWeight,
     ScopeTransparencyDetail,
 )
 from app.pipeline.analysis_manager import (
-    ensemble_score,
+    ScopeEnsembleContext,
     run_models,
     score_from_model_outputs,
+    weighted_ensemble_score,
 )
+from app.pipeline.feature_contributions import compute_feature_contributions
 from app.pipeline.spatial_anomaly_pipeline import (
     RECORDS_PRE_SLICED_CONTEXT_KEY,
     pipeline_for_type,
 )
 from app.pipeline.feature_engineer import build_feature_vector
 from app.pipeline.scope_manager import resolve_scopes_for_pipeline
+from app.core.spatial_anomaly_trace import trace, trace_json
+from app.pipeline.spatial_anomaly_payload import round_payload_floats
 from app.pipeline.transparency_manager import explain
+
+
+def _trace_log_slices(log_slices: Any) -> None:
+    trace(
+        "log-history",
+        "wrangled slices loaded from db-service",
+        source=log_slices.source,
+        focal_log_id=log_slices.focal_record.get("id"),
+        merged_full_rows=len(log_slices.merged_full),
+        temporal_rows=len(log_slices.temporal),
+        visitor_specific_rows=len(log_slices.visitor_specific),
+        resident_specific_rows=len(log_slices.resident_specific),
+        security_specific_rows=len(log_slices.security_specific),
+        estate_wide_rows=len(log_slices.estate_wide),
+    )
 
 
 class SpatialAnomalyOrchestrator:
@@ -77,10 +98,22 @@ class SpatialAnomalyOrchestrator:
             A dict compatible with ``SpatialAnalyzeResponse`` (including nested
             ``transparency``).
         """
+        trace(
+            "analyze-in",
+            "incoming code validation",
+            anomaly_type=anomaly_type.value,
+            estate_id=code_validation.estate_id,
+            receiver=code_validation.receiver.value,
+            visitor_log_id=code_validation.visitor_log_id,
+            resident_log_id=code_validation.resident_log_id,
+            hashed_code=code_validation.hashed_code,
+        )
+
         log_slices = await load_log_records_for_analysis(
             client, settings, code_validation
         )
         focal_record = log_slices.focal_record
+        _trace_log_slices(log_slices)
 
         pipeline = pipeline_for_type(anomaly_type)
         ctx: dict[str, Any] = {
@@ -92,9 +125,16 @@ class SpatialAnomalyOrchestrator:
         }
 
         resolved = resolve_scopes_for_pipeline(pipeline)
+        trace(
+            "scopes-resolved",
+            "analysis scopes for this pipeline",
+            scopes=[s.value for s in resolved],
+        )
 
         scope_scores: dict[str, float] = {}
         scope_details: list[ScopeTransparencyDetail] = []
+        ensemble_contexts: list[ScopeEnsembleContext] = []
+        scope_weight_details: list[ScopeEnsembleWeight] = []
         global_model_outputs: dict[str, float] = {}
         focal_features_by_scope: dict[str, dict[str, float]] = {}
         log_kind = log_kind_from_slices_source(log_slices.source)
@@ -134,31 +174,90 @@ class SpatialAnomalyOrchestrator:
             # The only difference between visitor vs resident is the scopes run.
             score = score_from_model_outputs(model_outputs)
             scope_scores[scope.value] = score
-            scope_details.append(
-                ScopeTransparencyDetail(
+            matched = int(model_outputs.get("historical_reference_count", 0))
+            eligible = len(prev_log_ids)
+            ctx_row = ScopeEnsembleContext(
+                scope=scope,
+                score=score,
+                matched_count=matched,
+                eligible_count=eligible,
+                excluded_schema_mismatch_count=schema_excluded,
+                anomaly_type=anomaly_type,
+            )
+            ensemble_contexts.append(ctx_row)
+            scope_weight_details.append(
+                ScopeEnsembleWeight(
                     scope=scope.value,
-                    score=score,
-                    feature_contributions=[
-                        FeatureContribution(
-                            feature_name=name,
-                            label=feature_label(name),
-                            value=float(val),
-                            weight=None,
-                            contribution=None,
-                        )
-                        for name, val in feats.items()
-                    ],
-                    thresholds={},
-                    model_ids=[
-                        "kmeans-distance-v1",
-                        "dbscan-noise-v1",
-                        "lof-neighbors-v1",
-                    ],
-                    model_outputs=dict(model_outputs),
+                    label=scope_label(scope.value),
+                    base_weight=ctx_row.base_weight,
+                    history_confidence=ctx_row.history_confidence,
+                    effective_weight=ctx_row.effective_weight,
+                    matched_count=matched,
+                    eligible_count=eligible,
+                    excluded_schema_mismatch_count=schema_excluded,
                 )
             )
+            feat_rows = compute_feature_contributions(
+                scope, feats, historical_vectors, score
+            )
+            scope_detail = ScopeTransparencyDetail(
+                scope=scope.value,
+                label=scope_label(scope.value),
+                score=score,
+                feature_contributions=[
+                    FeatureContribution(
+                        feature_name=str(row["feature_name"]),
+                        label=feature_label(str(row["feature_name"])),
+                        value=float(row["value"]),
+                        weight=(
+                            float(row["weight"])
+                            if row.get("weight") is not None
+                            else None
+                        ),
+                        contribution=(
+                            float(row["contribution"])
+                            if row.get("contribution") is not None
+                            else None
+                        ),
+                    )
+                    for row in feat_rows
+                ],
+                thresholds={
+                    "history_confidence": ctx_row.history_confidence,
+                    "effective_weight": ctx_row.effective_weight,
+                },
+                model_ids=[
+                    "kmeans-distance-v1",
+                    "dbscan-noise-v1",
+                    "lof-neighbors-v1",
+                ],
+                model_outputs=dict(model_outputs),
+            )
+            scope_details.append(scope_detail)
+            trace(
+                f"scope:{scope.value}",
+                scope_label(scope.value),
+                slice_rows=len(scope_rows),
+                features=feats,
+                history=f"{matched}/{eligible} refs (excluded={schema_excluded})",
+                detectors=(
+                    f"k={model_outputs.get('kmeans'):.3f} "
+                    f"d={model_outputs.get('dbscan'):.3f} "
+                    f"l={model_outputs.get('lof'):.3f} → score={score:.3f}"
+                ),
+                confidence=ctx_row.history_confidence,
+                weight=ctx_row.effective_weight,
+            )
 
-        final = await ensemble_score(list(scope_scores.values()))
+        final = weighted_ensemble_score(ensemble_contexts)
+        trace(
+            "ensemble",
+            "history-confidence weighted final score",
+            per_scope_scores=scope_scores,
+            scope_weights=[sw.model_dump() for sw in scope_weight_details],
+            final_score=final,
+            threshold=settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD,
+        )
 
         focal_is_anomalous = (
             final >= settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD
@@ -169,22 +268,34 @@ class SpatialAnomalyOrchestrator:
             scope_scores,
             model_outputs=global_model_outputs,
         )
+        active_weights = [
+            c for c in ensemble_contexts if c.effective_weight > 0.0
+        ]
+        notes = (
+            f"Weighted mean over {len(active_weights)}/{len(ensemble_contexts)} "
+            "scopes with history_confidence > 0."
+        )
         transparency = AnalysisTransparency(
             scopes=scope_details,
-            ensemble_method="unweighted_mean",
-            ensemble_notes="Placeholder until weighted ensemble is configured.",
+            ensemble_method="history_confidence_weighted_mean",
+            ensemble_notes=notes,
+            scope_weights=scope_weight_details,
+            detector_weights=dict(DETECTOR_WEIGHTS),
             global_model_outputs=global_model_outputs,
         )
 
-        out = {
-            "final_score": final,
-            "per_scope_scores": scope_scores,
-            "explanation": explanation,
-            "scopes_evaluated": [s.value for s in resolved],
-            "anomaly_type": anomaly_type.value,
-            "is_anomalous": focal_is_anomalous,
-            "transparency": transparency.model_dump(),
-        }
+        out = round_payload_floats(
+            {
+                "final_score": final,
+                "per_scope_scores": scope_scores,
+                "explanation": explanation,
+                "scopes_evaluated": [s.value for s in resolved],
+                "anomaly_type": anomaly_type.value,
+                "is_anomalous": focal_is_anomalous,
+                "transparency": transparency.model_dump(),
+            }
+        )
+        trace_json("analyze-out", "final response payload (pre-persist)", out)
         prediction_result_id = await upsert_focal_engineered_features(
             client,
             settings,
@@ -196,6 +307,12 @@ class SpatialAnomalyOrchestrator:
             prediction_result=out,
         )
         out["prediction_result_id"] = prediction_result_id
+        trace(
+            "persist",
+            "feature store upsert complete",
+            prediction_result_id=prediction_result_id,
+            is_anomalous=focal_is_anomalous,
+        )
         return out
 
 

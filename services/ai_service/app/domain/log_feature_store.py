@@ -8,6 +8,7 @@ from uuid import UUID
 
 from app.core.feature_config import active_feature_set_for_scope
 from app.domain.scopes import AnalysisScope
+from app.core.spatial_anomaly_trace import trace
 
 logger = logging.getLogger(__name__)
 
@@ -111,4 +112,13 @@ def historical_vectors_for_scope_matching_active(
     """
     raw = historical_vectors_for_scope(stored_items, scope)
     active = active_feature_set_for_scope(scope)
-    return filter_vectors_by_active_keys(raw, active)
+    matched, excluded = filter_vectors_by_active_keys(raw, active)
+    trace(
+        f"history-filter:{scope.value}",
+        "schema-matched historical vectors",
+        raw_vectors_count=len(raw),
+        matched_count=len(matched),
+        excluded_schema_mismatch_count=excluded,
+        expected_keys=sorted(active),
+    )
+    return matched, excluded

@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.exceptions import LogHistoryError
 from app.domain.scopes import AnalysisScope
 from app.models.code_validation import CodeValidationPayload
+from app.core.spatial_anomaly_trace import trace
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +360,16 @@ async def load_log_records_for_analysis(
                 status_code=422,
             )
         cleaned_merged = await wrangle_visit_records(merged_raw)
+        trace(
+            "log-fetch",
+            "visitor log window fetched and wrangled",
+            raw_rows=len(records),
+            merged_rows=len(merged_raw),
+            cleaned_rows=len(cleaned_merged),
+            window_from=_format_query_datetime(from_dt),
+            window_to=_format_query_datetime(to_dt),
+            anchor_id=anchor.get("id"),
+        )
         return _split_visitor_log_cleaned(cleaned_merged, anchor, payload)
 
     if payload.resident_log_id is not None:
@@ -396,6 +407,16 @@ async def load_log_records_for_analysis(
                 status_code=422,
             )
         cleaned_merged = await wrangle_visit_records(merged_raw)
+        trace(
+            "log-fetch",
+            "resident log window fetched and wrangled",
+            raw_rows=len(records),
+            merged_rows=len(merged_raw),
+            cleaned_rows=len(cleaned_merged),
+            window_from=_format_query_datetime(from_dt),
+            window_to=_format_query_datetime(to_dt),
+            anchor_id=anchor.get("id"),
+        )
         return _split_resident_log_cleaned(cleaned_merged, anchor, payload)
 
     raise LogHistoryError(

@@ -66,8 +66,9 @@ async def search(
     within that category; omitted categories are unfiltered. Categories
     AND with each other. Sorted by ``created_at``.
 
-    Severity is derived from stored ``final_score``: low < 0.5, medium
-    0.5 to 0.8, high >= 0.8. ``user_type=resident`` is role resident,
+    Severity is derived from stored ``final_score``: low below the ensemble
+    anomalous threshold (default 0.74), medium from threshold to high min
+    (default 0.8), high >= high min. ``user_type=resident`` is role resident,
     admin, or primary_admin. ``gender`` matches visitor-log gender for
     guests and user-profile gender for residents.
 

@@ -171,6 +171,9 @@ secrets/
 
 **data**
 
+# Generated spatial-anomaly finetune/eval reports (local runs)
+services/ai_service/reports/
+
 # Config
 service.yaml
 

@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
-Backfill ``core.logfeatureengineering`` from visitor or resident log rows.
+Backfill or refresh ``core.logfeatureengineering`` from visitor/resident logs.
 
-Lists log rows from db-service, keeps those whose event time falls within the
-last ``history_days`` (default 30, matching the spatial analysis window),
-engineers **all active scopes** (including ``temporal`` → ``features_temporal``),
-and upserts each row.
+Each run **updates existing rows in place** when a feature-store row already
+exists for ``(log_id, anomaly_type)``; it does not delete and re-insert.
+
+Lists log rows from db-service, keeps those in the last ``history_days``
+(default 30), engineers **all active scopes** (including ``features_temporal``),
+validates keys against :mod:`app.core.feature_config`, and upserts.
 
 Run from ``services/ai_service``::
 
+    # Initial backfill
     python scripts/upsert_visitor_log_features.py visitor visitor \\
-        [--is-anomalous] [--estate-id <uuid>] [--history-days 30] [--page-size 100]
+        --estate-id <uuid>
+
+    # Refresh stored vectors to the current active schema (no new predictions)
+    python scripts/upsert_visitor_log_features.py visitor visitor \\
+        --estate-id <uuid> --features-only --reset-anomalous \\
+        --include-stored-outside-window
 
 First positional is log source (visitor or resident), second is anomaly type.
 """
@@ -46,6 +54,7 @@ from app.domain.anomaly_types import AnomalyType  # noqa: E402
 from app.domain.log_kind import LogKind  # noqa: E402
 from app.domain.scopes import AnalysisScope  # noqa: E402
 from app.integrations.db_service_feature_engineering import (  # noqa: E402
+    batch_lookup_engineered_features,
     upsert_focal_engineered_features,
 )
 from app.integrations.db_service_logs import (  # noqa: E402
@@ -210,14 +219,90 @@ async def _resolve_estate_id(
     return UUID(str(raw))
 
 
+async def _stored_log_ids_for_estate(
+    client: httpx.AsyncClient,
+    *,
+    rows: list[dict[str, Any]],
+    log_source: LogKind,
+    anomaly_type: AnomalyType,
+    estate_id: UUID | None,
+    page_size: int,
+) -> set[UUID]:
+    """Return log ids that already have a feature-store row for this pipeline."""
+    if estate_id is None:
+        return set()
+    estate_s = str(estate_id)
+    candidate_ids: list[UUID] = []
+    for rec in rows:
+        if str(rec.get("estate_id") or "") != estate_s:
+            continue
+        rid = rec.get("id")
+        if rid is None:
+            continue
+        try:
+            candidate_ids.append(
+                rid if isinstance(rid, UUID) else UUID(str(rid))
+            )
+        except ValueError:
+            continue
+
+    stored: set[UUID] = set()
+    chunk = max(1, page_size)
+    for start in range(0, len(candidate_ids), chunk):
+        batch = candidate_ids[start : start + chunk]
+        if not batch:
+            continue
+        items = await batch_lookup_engineered_features(
+            client,
+            settings,
+            log_ids=batch,
+            anomaly_type=anomaly_type,
+            log_kind=log_source,
+        )
+        for row in items:
+            raw = row.get("visitor_log_id") or row.get("resident_log_id")
+            if raw is None:
+                continue
+            stored.add(raw if isinstance(raw, UUID) else UUID(str(raw)))
+    return stored
+
+
+def _merge_targets_by_id(
+    window_rows: list[dict[str, Any]],
+    all_rows: list[dict[str, Any]],
+    stored_ids: set[UUID],
+    *,
+    include_stored_outside_window: bool,
+) -> list[dict[str, Any]]:
+    """Union window rows with stored rows (optional), deduped by log id."""
+    by_id: dict[str, dict[str, Any]] = {
+        str(rec["id"]): rec for rec in window_rows if rec.get("id") is not None
+    }
+    if include_stored_outside_window:
+        for rec in all_rows:
+            rid = rec.get("id")
+            if rid is None:
+                continue
+            try:
+                log_id = rid if isinstance(rid, UUID) else UUID(str(rid))
+            except ValueError:
+                continue
+            if log_id in stored_ids:
+                by_id[str(log_id)] = rec
+    merged = list(by_id.values())
+    merged.sort(key=_event_time_sort_key)
+    return merged
+
+
 async def upsert_one_log(
     client: httpx.AsyncClient,
     *,
     log_source: LogKind,
     anchor_log_id: UUID,
     anomaly_type: AnomalyType,
-    is_anomalous: bool,
+    is_anomalous: bool | None,
     estate_id_override: UUID | None,
+    features_only: bool,
 ) -> None:
     resource = "visitorlog" if log_source == LogKind.VISITOR else "residentlog"
     anchor = await _get_json(
@@ -287,6 +372,14 @@ async def upsert_one_log(
 
     _validate_scope_features(focal_features_by_scope, resolved)
 
+    prediction_result = None
+    if not features_only:
+        prediction_result = {
+            "backfill": True,
+            "is_anomalous": bool(is_anomalous),
+            "anomaly_type": anomaly_type.value,
+        }
+
     await upsert_focal_engineered_features(
         client,
         settings,
@@ -295,21 +388,24 @@ async def upsert_one_log(
         features_by_scope_value=focal_features_by_scope,
         log_kind=log_source,
         is_anomalous=is_anomalous,
-        prediction_result={
-            "backfill": True,
-            "is_anomalous": is_anomalous,
-            "anomaly_type": anomaly_type.value,
-        },
+        prediction_result=prediction_result,
+        features_only=features_only,
     )
 
     scope_summary = ", ".join(
         f"{name}({len(focal_features_by_scope[name])} keys)"
         for name in focal_features_by_scope
     )
+    action = "Refreshed" if features_only else "Upserted"
+    anomalous_note = (
+        "is_anomalous=unchanged"
+        if is_anomalous is None
+        else f"is_anomalous={is_anomalous}"
+    )
     print(
-        f"Upserted {resource}_id={anchor_log_id} "
+        f"{action} {resource}_id={anchor_log_id} "
         f"anomaly_type={anomaly_type.value} "
-        f"scopes=[{scope_summary}] is_anomalous={is_anomalous}"
+        f"scopes=[{scope_summary}] {anomalous_note}"
     )
 
 
@@ -317,19 +413,37 @@ async def run(
     *,
     log_source: LogKind,
     anomaly_type: AnomalyType,
-    is_anomalous: bool,
+    is_anomalous: bool | None,
     estate_id_override: UUID | None,
     history_days: int,
     page_size: int,
+    features_only: bool,
+    include_stored_outside_window: bool,
 ) -> None:
     async with httpx.AsyncClient(timeout=120.0) as client:
         rows = await _fetch_all_logs(
             client, log_source=log_source, page_size=page_size
         )
-        targets = _filter_rows_in_window(
+        window_rows = _filter_rows_in_window(
             rows,
             history_days=history_days,
             estate_id=estate_id_override,
+        )
+        stored_ids: set[UUID] = set()
+        if include_stored_outside_window and estate_id_override is not None:
+            stored_ids = await _stored_log_ids_for_estate(
+                client,
+                rows=rows,
+                log_source=log_source,
+                anomaly_type=anomaly_type,
+                estate_id=estate_id_override,
+                page_size=page_size,
+            )
+        targets = _merge_targets_by_id(
+            window_rows,
+            rows,
+            stored_ids,
+            include_stored_outside_window=include_stored_outside_window,
         )
         if not targets:
             label = (
@@ -348,15 +462,18 @@ async def run(
         source_label = (
             "visitor" if log_source == LogKind.VISITOR else "resident"
         )
+        extra = max(0, len(targets) - len(window_rows))
+        mode = "refreshing features" if features_only else "upserting"
         print(
-            f"Upserting {len(targets)} {source_label} log(s) from the last "
-            f"{history_days} day(s)"
+            f"{mode.capitalize()} {len(targets)} {source_label} log(s)"
             + (
                 f" for estate_id={estate_id_override}"
                 if estate_id_override
                 else ""
             )
-            + "."
+            + f" ({len(window_rows)} in last {history_days} day(s)"
+            + (f", +{extra} stored outside window" if extra else "")
+            + "). Existing rows are updated in place."
         )
 
         ok = 0
@@ -378,6 +495,7 @@ async def run(
                     anomaly_type=anomaly_type,
                     is_anomalous=is_anomalous,
                     estate_id_override=estate_id_override,
+                    features_only=features_only,
                 )
             except SystemExit:
                 raise
@@ -386,14 +504,15 @@ async def run(
                 continue
             ok += 1
 
-        print(f"Done. Upserted {ok}/{len(targets)} log(s).")
+        verb = "Refreshed" if features_only else "Upserted"
+        print(f"Done. {verb} {ok}/{len(targets)} log(s).")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
         description=(
-            "Backfill logfeatureengineering for logs in the last N days "
-            "(default: spatial history window)."
+            "Backfill or refresh logfeatureengineering. Updates existing rows "
+            "in place when the log id already has a feature-store entry."
         ),
     )
     p.add_argument(
@@ -411,7 +530,32 @@ def main() -> None:
     p.add_argument(
         "--is-anomalous",
         action="store_true",
-        help="Store is_anomalous=true (default: false).",
+        help="Store is_anomalous=true (default: false on full upsert).",
+    )
+    p.add_argument(
+        "--features-only",
+        action="store_true",
+        help=(
+            "Update feature JSON columns only; do not write prediction "
+            "results. Use to align stored vectors with the active schema."
+        ),
+    )
+    p.add_argument(
+        "--reset-anomalous",
+        action="store_true",
+        help=(
+            "Set is_anomalous=false on each refreshed row. Implied false "
+            "when omitted and --features-only is set unless --is-anomalous."
+        ),
+    )
+    p.add_argument(
+        "--include-stored-outside-window",
+        action="store_true",
+        help=(
+            "Also refresh log ids that already have feature-store rows for "
+            "this estate, even when outside --history-days. Requires "
+            "--estate-id."
+        ),
     )
     p.add_argument(
         "--estate-id",
@@ -440,14 +584,33 @@ def main() -> None:
         help="Page size when listing log rows (default: 100).",
     )
     args = p.parse_args()
+    if args.include_stored_outside_window and args.estate_id is None:
+        raise SystemExit(
+            "--include-stored-outside-window requires --estate-id."
+        )
+
+    if args.features_only:
+        if args.is_anomalous:
+            is_anomalous: bool | None = True
+        elif args.reset_anomalous:
+            is_anomalous = False
+        else:
+            is_anomalous = None
+    else:
+        is_anomalous = True if args.is_anomalous else False
+
     asyncio.run(
         run(
             log_source=LogKind(args.log_source),
             anomaly_type=AnomalyType(args.anomaly_type),
-            is_anomalous=bool(args.is_anomalous),
+            is_anomalous=is_anomalous,
             estate_id_override=args.estate_id,
             history_days=max(1, args.history_days),
             page_size=max(1, args.page_size),
+            features_only=bool(args.features_only),
+            include_stored_outside_window=bool(
+                args.include_stored_outside_window
+            ),
         )
     )
 

@@ -19,6 +19,7 @@ INACTIVE_FEATURES: frozenset[str] = frozenset(
         feat.GUARD_TOTAL_VALIDATIONS,
         feat.GUARD_NIGHT_VALIDATIONS,
         feat.TIME_SINCE_LAST_VISIT,
+        feat.RELATIONSHIP_FREQUENCY,
     }
 )
 
@@ -37,7 +38,6 @@ ACTIVE_FEATURES: dict[AnalysisScope, tuple[str, ...]] = {
         feat.VISITOR_TIME_SINCE_LAST_VISIT,
         feat.VISIT_INTERARRIVAL_TIME,
         feat.VISITOR_WEEKLY_FREQUENCY,
-        feat.RELATIONSHIP_FREQUENCY,
         feat.RELATIONSHIP_TRANSITION,
     ),
     AnalysisScope.RESIDENT: (
@@ -91,11 +91,27 @@ def active_feature_set_for_scope(scope: AnalysisScope) -> frozenset[str]:
     return frozenset(ACTIVE_FEATURES[scope])
 
 
+SCOPE_LABELS: dict[str, str] = {
+    AnalysisScope.TEMPORAL.value: "Temporal",
+    AnalysisScope.VISITOR.value: "Visitor",
+    AnalysisScope.RESIDENT.value: "Resident",
+    AnalysisScope.SECURITY.value: "Security",
+    AnalysisScope.ESTATE_WIDE.value: "Estate Wide",
+}
+
+
 def feature_label(feature_name: str) -> str:
     """Human-readable label; falls back to title-cased key."""
     if feature_name in FEATURE_LABELS:
         return FEATURE_LABELS[feature_name]
     return feature_name.replace("_", " ").title()
+
+
+def scope_label(scope_name: str) -> str:
+    """Short human-readable scope label; falls back to title-cased key."""
+    if scope_name in SCOPE_LABELS:
+        return SCOPE_LABELS[scope_name]
+    return scope_name.replace("_", " ").title()
 
 
 def is_active_feature(feature_name: str) -> bool:

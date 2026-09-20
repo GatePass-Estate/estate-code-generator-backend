@@ -94,6 +94,8 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
     names = [p.feature_name for p in overview.spider_plot]
     assert names[0] == "hour_of_day"
     hour = overview.spider_plot[0]
+    assert hour.label == "Hour Of Day"
+    assert hour.description
     assert hour.normal_value == 10.0
     assert hour.weight == pytest.approx(0.833333)
     assert hour.scale == pytest.approx(22.0)
@@ -115,8 +117,10 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
     assert visitor_hour.normal_value == 10.0
     assert visitor_hour.scale == pytest.approx(22.0)
     assert visitor_hour.percentage == pytest.approx(45.45)
+    assert by_scope["visitor_specific"].label == "Visitor"
     assert by_scope["visitor_specific"].normal_value == 0.3
     assert by_scope["visitor_specific"].scale == pytest.approx(0.9)
+    assert visitor_hour.label == "Hour Of Day"
     assert by_scope["visitor_specific"].percentage == pytest.approx(33.33)
 
 
@@ -283,6 +287,7 @@ def test_build_case_anomaly_overview_overlays_instance_on_normal():
     )
     hour = overview.spider_plot[0]
     assert hour.feature_name == "hour_of_day"
+    assert hour.label == "Hour Of Day"
     assert hour.normal_value == pytest.approx(8.0)
     assert hour.instance_value == pytest.approx(22.0)
     assert hour.scale == pytest.approx(22.0)
@@ -290,7 +295,9 @@ def test_build_case_anomaly_overview_overlays_instance_on_normal():
     assert hour.instance_percentage == pytest.approx(100.0)
     temporal = overview.contributing_factors[0]
     assert temporal.name == "temporal"
+    assert temporal.label == "Temporal"
     assert temporal.instance_value == pytest.approx(0.7)
+    assert temporal.sub_factors[0].label == "Hour Of Day"
     assert temporal.scale == pytest.approx(0.7)
     assert temporal.percentage == pytest.approx(100.0)
     assert temporal.sub_factors[0].instance_value == pytest.approx(22.0)

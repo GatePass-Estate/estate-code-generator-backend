@@ -13,6 +13,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError
+from app.core.spatial_scoring import (
+    high_risk_score_threshold,
+    medium_score_threshold,
+    severity_from_final_score,
+)
 from app.models.ai_features.ai_response import AiResponse
 from app.models.code_service.prediction_result import (
     PredictionResult as TableModel,
@@ -23,8 +28,6 @@ from app.models.user_profile.estates import Estates
 from app.models.user_profile.users import Users
 from app.schemas.ai_features.ai_response import ANOMALY_SUMMARY_FEATURE_KEY
 from app.schemas.code_service.prediction_result import (
-    HIGH_RISK_SCORE,
-    MEDIUM_SCORE,
     NORMAL_SAMPLE_FRACTION,
     AiSummaryPatchRequest,
     AiSummaryResponse,
@@ -122,22 +125,24 @@ def _gender_clause(genders: list[Gender] | None):
 
 
 def _severity_clause(severities: list[Severity] | None):
-    """OR score bands: low < 0.5, medium 0.5–0.8, high >= 0.8."""
+    """OR score bands aligned with the ensemble anomalous threshold."""
     if not severities:
         return None
+    medium = medium_score_threshold()
+    high = high_risk_score_threshold()
     selected = set(severities)
     clauses = []
     if Severity.HIGH in selected:
-        clauses.append(_payload_score() >= HIGH_RISK_SCORE)
+        clauses.append(_payload_score() >= high)
     if Severity.MEDIUM in selected:
         clauses.append(
             and_(
-                _payload_score() >= MEDIUM_SCORE,
-                _payload_score() < HIGH_RISK_SCORE,
+                _payload_score() >= medium,
+                _payload_score() < high,
             )
         )
     if Severity.LOW in selected:
-        clauses.append(_payload_score() < MEDIUM_SCORE)
+        clauses.append(_payload_score() < medium)
     return _or_clauses(clauses)
 
 
@@ -280,17 +285,6 @@ def _stratified_normal_sample(
     if need > 0 and remaining:
         picked.extend(random.sample(remaining, min(need, len(remaining))))
     return picked
-
-
-def _severity_of(score: float | None) -> Severity | None:
-    """Map ``final_score`` onto low / medium / high; None if score missing."""
-    if score is None:
-        return None
-    if score >= HIGH_RISK_SCORE:
-        return Severity.HIGH
-    if score >= MEDIUM_SCORE:
-        return Severity.MEDIUM
-    return Severity.LOW
 
 
 def _has_summary_tier(raw: Any, key: str) -> bool:
@@ -436,7 +430,7 @@ class PredictionResultRepository:
             display_name=name,
             final_score=score_f,
             is_anomalous=payload.get("is_anomalous"),
-            severity=_severity_of(score_f),
+            severity=severity_from_final_score(score_f),
             anomaly_type=payload.get("anomaly_type"),
             has_tier1_summary=_has_summary_tier(
                 mapping.get("joined_ai_summary"), "tier1"
@@ -512,7 +506,7 @@ class PredictionResultRepository:
         q = _apply_range(q, TableModel.created_at, from_date, to_date)
         if high_risk:
             # → demographic.total_high_risk_instances
-            q = q.where(_payload_score() >= HIGH_RISK_SCORE)
+            q = q.where(_payload_score() >= high_risk_score_threshold())
         return q
 
     async def _window_rows(
@@ -836,7 +830,7 @@ class PredictionResultRepository:
                             if guest
                             else mapping["resident_code"]
                         ),
-                        severity=_severity_of(score_f),
+                        severity=severity_from_final_score(score_f),
                         is_anomalous=payload.get("is_anomalous"),
                         final_score=score_f,
                     )

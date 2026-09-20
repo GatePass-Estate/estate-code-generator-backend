@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.config import Settings
+from app.core.severity_config import severity_label_from_final_score
 from app.models.spatial_anomaly_resultpage import InhouseSummary, LlmSummary
 from app.pipeline.incident_llm_summarizer import _extract_json_object
 from app.pipeline.spatial_anomaly_resultpage import (
@@ -19,20 +20,6 @@ from app.pipeline.spatial_anomaly_resultpage import (
 )
 
 logger = logging.getLogger(__name__)
-
-_SEVERITY_HIGH = 0.8
-_SEVERITY_MEDIUM = 0.5
-
-
-def _severity_label(score: float | None) -> str:
-    """Map final_score onto low / medium / high wording."""
-    if score is None:
-        return "unknown"
-    if score >= _SEVERITY_HIGH:
-        return "high"
-    if score >= _SEVERITY_MEDIUM:
-        return "medium"
-    return "low"
 
 
 def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
@@ -48,7 +35,7 @@ def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
     anomalous = bool(payload.get("is_anomalous"))
     anomaly_type = str(payload.get("anomaly_type") or "unknown")
     verdict = "anomalous" if anomalous else "within expected behaviour"
-    severity = _severity_label(score)
+    severity = severity_label_from_final_score(score)
     score_txt = f"{score:.3f}" if score is not None else "n/a"
     executive = (
         f"This {anomaly_type} prediction is {verdict} "

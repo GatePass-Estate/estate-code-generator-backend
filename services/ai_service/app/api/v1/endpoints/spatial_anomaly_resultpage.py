@@ -166,8 +166,9 @@ async def list_result_page_predictions(
     within that category; omitted categories are unfiltered. Categories
     AND with each other.
 
-    Severity is derived from ``final_score``: low < 0.5, medium 0.5 to
-    0.8, high >= 0.8. ``user_type=resident`` is role resident, admin, or
+    Severity is derived from ``final_score``: low below the ensemble
+    anomalous threshold (default 0.74), medium from threshold to high min
+    (default 0.8), high >= high min. ``user_type=resident`` is role resident, admin, or
     primary_admin (not security). ``gender`` matches visitor-log gender
     for guests and user-profile gender for residents.
 

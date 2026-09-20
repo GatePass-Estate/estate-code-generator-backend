@@ -18,12 +18,12 @@ from app.schemas.code_service.visitor_log import Gender
 
 
 HIGH_RISK_SCORE = 0.8
-MEDIUM_SCORE = 0.5
+MEDIUM_SCORE = 0.74
 NORMAL_SAMPLE_FRACTION = 0.3
 
 
 class Severity(StrEnum):
-    """final_score band: low < 0.5, medium 0.5 to 0.8, high >= 0.8."""
+    """final_score band: low < threshold, medium threshold to high min, high >= high min."""
 
     LOW = "low"
     MEDIUM = "medium"
