@@ -110,6 +110,54 @@ def test_cancelled_after_period_end_falls_back():
     assert result == ACCESS["entitlements"]
 
 
+def test_active_within_grace_keeps_paid_tier(monkeypatch):
+    """active sub whose period_end is inside the grace window keeps paid tier."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+
+    import app.services.entitlement_resolver as resolver
+
+    mock_settings = MagicMock()
+    mock_settings.RENEWAL_GRACE_PERIOD_DAYS = 7
+    monkeypatch.setattr(resolver, "settings", mock_settings)
+
+    sub = {
+        "status": "active",
+        "entitlements": None,
+        "period_end": (
+            datetime.now(tz=timezone.utc) - timedelta(days=3)
+        ).isoformat(),
+    }
+    result = resolve_entitlements(
+        subscription=sub, tier=WATCH, access_tier=ACCESS
+    )
+    assert result["broadcasts_announcements"] is True
+
+
+def test_active_past_grace_falls_back(monkeypatch):
+    """active sub whose period_end is beyond the grace window falls back."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+
+    import app.services.entitlement_resolver as resolver
+
+    mock_settings = MagicMock()
+    mock_settings.RENEWAL_GRACE_PERIOD_DAYS = 7
+    monkeypatch.setattr(resolver, "settings", mock_settings)
+
+    sub = {
+        "status": "active",
+        "entitlements": None,
+        "period_end": (
+            datetime.now(tz=timezone.utc) - timedelta(days=10)
+        ).isoformat(),
+    }
+    result = resolve_entitlements(
+        subscription=sub, tier=WATCH, access_tier=ACCESS
+    )
+    assert result == ACCESS["entitlements"]
+
+
 def test_active_uses_tier_entitlements():
     sub = {"status": "active", "entitlements": None}
     result = resolve_entitlements(
