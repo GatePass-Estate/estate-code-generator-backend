@@ -134,6 +134,8 @@ async def search(
     source: str | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
+    is_free: bool | None = None,
+    expires_at_before: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
     service: Service = Depends(get_service),

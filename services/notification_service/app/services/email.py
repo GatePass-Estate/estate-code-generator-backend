@@ -634,6 +634,44 @@ async def send_community_reactivated_email(
     await _send(f"Your {label} has been reactivated", email, body)
 
 
+async def send_subscription_grace_period_email(
+    email: str, first_name: str
+) -> None:
+    body = _build_email(
+        heading="Subscription Payment Overdue",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass estate subscription payment is overdue. "
+            "You are currently in the grace period — your community still has "
+            "full access, but this will be revoked if payment is not received "
+            "soon. Please renew your subscription to avoid any interruption."
+        ),
+        button_label="Renew Subscription",
+        button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
+    )
+    await _send(
+        "Action required: your GatePass subscription payment is overdue",
+        email,
+        body,
+    )
+
+
+async def send_subscription_expired_email(email: str, first_name: str) -> None:
+    body = _build_email(
+        heading="Subscription Expired",
+        first_name=first_name,
+        instruction=(
+            "Your GatePass estate subscription has expired. "
+            "Your community's access has been downgraded to the free Access "
+            "tier. Renew now to restore full access for your residents and "
+            "administrators."
+        ),
+        button_label="Renew Subscription",
+        button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
+    )
+    await _send("Your GatePass subscription has expired", email, body)
+
+
 async def send_broadcast_email(
     email: str,
     first_name: str,
@@ -824,4 +862,12 @@ async def dispatch_email(
             title=metadata.get("title", "Announcement"),
             message=metadata.get("body", ""),
             sender_name=metadata.get("sender_name"),
+        )
+    elif notification_type == NotificationType.SUBSCRIPTION_GRACE_PERIOD:
+        await send_subscription_grace_period_email(
+            email=email, first_name=first_name
+        )
+    elif notification_type == NotificationType.SUBSCRIPTION_EXPIRED:
+        await send_subscription_expired_email(
+            email=email, first_name=first_name
         )

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL", "")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
 
     RENEWAL_GRACE_PERIOD_DAYS: int = int(
         os.getenv("RENEWAL_GRACE_PERIOD_DAYS", "7")

@@ -223,6 +223,10 @@ class EstateAiFeatureRepository:
                     if key == "from_date"
                     else query.where(TableModel.created_at <= request.to_date)
                 )
+            elif key == "expires_at_before":
+                query = query.where(
+                    TableModel.expires_at < request.expires_at_before
+                )
             elif hasattr(TableModel, key):
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)

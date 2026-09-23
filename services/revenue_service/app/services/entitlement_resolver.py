@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
+
+from app.core.config import settings
 
 # Billing statuses that may still carry paid entitlements until period_end.
 PAID_ACCESS_STATUSES = frozenset(
@@ -11,6 +13,8 @@ PAID_ACCESS_STATUSES = frozenset(
 )
 # Narrow set used by some callers that only want "healthy" billing rows.
 ACTIVE_STATUSES = frozenset({"active", "trialing"})
+# Statuses that receive a grace-period extension before falling back to Access.
+_GRACE_STATUSES = frozenset({"active", "trialing"})
 
 
 def _access_entitlements(
@@ -35,8 +39,10 @@ def _access_entitlements(
     return dict(access_tier.get("entitlements") or {})
 
 
-def period_still_valid(subscription: Mapping[str, Any]) -> bool:
-    """Return True when period_end is missing or still in the future."""
+def period_still_valid(
+    subscription: Mapping[str, Any], grace_days: int = 0
+) -> bool:
+    """Return True when period_end (extended by grace_days) is in the future."""
     raw = subscription.get("period_end")
     if not raw:
         return True
@@ -46,7 +52,9 @@ def period_still_valid(subscription: Mapping[str, Any]) -> bool:
         return True
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
-    return end > datetime.now(tz=timezone.utc)
+    return end + timedelta(days=max(0, grace_days)) > datetime.now(
+        tz=timezone.utc
+    )
 
 
 def uses_access_fallback(
@@ -58,13 +66,22 @@ def uses_access_fallback(
 
     Happens when there is no subscription, status is outside the paid-access
     set, the billing period has ended, or the tier row is missing.
+
+    ``active``/``trialing`` subscriptions retain paid entitlements through
+    ``period_end + RENEWAL_GRACE_PERIOD_DAYS`` so estates keep access while
+    Paystack retries payment — matching the same grace logic used for AI
+    grants. ``cancelled`` and ``past_due`` receive no grace (access runs to
+    period_end exactly).
     """
     if not subscription:
         return True
     status = (subscription.get("status") or "").lower()
     if status not in PAID_ACCESS_STATUSES:
         return True
-    if not period_still_valid(subscription):
+    grace = (
+        settings.RENEWAL_GRACE_PERIOD_DAYS if status in _GRACE_STATUSES else 0
+    )
+    if not period_still_valid(subscription, grace_days=grace):
         return True
     if not tier:
         return True
