@@ -60,9 +60,7 @@ class RegisterEstateRequest(BaseModel):
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
     )
-    estate_type: Optional[EstateType] = Field(
-        None, description="Type of estate"
-    )
+    estate_type: EstateType = Field(..., description="Type of estate")
 
     @field_serializer("primary_admin_id")
     def serialize_primary_admin_id(
@@ -98,6 +96,9 @@ class RegisterEstateResponse(BaseModel):
     postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Primary admin ID"
+    )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
     )
     created_at: datetime = Field(..., description="Creation timestamp")
 

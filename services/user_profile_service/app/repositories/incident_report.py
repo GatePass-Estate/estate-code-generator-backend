@@ -63,6 +63,30 @@ class IncidentReportRepository:
         response = await self.client.async_get(url)
         return _parse_item(response)
 
+    async def get_for_reporter(self, incident_id: str) -> IncidentReportItem:
+        response = await self.client.async_get(
+            f"{self.endpoint}/{incident_id}"
+        )
+        return _parse_item(response)
+
+    async def list_my_reports(
+        self,
+        *,
+        reported_by_user_id: str,
+        estate_id: str,
+        page: int = 1,
+        limit: int = 20,
+    ) -> IncidentReportListResponse:
+        params: dict = {
+            "reported_by_user_id": reported_by_user_id,
+            "estate_id": estate_id,
+            "page": page,
+            "limit": limit,
+        }
+        url = f"{self.endpoint}/search?{urlencode(params)}"
+        response = await self.client.async_get(url)
+        return _parse_list(response, page, limit)
+
     async def list(
         self,
         admin_id: str,

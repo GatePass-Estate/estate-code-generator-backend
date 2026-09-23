@@ -85,6 +85,9 @@ class EstateService:
                 if request.primary_admin_id
                 else None
             ),
+            "estate_type": (
+                request.estate_type.value if request.estate_type else None
+            ),
         }
 
         return await self.estate_repository.create_estate(estate_data)
@@ -146,6 +149,8 @@ class EstateService:
             update_data["postal_code"] = request.postal_code
         if request.primary_admin_id is not None:
             update_data["primary_admin_id"] = str(request.primary_admin_id)
+        if request.estate_type is not None:
+            update_data["estate_type"] = request.estate_type
 
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
