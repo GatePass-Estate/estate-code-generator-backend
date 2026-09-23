@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     RATING_COMMENT_MAX_LENGTH: int = int(
         os.getenv("RATING_COMMENT_MAX_LENGTH", "1000")
     )
+    #: Align with ai-service ``ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD``.
+    ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.74
+    #: ``final_score`` at or above this maps to high severity.
+    SPATIAL_SEVERITY_HIGH_MIN: float = 0.8
 
 
 settings = Settings()

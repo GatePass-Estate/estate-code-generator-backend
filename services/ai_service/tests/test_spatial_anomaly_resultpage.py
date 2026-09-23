@@ -24,6 +24,7 @@ def _scope(name: str, score: float, features: list[dict]) -> dict:
 def _fc(name: str, value: float, weight: float | None) -> dict:
     return {
         "feature_name": name,
+        "label": name.replace("_", " ").title(),
         "value": value,
         "weight": weight,
         "contribution": None,
@@ -52,7 +53,7 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
                             [
                                 _fc("hour_of_day", 10.0, 0.7),
                                 _fc("night_visit_flag", 0.0, 0.8),
-                                _fc("guard_total_validations", 20.0, 0.6),
+                                _fc("guard_night_validation_share", 0.2, 0.6),
                                 _fc("visitor_weekly_frequency", 2.0, 0.5),
                                 _fc("resident_visit_frequency", 3.0, 0.3),
                             ],
@@ -93,6 +94,8 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
     names = [p.feature_name for p in overview.spider_plot]
     assert names[0] == "hour_of_day"
     hour = overview.spider_plot[0]
+    assert hour.label == "Hour Of Day"
+    assert hour.description
     assert hour.normal_value == 10.0
     assert hour.weight == pytest.approx(0.833333)
     assert hour.scale == pytest.approx(22.0)
@@ -100,6 +103,7 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
 
     by_scope = {f.name: f for f in overview.contributing_factors}
     assert [f.name for f in overview.contributing_factors] == [
+        "temporal",
         "visitor_specific",
         "resident_specific",
         "security_specific",
@@ -113,8 +117,10 @@ def test_build_anomaly_overview_averages_and_picks_top_six():
     assert visitor_hour.normal_value == 10.0
     assert visitor_hour.scale == pytest.approx(22.0)
     assert visitor_hour.percentage == pytest.approx(45.45)
+    assert by_scope["visitor_specific"].label == "Visitor"
     assert by_scope["visitor_specific"].normal_value == 0.3
     assert by_scope["visitor_specific"].scale == pytest.approx(0.9)
+    assert visitor_hour.label == "Hour Of Day"
     assert by_scope["visitor_specific"].percentage == pytest.approx(33.33)
 
 
@@ -140,21 +146,20 @@ def test_overview_factors_use_period_max_keys_when_sample_misses_scope():
         feature_max_values={"hour_of_day": 22.0},
         scope_max_scores={"visitor_specific": 0.98, "estate_wide": 0.9},
         scope_feature_max_values={
-            "visitor_specific": {
-                "hour_of_day": 22.0,
-                "visitor_weekly_frequency": 4.9,
-            },
+            "temporal": {"hour_of_day": 22.0},
+            "visitor_specific": {"visitor_weekly_frequency": 4.9},
             "estate_wide": {"hour_of_day": 22.0},
         },
     )
     by_scope = {f.name: f for f in overview.contributing_factors}
+    temporal = by_scope["temporal"]
+    hour = next(
+        s for s in temporal.sub_factors if s.feature_name == "hour_of_day"
+    )
     visitor = by_scope["visitor_specific"]
     names = [s.feature_name for s in visitor.sub_factors]
-    assert "hour_of_day" in names
+    assert "hour_of_day" not in names
     assert "visitor_weekly_frequency" in names
-    hour = next(
-        s for s in visitor.sub_factors if s.feature_name == "hour_of_day"
-    )
     assert hour.normal_value is None
     assert hour.scale == pytest.approx(22.0)
 
@@ -163,6 +168,7 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
     empty = build_anomaly_overview([])
     assert empty.spider_plot == []
     assert [f.name for f in empty.contributing_factors] == [
+        "temporal",
         "visitor_specific",
         "resident_specific",
         "security_specific",
@@ -187,6 +193,7 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
     by_scope = {f.name: f for f in overview.contributing_factors}
     assert by_scope["security_specific"].sub_factors[0].weight is None
     assert [f.name for f in overview.contributing_factors] == [
+        "temporal",
         "visitor_specific",
         "resident_specific",
         "security_specific",
@@ -225,6 +232,7 @@ def test_overview_from_db_payload_maps_demographic_fields():
     assert result.evidence_summary.total_anomalous_visitors_instances == 7
     assert result.anomaly_overview.spider_plot == []
     assert [f.name for f in result.anomaly_overview.contributing_factors] == [
+        "temporal",
         "visitor_specific",
         "resident_specific",
         "security_specific",
@@ -244,7 +252,7 @@ def test_build_case_anomaly_overview_overlays_instance_on_normal():
                 "transparency": {
                     "scopes": [
                         _scope(
-                            "visitor_specific",
+                            "temporal",
                             0.2,
                             [_fc("hour_of_day", 8.0, 0.9)],
                         )
@@ -260,7 +268,7 @@ def test_build_case_anomaly_overview_overlays_instance_on_normal():
             "transparency": {
                 "scopes": [
                     _scope(
-                        "visitor_specific",
+                        "temporal",
                         0.7,
                         [_fc("hour_of_day", 22.0, 0.9)],
                     )
@@ -272,24 +280,27 @@ def test_build_case_anomaly_overview_overlays_instance_on_normal():
         instance,
         sample,
         feature_max_values={"hour_of_day": 22.0},
-        scope_max_scores={"visitor_specific": 0.7},
+        scope_max_scores={"temporal": 0.7},
         scope_feature_max_values={
-            "visitor_specific": {"hour_of_day": 22.0},
+            "temporal": {"hour_of_day": 22.0},
         },
     )
     hour = overview.spider_plot[0]
     assert hour.feature_name == "hour_of_day"
+    assert hour.label == "Hour Of Day"
     assert hour.normal_value == pytest.approx(8.0)
     assert hour.instance_value == pytest.approx(22.0)
     assert hour.scale == pytest.approx(22.0)
     assert hour.percentage == pytest.approx(36.36)
     assert hour.instance_percentage == pytest.approx(100.0)
-    visitor = overview.contributing_factors[0]
-    assert visitor.name == "visitor_specific"
-    assert visitor.instance_value == pytest.approx(0.7)
-    assert visitor.scale == pytest.approx(0.7)
-    assert visitor.percentage == pytest.approx(100.0)
-    assert visitor.sub_factors[0].instance_value == pytest.approx(22.0)
+    temporal = overview.contributing_factors[0]
+    assert temporal.name == "temporal"
+    assert temporal.label == "Temporal"
+    assert temporal.instance_value == pytest.approx(0.7)
+    assert temporal.sub_factors[0].label == "Hour Of Day"
+    assert temporal.scale == pytest.approx(0.7)
+    assert temporal.percentage == pytest.approx(100.0)
+    assert temporal.sub_factors[0].instance_value == pytest.approx(22.0)
 
 
 def test_case_contributing_factors_follow_prediction_scopes():
@@ -366,6 +377,7 @@ def test_case_contributing_factors_follow_prediction_scopes():
     )
     names = [f.name for f in overview.contributing_factors]
     assert names == [
+        "temporal",
         "resident_specific",
         "security_specific",
         "estate_wide",
@@ -389,6 +401,7 @@ def test_case_contributing_factors_follow_prediction_scopes():
         },
     )
     assert [f.name for f in visitor_overview.contributing_factors] == [
+        "temporal",
         "visitor_specific",
         "resident_specific",
         "security_specific",
@@ -404,10 +417,10 @@ def test_case_spider_plot_skips_features_missing_on_instance():
 
     ranked = [
         ("visitor_weekly_frequency", 0.9, 1.0),
-        ("visitor_total_visits", 0.8, 2.0),
+        ("relationship_transition", 0.8, 2.0),
         ("visit_interarrival_time", 0.7, 0.1),
         ("visit_hour_bucket", 0.6, 2.0),
-        ("time_since_last_visit", 0.5, 0.1),
+        ("night_visit_flag", 0.5, 0.1),
         ("resident_visit_frequency", 0.4, 1.0),
         ("hour_of_day", 0.3, 8.0),
     ]
@@ -433,7 +446,7 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     instance_feats = [
         _fc(name, value + 1.0, weight)
         for name, weight, value in ranked
-        if name != "visitor_total_visits"
+        if name != "relationship_transition"
     ]
     instance = {
         "result": {
@@ -453,7 +466,7 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     )
     names = [p.feature_name for p in overview.spider_plot]
     assert len(names) == SPIDER_TOP_N
-    assert "visitor_total_visits" not in names
+    assert "relationship_transition" not in names
     assert "hour_of_day" in names
     assert all(p.instance_value is not None for p in overview.spider_plot)
 

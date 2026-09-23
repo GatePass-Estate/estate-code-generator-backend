@@ -6,7 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime config for anomaly, incident, and volume-forecast pipelines."""
+    """
+    Runtime config for anomaly, incident, and volume-forecast pipelines.
+
+    Spatial anomaly finetuning knobs (history confidence, threshold, per-scope
+    fetch cap) are grouped below ``ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD``.
+    Static scope/detector/feature priors live in :mod:`app.core.ensemble_config`.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env.localdocker", extra="ignore"
@@ -36,7 +42,25 @@ class Settings(BaseSettings):
     #: Max characters allowed on an AI marketplace rating comment.
     RATING_COMMENT_MAX_LENGTH: int = 1000
     #: Ensemble score at or above this marks the focal row ``is_anomalous`` in the feature store.
-    ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.5
+    ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.74
+    #: ``final_score`` at or above this maps to high severity (medium starts at threshold).
+    SPATIAL_SEVERITY_HIGH_MIN: float = 0.8
+
+    # --- Spatial ensemble history-confidence (app/pipeline/analysis_manager.py) ---
+    #: Reference depth treated as a "full" 30-day cohort per scope.
+    SPATIAL_EXPECTED_REFERENCE_CAP: int = 10
+    #: Minimum stored vectors required before a scope contributes (else weight 0).
+    SPATIAL_MIN_MATCHED_TO_SCORE: int = 5
+    #: Floor on history-confidence when matched >= MIN (0 = fully exclude thin scopes).
+    SPATIAL_HISTORY_CONFIDENCE_FLOOR: float = 0.0
+    #: Max prior log rows fetched per analysis scope (scope-specific search filters).
+    SPATIAL_SCOPE_HISTORY_LIMIT: int = 40
+    #: Print payload / feature-engineering / history trace to stdout.
+    SPATIAL_ANOMALY_PAYLOAD_DEBUG: bool = (
+        os.getenv("SPATIAL_ANOMALY_PAYLOAD_DEBUG", "").lower()
+        in ("1", "true", "yes")
+        or os.getenv("ENV", "local") == "local"
+    )
 
     # --- Spatial K-means detector (app/pipeline/spatial_anomaly_models/kmeans_model.py) ---
     #: Upper bound on K-means clusters (actual = min of this and history size).

@@ -16,6 +16,7 @@ class FeatureContribution(BaseModel):
     """One engineered feature value for transparency payloads."""
 
     feature_name: str
+    label: str
     value: float
     weight: float | None = None
     contribution: float | None = None
@@ -25,11 +26,25 @@ class ScopeTransparencyDetail(BaseModel):
     """Per-scope score, engineered features, and per-detector outputs."""
 
     scope: str
+    label: str
     score: float
     feature_contributions: list[FeatureContribution]
     thresholds: dict[str, float] = Field(default_factory=dict)
     model_ids: list[str] = Field(default_factory=list)
     model_outputs: dict[str, float] = Field(default_factory=dict)
+
+
+class ScopeEnsembleWeight(BaseModel):
+    """Base, history-confidence, and effective weights for one analysis scope."""
+
+    scope: str
+    label: str
+    base_weight: float
+    history_confidence: float
+    effective_weight: float
+    matched_count: int
+    eligible_count: int
+    excluded_schema_mismatch_count: int = 0
 
 
 class AnalysisTransparency(BaseModel):
@@ -38,6 +53,8 @@ class AnalysisTransparency(BaseModel):
     scopes: list[ScopeTransparencyDetail]
     ensemble_method: str
     ensemble_notes: str | None = None
+    scope_weights: list[ScopeEnsembleWeight] = Field(default_factory=list)
+    detector_weights: dict[str, float] = Field(default_factory=dict)
     global_model_outputs: dict[str, float] = Field(default_factory=dict)
 
 

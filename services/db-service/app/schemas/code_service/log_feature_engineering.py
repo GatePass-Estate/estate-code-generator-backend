@@ -66,6 +66,7 @@ class StoredFeatureRecord(BaseModel):
     resident_log_id: UUID4 | None = None
     anomaly_type: AnomalyType
     log_kind: LogKind
+    features_temporal: dict[str, Any] | None = None
     features_visitor_specific: dict[str, Any] | None = None
     features_resident_specific: dict[str, Any] | None = None
     features_security_specific: dict[str, Any] | None = None
@@ -95,6 +96,7 @@ class UpsertRequest(BaseModel):
     resident_log_id: UUID4 | None = None
     anomaly_type: AnomalyType
     log_kind: LogKind
+    features_temporal: dict[str, Any] | None = None
     features_visitor_specific: dict[str, Any] | None = None
     features_resident_specific: dict[str, Any] | None = None
     features_security_specific: dict[str, Any] | None = None

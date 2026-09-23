@@ -10,10 +10,14 @@ values across *all* predictions in the window (anomalous included).
 averages the sample into spider-plot points, top contributing factors, and
 nested scope sub-factors.
 
+Inactive features (retired during finetuning — e.g. raw time-since-last-visit)
+are filtered via :func:`is_active_feature` so legacy prediction JSON does not
+surface retired keys in spider plots or contributing-factor lists.
+
 Normal behaviour (``normal_value``) always comes from the non-anomalous
 sample. ``scale`` is the period max for that feature or scope score.
 ``percentage`` is ``normal_value / scale * 100``. Spider plot and top
-factors share the same top six features, ranked by mean weight.
+factors share the same top six **active** features, ranked by mean weight.
 """
 
 from __future__ import annotations
@@ -21,10 +25,18 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from app.core.feature_config import (
+    feature_label,
+    is_active_feature,
+    scope_label,
+)
+from app.core.spatial_anomaly_trace import trace, trace_json
 from app.core.scope_config import scopes_for_anomaly_type
 from app.domain.anomaly_types import AnomalyType
 from app.domain.features import (
     DAY_OF_WEEK,
+    GUARD_NIGHT_VALIDATION_FREQUENCY,
+    GUARD_NIGHT_VALIDATION_SHARE,
     GUARD_NIGHT_VALIDATIONS,
     GUARD_TOTAL_VALIDATIONS,
     HOUR_OF_DAY,
@@ -32,14 +44,17 @@ from app.domain.features import (
     NIGHT_VISIT_FLAG,
     RELATIONSHIP_FREQUENCY,
     RELATIONSHIP_TRANSITION,
+    RESIDENT_TIME_SINCE_LAST_VISIT,
     RESIDENT_VISIT_FREQUENCY,
     TIME_SINCE_LAST_VISIT,
     VISIT_HOUR_BUCKET,
     VISIT_INTERARRIVAL_TIME,
+    VISITOR_TIME_SINCE_LAST_VISIT,
     VISITOR_TOTAL_VISITS,
     VISITOR_WEEKLY_FREQUENCY,
 )
 from app.domain.scopes import AnalysisScope
+from app.core.severity_config import severity_from_final_score
 from app.models.spatial_anomaly_resultpage import (
     AnomalyOverview,
     CaseAnomalyOverview,
@@ -52,7 +67,6 @@ from app.models.spatial_anomaly_resultpage import (
     EvidenceSummary,
     RatioShare,
     ResultPageOverviewResponse,
-    Severity,
     SpiderPlotPoint,
     SubFactor,
 )
@@ -60,6 +74,9 @@ from app.models.spatial_anomaly_resultpage import (
 SPIDER_TOP_N = 6
 
 SCOPE_DESCRIPTIONS = {
+    AnalysisScope.TEMPORAL.value: (
+        "Focal visit clock and calendar features (hour, weekday, night flag)."
+    ),
     AnalysisScope.VISITOR.value: (
         "Visitor-centred timing, frequency, and relationship patterns."
     ),
@@ -80,6 +97,12 @@ FEATURE_DESCRIPTIONS = {
     IS_WEEKEND: "Whether the visit fell on a weekend (1) or weekday (0).",
     VISIT_HOUR_BUCKET: "Coarse bucket of the visit hour.",
     TIME_SINCE_LAST_VISIT: "Elapsed time since this actor's previous visit.",
+    VISITOR_TIME_SINCE_LAST_VISIT: (
+        "Hours since this visitor's previous visit in the window."
+    ),
+    RESIDENT_TIME_SINCE_LAST_VISIT: (
+        "Hours since the resident was last visited by anyone in the window."
+    ),
     VISIT_INTERARRIVAL_TIME: "Gap between consecutive visits in the cohort.",
     NIGHT_VISIT_FLAG: "Whether the visit occurred during night hours.",
     VISITOR_TOTAL_VISITS: "Lifetime visit count for this visitor.",
@@ -87,6 +110,12 @@ FEATURE_DESCRIPTIONS = {
     RESIDENT_VISIT_FREQUENCY: "Average visit rate for this resident.",
     GUARD_TOTAL_VALIDATIONS: "Total validations performed by the guard.",
     GUARD_NIGHT_VALIDATIONS: "Night-hour validations performed by the guard.",
+    GUARD_NIGHT_VALIDATION_FREQUENCY: (
+        "Night validations per week for the guard in the window."
+    ),
+    GUARD_NIGHT_VALIDATION_SHARE: (
+        "Fraction of the guard's validations that occurred at night."
+    ),
     RELATIONSHIP_FREQUENCY: (
         "How often this resident-visitor relation appears."
     ),
@@ -111,13 +140,20 @@ def _mean(values: list[float]) -> float | None:
 
 
 def _describe_feature(name: str) -> str:
-    """Human-readable copy for a feature key; falls back to the name."""
-    return FEATURE_DESCRIPTIONS.get(name, name.replace("_", " ").capitalize())
+    """Long-form copy for a feature key; falls back to the short label."""
+    return FEATURE_DESCRIPTIONS.get(name, feature_label(name))
 
 
 def _describe_scope(name: str) -> str:
-    """Human-readable copy for an analysis scope; falls back to the name."""
-    return SCOPE_DESCRIPTIONS.get(name, name.replace("_", " ").capitalize())
+    """Long-form copy for an analysis scope; falls back to the short label."""
+    return SCOPE_DESCRIPTIONS.get(name, scope_label(name))
+
+
+def _resolve_feature_label(name: str, stored: Any = None) -> str:
+    """Short label from stored transparency or feature config."""
+    if isinstance(stored, str) and stored.strip():
+        return stored.strip()
+    return feature_label(name)
 
 
 def _to_float(value: Any) -> float | None:
@@ -128,17 +164,6 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _severity_of(score: float | None) -> Severity | None:
-    """Map final_score onto low / medium / high."""
-    if score is None:
-        return None
-    if score >= 0.8:
-        return Severity.HIGH
-    if score >= 0.5:
-        return Severity.MEDIUM
-    return Severity.LOW
 
 
 def _float_map(raw: Any) -> dict[str, float]:
@@ -201,7 +226,7 @@ def build_anomaly_overview(
     ``top_contributing_factors`` are the same top ``spider_limit``
     points (default ``SPIDER_TOP_N`` / 6). Pass ``spider_limit=None``
     to keep every ranked feature. ``contributing_factors`` always lists
-    all four analysis scopes in canonical order. Sub-factors are the
+    all analysis scopes in canonical order. Sub-factors are the
     union of sample features and period-max keys for that scope.
 
     Scale maps are period maxima from *all* predictions, not the sample:
@@ -223,11 +248,13 @@ def build_anomaly_overview(
     # 1. Collect sample values: scope scores, per-scope features, and
     #    global features. Means of these lists are expected-normal.
     scope_scores: dict[str, list[float]] = defaultdict(list)
-    scope_feats: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
-        lambda: defaultdict(lambda: {"values": [], "weights": []})
+    scope_feats: dict[str, dict[str, dict[str, list[Any]]]] = defaultdict(
+        lambda: defaultdict(
+            lambda: {"values": [], "weights": [], "labels": []}
+        )
     )
-    global_feats: dict[str, dict[str, list[float]]] = defaultdict(
-        lambda: {"values": [], "weights": []}
+    global_feats: dict[str, dict[str, list[Any]]] = defaultdict(
+        lambda: {"values": [], "weights": [], "labels": []}
     )
 
     for raw in sample:
@@ -251,6 +278,8 @@ def build_anomaly_overview(
                 name = fc.get("feature_name")
                 if not isinstance(name, str) or not name:
                     continue
+                if not is_active_feature(name):
+                    continue
                 value = _to_float(fc.get("value"))
                 weight = _to_float(fc.get("weight"))
                 if value is not None:
@@ -262,6 +291,10 @@ def build_anomaly_overview(
                     # global mean rank → spider_plot / top factors
                     scope_feats[scope][name]["weights"].append(weight)
                     global_feats[name]["weights"].append(weight)
+                lbl = fc.get("label")
+                if isinstance(lbl, str) and lbl.strip():
+                    scope_feats[scope][name]["labels"].append(lbl.strip())
+                    global_feats[name]["labels"].append(lbl.strip())
 
     # 2. Average globally, attach period-max scale, rank by weight, keep
     #    the top six for spider_plot and top_contributing_factors.
@@ -272,9 +305,13 @@ def build_anomaly_overview(
     for name, buckets in global_feats.items():
         normal = _mean(buckets["values"])
         scale, pct = _scale_fields(normal, feature_max_values.get(name))
+        stored_labels = buckets.get("labels") or []
         spider_points.append(
             SpiderPlotPoint(
                 feature_name=name,
+                label=_resolve_feature_label(
+                    name, stored_labels[0] if stored_labels else None
+                ),
                 description=_describe_feature(name),
                 weight=_mean(buckets["weights"]),
                 normal_value=normal,
@@ -294,8 +331,8 @@ def build_anomaly_overview(
         spider_points if spider_limit is None else spider_points[:spider_limit]
     )
 
-    # 3. Average per analysis scope. First-level always includes all four
-    #    known scopes (empty sample still yields four sections). Extra
+    # 3. Average per analysis scope. First-level always includes all
+    #    known scopes (empty sample still yields every section). Extra
     #    unknown scopes from the sample append alphabetically.
     factors: list[ContributingFactor] = []
     seen: set[str] = set()
@@ -316,12 +353,17 @@ def build_anomaly_overview(
             buckets = feats.get(fname) or {
                 "values": [],
                 "weights": [],
+                "labels": [],
             }
             normal = _mean(buckets["values"])
             scale, pct = _scale_fields(normal, scope_maxes.get(fname))
+            stored_labels = buckets.get("labels") or []
             sub_factors.append(
                 SubFactor(
                     feature_name=fname,
+                    label=_resolve_feature_label(
+                        fname, stored_labels[0] if stored_labels else None
+                    ),
                     description=_describe_feature(fname),
                     normal_value=normal,
                     weight=_mean(buckets["weights"]),
@@ -335,6 +377,7 @@ def build_anomaly_overview(
         factors.append(
             ContributingFactor(
                 name=scope,
+                label=scope_label(scope),
                 description=_describe_scope(scope),
                 normal_value=scope_normal,
                 weight=_mean(weights) if weights else None,
@@ -344,11 +387,20 @@ def build_anomaly_overview(
             )
         )
 
-    return AnomalyOverview(
+    overview = AnomalyOverview(
         spider_plot=top,
         top_contributing_factors=top,
         contributing_factors=factors,
     )
+    trace(
+        "resultpage-build-overview",
+        "build_anomaly_overview complete",
+        spider_plot_count=len(overview.spider_plot),
+        contributing_factor_scopes=[
+            f.name for f in overview.contributing_factors
+        ],
+    )
+    return overview
 
 
 def _ratio_share(count: int, whole: int) -> RatioShare:
@@ -403,7 +455,14 @@ def overview_from_db_payload(
 
     # 3. Assemble demographic + evidence, then average the sample into
     #    spider_plot / top_contributing_factors / contributing_factors.
-    return ResultPageOverviewResponse(
+    trace(
+        "resultpage-overview-in",
+        "db-service overview payload received",
+        normal_sample_count=len(sample),
+        feature_max_keys=sorted(feature_max.keys()),
+        scope_max_keys=sorted(scope_max.keys()),
+    )
+    response = ResultPageOverviewResponse(
         demographic=Demographic(
             estate_name=str(data.get("estate_name") or ""),
             state=data.get("state"),
@@ -433,19 +492,39 @@ def overview_from_db_payload(
             scope_feature_max_values=_scope_float_map(scope_feat_max),
         ),
     )
+    trace_json(
+        "resultpage-overview-out",
+        "ResultPageOverviewResponse",
+        response.model_dump(),
+    )
+    return response
 
 
 def _instance_maps(
     raw: dict[str, Any],
-) -> tuple[dict[str, float], dict[str, float], dict[str, dict[str, float]]]:
-    """Feature values, scope scores, and per-scope features for one payload."""
+) -> tuple[
+    dict[str, float],
+    dict[str, float],
+    dict[str, dict[str, float]],
+    dict[str, str],
+    dict[str, dict[str, str]],
+]:
+    """Feature values, scope scores, labels, and per-scope features."""
     payload = _unwrap(raw)
     global_vals: dict[str, float] = {}
     scope_scores: dict[str, float] = {}
     scope_feats: dict[str, dict[str, float]] = {}
+    global_labels: dict[str, str] = {}
+    scope_feat_labels: dict[str, dict[str, str]] = {}
     scopes = (payload.get("transparency") or {}).get("scopes") or []
     if not isinstance(scopes, list):
-        return global_vals, scope_scores, scope_feats
+        return (
+            global_vals,
+            scope_scores,
+            scope_feats,
+            global_labels,
+            scope_feat_labels,
+        )
     for detail in scopes:
         if not isinstance(detail, dict):
             continue
@@ -457,21 +536,33 @@ def _instance_maps(
             # → contributing_factors[].instance_value
             scope_scores[scope] = score
         feat_store = scope_feats.setdefault(scope, {})
+        label_store = scope_feat_labels.setdefault(scope, {})
         for fc in detail.get("feature_contributions") or []:
             if not isinstance(fc, dict):
                 continue
             name = fc.get("feature_name")
             if not isinstance(name, str) or not name:
                 continue
+            if not is_active_feature(name):
+                continue
             value = _to_float(fc.get("value"))
             if value is None:
                 continue
             # per-scope → sub_factors[].instance_value
             feat_store[name] = value
+            lbl = _resolve_feature_label(name, fc.get("label"))
+            label_store[name] = lbl
+            global_labels.setdefault(name, lbl)
             # global max across scopes → spider_plot[].instance_value
             prev = global_vals.get(name)
             global_vals[name] = value if prev is None else max(prev, value)
-    return global_vals, scope_scores, scope_feats
+    return (
+        global_vals,
+        scope_scores,
+        scope_feats,
+        global_labels,
+        scope_feat_labels,
+    )
 
 
 def _anomaly_type_of(
@@ -504,13 +595,13 @@ def _case_factor_scopes(
     Scopes to emit for this case.
 
     Same resolver as spatial analyze: ``scopes_for_anomaly_type``.
-    Unknown type falls back to all four scopes (first-level set).
+    Unknown type falls back to all scopes (first-level set).
     """
     anomaly_type = _anomaly_type_of(instance, prediction_type)
     if anomaly_type is None:
-        # Unknown type: same four sections as first-level overview.
+        # Unknown type: same sections as first-level overview.
         return list(_SCOPE_ORDER)
-    # Visitor → all four; resident → drop visitor_specific.
+    # Visitor → all scopes; resident → drop visitor_specific.
     return [s.value for s in scopes_for_anomaly_type(anomaly_type)]
 
 
@@ -557,7 +648,7 @@ def build_case_anomaly_overview(
     # 1. Instance maps: global feature values, scope scores, per-scope
     #    features. Expected-normal is the first-level sample overview
     #    (full ranked list). Empty sample → rank from this instance.
-    inst_g, inst_s, inst_sf = _instance_maps(instance)
+    inst_g, inst_s, inst_sf, inst_gl, inst_sfl = _instance_maps(instance)
     normal = build_anomaly_overview(
         sample,
         feature_max_values=feature_max_values,
@@ -591,6 +682,7 @@ def build_case_anomaly_overview(
         spider.append(
             CaseSpiderPlotPoint(
                 feature_name=p.feature_name,
+                label=inst_gl.get(p.feature_name, p.label),
                 description=p.description,
                 weight=p.weight,
                 normal_value=None if use_instance_as_rank else p.normal_value,
@@ -614,6 +706,7 @@ def build_case_anomaly_overview(
             spider.append(
                 CaseSpiderPlotPoint(
                     feature_name=name,
+                    label=inst_gl.get(name, feature_label(name)),
                     description=_describe_feature(name),
                     weight=None,
                     normal_value=None,
@@ -653,6 +746,7 @@ def build_case_anomaly_overview(
             subs.append(
                 CaseSubFactor(
                     feature_name=s.feature_name,
+                    label=inst_sfl.get(scope, {}).get(s.feature_name, s.label),
                     description=s.description,
                     instance_value=inst_v,
                     scale=s.scale,
@@ -669,6 +763,9 @@ def build_case_anomaly_overview(
             subs.append(
                 CaseSubFactor(
                     feature_name=fname,
+                    label=inst_sfl.get(scope, {}).get(
+                        fname, feature_label(fname)
+                    ),
                     description=_describe_feature(fname),
                     instance_value=inst_v,
                     scale=s_scale,
@@ -678,6 +775,7 @@ def build_case_anomaly_overview(
         factors.append(
             CaseContributingFactor(
                 name=scope,
+                label=src.label if src is not None else scope_label(scope),
                 description=(
                     src.description
                     if src is not None
@@ -689,9 +787,18 @@ def build_case_anomaly_overview(
                 sub_factors=subs,
             )
         )
-    return CaseAnomalyOverview(
+    case_overview = CaseAnomalyOverview(
         spider_plot=spider, contributing_factors=factors
     )
+    trace(
+        "resultpage-build-case",
+        "build_case_anomaly_overview complete",
+        spider_plot_count=len(case_overview.spider_plot),
+        contributing_factor_scopes=[
+            f.name for f in case_overview.contributing_factors
+        ],
+    )
+    return case_overview
 
 
 def case_results_from_db_payload(
@@ -736,14 +843,32 @@ def case_results_from_db_payload(
         ),
     )
     inner = _unwrap(result)
+    trace(
+        "resultpage-case-in",
+        "db-service case detail received",
+        prediction_id=str(data.get("prediction_id") or prediction_id),
+        normal_sample_count=len(sample),
+        stored_final_score=inner.get("final_score"),
+        transparency_scopes=[
+            s.get("scope")
+            for s in (inner.get("transparency") or {}).get("scopes") or []
+            if isinstance(s, dict)
+        ],
+    )
     score_f = _to_float(inner.get("final_score"))
     anomalous = None
     if "is_anomalous" in inner:
         anomalous = bool(inner.get("is_anomalous"))
-    return CaseResultsResponse(
+    case_response = CaseResultsResponse(
         prediction_id=str(data.get("prediction_id") or prediction_id),
         final_score=score_f,
         is_anomalous=anomalous,
-        severity=_severity_of(score_f),
+        severity=severity_from_final_score(score_f),
         anomaly_overview=overview,
     )
+    trace_json(
+        "resultpage-case-out",
+        "CaseResultsResponse",
+        case_response.model_dump(),
+    )
+    return case_response

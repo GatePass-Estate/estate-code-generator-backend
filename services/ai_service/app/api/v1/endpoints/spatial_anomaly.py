@@ -14,6 +14,7 @@ from app.models.spatial_anomaly_schema import SpatialAnalyzeResponse
 from app.pipeline.spatial_anomaly_orchestration import (
     SpatialAnomalyOrchestrator,
 )
+from app.core.spatial_anomaly_trace import trace, trace_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,6 +67,15 @@ async def analyze_spatial_anomalies(
         body.code_validation.estate_id,
     )
 
+    trace_json(
+        "api-analyze-in",
+        "POST /spatial-anomaly/analyze request body",
+        {
+            "anomaly_type": anomaly_type.value,
+            "code_validation": body.code_validation.model_dump(mode="json"),
+        },
+    )
+
     orch = SpatialAnomalyOrchestrator()
     timeout = httpx.Timeout(30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -86,4 +96,12 @@ async def analyze_spatial_anomalies(
                 detail=e.message,
             ) from e
 
-    return SpatialAnalyzeResponse(**result)
+    response = SpatialAnalyzeResponse(**result)
+    trace(
+        "api-analyze-out",
+        "SpatialAnalyzeResponse returned to client",
+        final_score=response.final_score,
+        is_anomalous=response.is_anomalous,
+        prediction_result_id=response.prediction_result_id,
+    )
+    return response

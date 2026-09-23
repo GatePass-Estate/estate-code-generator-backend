@@ -68,6 +68,7 @@ class SubFactor(BaseModel):
     """One feature inside a contributing-factor scope."""
 
     feature_name: str
+    label: str
     description: str
     normal_value: float | None = None
     weight: float | None = None
@@ -79,6 +80,7 @@ class ContributingFactor(BaseModel):
     """One analysis scope with averaged score and nested sub-factors."""
 
     name: str
+    label: str
     description: str
     normal_value: float | None = Field(
         default=None, description="Averaged scope score for normal behaviour."
@@ -93,6 +95,7 @@ class SpiderPlotPoint(BaseModel):
     """One ranked feature for the spider plot / top-factors list."""
 
     feature_name: str
+    label: str
     description: str
     weight: float | None = None
     normal_value: float | None = None
@@ -184,6 +187,7 @@ class CaseSubFactor(BaseModel):
     """Instance feature value against the period max for one sub-factor."""
 
     feature_name: str
+    label: str
     description: str
     instance_value: float | None = None
     scale: float | None = None
@@ -194,6 +198,7 @@ class CaseContributingFactor(BaseModel):
     """Instance scope score against the period max, with sub-factors."""
 
     name: str
+    label: str
     description: str
     instance_value: float | None = None
     scale: float | None = None
@@ -205,6 +210,7 @@ class CaseSpiderPlotPoint(BaseModel):
     """Spider point with expected-normal, instance, and period-max scale."""
 
     feature_name: str
+    label: str
     description: str
     weight: float | None = None
     normal_value: float | None = None

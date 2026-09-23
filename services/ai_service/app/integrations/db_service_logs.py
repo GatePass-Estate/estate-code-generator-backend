@@ -1,7 +1,25 @@
-"""Pull visitor/resident log rows from db-service for spatial anomaly analysis."""
+"""
+Load visitor/resident log history for spatial anomaly analysis.
+
+Each analysis scope (temporal, visitor, resident, security, estate-wide) gets
+its **own** db-service search with scope-specific filters and a row cap of
+``SPATIAL_SCOPE_HISTORY_LIMIT`` (default 40). This replaced the earlier design
+that fetched one shared 30-day window and sliced it in Python — that approach
+gave every scope the same calendar depth even when a guard or repeat visitor
+needed a longer look-back.
+
+Temporal feature engineering uses the **focal anchor row only** (clock/calendar
+features). Detector history for temporal still batch-loads stored
+``features_temporal`` vectors from the **resident cohort** at scoring time
+(see :meth:`LogHistorySlices.rows_for_history_lookup`).
+
+Resident-log anchors skip visitor-scope fetch entirely; visitor-log anchors
+run four parallel searches plus a local temporal wrangle.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,31 +27,36 @@ from typing import Any, Literal
 
 import httpx
 
-from app.core.config import Settings
+from app.core.config import Settings, settings
 from app.core.exceptions import LogHistoryError
 from app.domain.scopes import AnalysisScope
 from app.models.code_validation import CodeValidationPayload
+from app.core.spatial_anomaly_trace import trace
 
 logger = logging.getLogger(__name__)
 
-_LOG_PAGE_SIZE = 100
 HISTORY_WINDOW_DAYS = 30
 
 
 @dataclass(frozen=True)
 class LogHistorySlices:
     """
-    Wrangled log rows for one anchor-centred window, split for feature scopes.
+    Wrangled log rows for one anchor, fetched **per scope** with scope filters.
 
-    All list fields are **already passed through** ``wrangle_visit_records``
-    (null/empty stripped). ``focal_record`` remains the raw anchor dict from
-    db-service for timestamps and ids used in focal features.
+    Most scopes use their own db-service search (up to
+    ``SPATIAL_SCOPE_HISTORY_LIMIT`` rows ending at the anchor). **Temporal**
+    is focal-only — clock/calendar features need no log history. Resident
+    anchors skip visitor-scope fetch.
+
+    All list fields are **already passed through** ``wrangle_visit_records``.
+    ``focal_record`` remains the raw anchor dict from db-service.
     """
 
     source: Literal["visitor_log", "resident_log"]
     payload: CodeValidationPayload
     focal_record: dict[str, Any]
     merged_full: list[dict[str, Any]]
+    temporal: list[dict[str, Any]]
     estate_wide: list[dict[str, Any]]
     visitor_specific: list[dict[str, Any]]
     resident_specific: list[dict[str, Any]]
@@ -44,6 +67,7 @@ class LogHistorySlices:
     ) -> list[dict[str, Any]]:
         """Wrangled rows to pass into feature engineering for ``scope``."""
         mapping: dict[AnalysisScope, list[dict[str, Any]]] = {
+            AnalysisScope.TEMPORAL: self.temporal,
             AnalysisScope.ESTATE_WIDE: self.estate_wide,
             AnalysisScope.VISITOR: self.visitor_specific,
             AnalysisScope.RESIDENT: self.resident_specific,
@@ -56,6 +80,25 @@ class LogHistorySlices:
     ) -> dict[AnalysisScope, list[dict[str, Any]]]:
         """All scopes; each value is the wrangled slice for that scope."""
         return {s: self.rows_for_analysis_scope(s) for s in AnalysisScope}
+
+    def rows_for_history_lookup(
+        self, scope: AnalysisScope
+    ) -> list[dict[str, Any]]:
+        """
+        Cohort used to resolve prior log ids for feature-store batch lookup.
+
+        Feature engineering and history lookup can differ for the same scope:
+
+        * **TEMPORAL** — engineered from :attr:`temporal` (focal row only), but
+          detector reference vectors are loaded from prior logs in the **resident
+          cohort** (same host activity within the estate). Those priors carry
+          stored ``features_temporal`` JSON from earlier validations.
+        * **All other scopes** — same wrangled slice as
+          :meth:`rows_for_analysis_scope`.
+        """
+        if scope == AnalysisScope.TEMPORAL:
+            return self.rows_for_analysis_scope(AnalysisScope.RESIDENT)
+        return self.rows_for_analysis_scope(scope)
 
 
 def _db_url(settings: Settings, path: str) -> str:
@@ -100,16 +143,12 @@ def _event_time_for_sort(rec: dict[str, Any]) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _history_window_from_anchor(
-    anchor: dict[str, Any],
-) -> tuple[datetime, datetime]:
+def _history_search_end_from_anchor(anchor: dict[str, Any]) -> datetime:
     """
-    ``(from_date, to_date)`` for search: one month **back from** the anchor row.
+    Upper bound for scope history searches (inclusive ``to_date``).
 
-    Upper bound is the later of event time (visit/access) and ``created_at``.
-    db-service search filters on ``created_at``, while validation often stamps
-    ``access_time``/``visit_time`` just before the insert — so ending the
-    window at event time alone can exclude the brand-new anchor row.
+    Uses the later of event time and ``created_at`` so a just-inserted anchor
+    row is not excluded when validation timestamps precede ``created_at``.
     """
     end = _record_event_time_or_none(anchor)
     created = None
@@ -137,6 +176,19 @@ def _history_window_from_anchor(
             "created_at; cannot determine the history search window.",
             status_code=422,
         )
+    return end
+
+
+def _history_window_from_anchor(
+    anchor: dict[str, Any],
+) -> tuple[datetime, datetime]:
+    """
+    ``(from_date, to_date)`` for fixed-calendar searches (e.g. backfill scripts).
+
+    Live spatial analysis uses per-scope searches capped by
+    ``SPATIAL_SCOPE_HISTORY_LIMIT`` without this ``from_date``.
+    """
+    end = _history_search_end_from_anchor(anchor)
     start = end - timedelta(days=HISTORY_WINDOW_DAYS)
     return start, end
 
@@ -156,84 +208,6 @@ def _merge_anchor_and_sort(
         by_id[str(aid)] = anchor
     merged = list(by_id.values())
     return sorted(merged, key=_event_time_for_sort)
-
-
-def _norm_name(value: Any) -> str:
-    """Lowercase stripped string for visitor-name comparisons; non-strings yield empty."""
-    if not isinstance(value, str):
-        return ""
-    return value.strip().lower()
-
-
-def _split_visitor_log_cleaned(
-    cleaned_merged: list[dict[str, Any]],
-    anchor: dict[str, Any],
-    payload: CodeValidationPayload,
-) -> LogHistorySlices:
-    """Partition wrangled visitor-log rows by analysis scope."""
-    estate = list(cleaned_merged)
-    uid = str(payload.user_id)
-    sec = str(payload.security_id)
-    aname = _norm_name(anchor.get("visitor_fullname"))
-    visitor_specific = [
-        r
-        for r in cleaned_merged
-        if aname and _norm_name(r.get("visitor_fullname")) == aname
-    ]
-    resident_specific = [
-        r for r in cleaned_merged if str(r.get("user_id")) == uid
-    ]
-    security_specific = [
-        r for r in cleaned_merged if str(r.get("security_id")) == sec
-    ]
-    return LogHistorySlices(
-        source="visitor_log",
-        payload=payload,
-        focal_record=anchor,
-        merged_full=estate,
-        estate_wide=estate,
-        visitor_specific=visitor_specific,
-        resident_specific=resident_specific,
-        security_specific=security_specific,
-    )
-
-
-def _split_resident_log_cleaned(
-    cleaned_merged: list[dict[str, Any]],
-    anchor: dict[str, Any],
-    payload: CodeValidationPayload,
-) -> LogHistorySlices:
-    """
-    Partition wrangled resident-log rows by analysis scope.
-
-    Visitor-scope uses ``hashed_code`` alignment with the anchor (resident rows
-    have no visitor name).
-    """
-    estate = list(cleaned_merged)
-    uid = str(payload.user_id)
-    sec = str(payload.security_id)
-    h_anchor = anchor.get("hashed_code")
-    visitor_specific = [
-        r
-        for r in cleaned_merged
-        if h_anchor is not None and r.get("hashed_code") == h_anchor
-    ]
-    resident_specific = [
-        r for r in cleaned_merged if str(r.get("user_id")) == uid
-    ]
-    security_specific = [
-        r for r in cleaned_merged if str(r.get("security_id")) == sec
-    ]
-    return LogHistorySlices(
-        source="resident_log",
-        payload=payload,
-        focal_record=anchor,
-        merged_full=estate,
-        estate_wide=estate,
-        visitor_specific=visitor_specific,
-        resident_specific=resident_specific,
-        security_specific=security_specific,
-    )
 
 
 async def _get_json(
@@ -265,33 +239,307 @@ async def _get_json(
     return response.json()
 
 
-async def _fetch_all_search_pages(
+def _scope_history_limit(cfg: Settings | None = None) -> int:
+    lim = int((cfg or settings).SPATIAL_SCOPE_HISTORY_LIMIT)
+    return max(1, lim)
+
+
+async def _fetch_scope_records(
     client: httpx.AsyncClient,
     url: str,
-    base_params: dict[str, Any],
     *,
-    from_dt: datetime,
+    filters: dict[str, Any],
     to_dt: datetime,
+    limit: int,
 ) -> list[dict[str, Any]]:
-    """Page through search results until all rows in the date window are read."""
+    """
+    Fetch one capped page of log rows for a single analysis scope.
+
+    Search semantics:
+
+    * ``to_date`` — anchor validation time (inclusive upper bound).
+    * ``limit`` — max rows (``SPATIAL_SCOPE_HISTORY_LIMIT``, default 40).
+    * **No ``from_date``** — db returns the newest ``limit`` rows ending at
+      ``to_date``, even if that spans more than 30 calendar days. Thin scopes
+      (e.g. one guard's validations) can therefore reach further back than a
+      dense estate-wide cohort within the same row budget.
+    * ``filters`` — scope-specific (estate_id, user_id, security_id, etc.).
+
+    Returns raw db-service items; caller merges anchor, dedupes, and wrangles.
+    """
     params: dict[str, Any] = {
-        "from_date": _format_query_datetime(from_dt),
         "to_date": _format_query_datetime(to_dt),
-        "limit": _LOG_PAGE_SIZE,
-        **base_params,
+        "limit": limit,
+        "page": 1,
     }
-    all_items: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        page_params = {**params, "page": page}
-        data = await _get_json(client, url, params=page_params)
-        items = data.get("items") or []
-        total = int(data.get("total") or 0)
-        all_items.extend(items)
-        if not items or len(all_items) >= total or len(items) < _LOG_PAGE_SIZE:
-            break
-        page += 1
-    return all_items
+    for key, value in filters.items():
+        if value is not None:
+            params[key] = value
+    data = await _get_json(client, url, params=params)
+    items = data.get("items") or []
+    return items if isinstance(items, list) else []
+
+
+async def _wrangled_scope_rows(
+    records: list[dict[str, Any]],
+    anchor: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Merge anchor, dedupe, sort, and wrangle rows for one scope cohort."""
+    from app.pipeline.data_wrangler import wrangle_visit_records
+
+    merged = _merge_anchor_and_sort(records, anchor)
+    if not merged:
+        return []
+    return await wrangle_visit_records(merged)
+
+
+async def _wrangled_focal_only(anchor: dict[str, Any]) -> list[dict[str, Any]]:
+    """Wrangle the anchor row alone (temporal scope — no history fetch)."""
+    return await _wrangled_scope_rows([], anchor)
+
+
+async def _load_visitor_log_slices(
+    client: httpx.AsyncClient,
+    cfg: Settings,
+    *,
+    anchor: dict[str, Any],
+    payload: CodeValidationPayload,
+    search_url: str,
+) -> LogHistorySlices:
+    """
+    Build :class:`LogHistorySlices` for a visitor-log anchor.
+
+    Filter matrix (each capped at ``SPATIAL_SCOPE_HISTORY_LIMIT``):
+
+    +------------------+------------------------------------------+
+    | Slice            | db-service filters                       |
+    +==================+==========================================+
+    | temporal         | focal anchor only (no search)            |
+    | resident         | ``estate_id`` + ``user_id``              |
+    | estate_wide      | ``estate_id`` only                       |
+    | visitor_specific | ``user_id`` + ``visitor_fullname``       |
+    | security         | ``estate_id`` + ``security_id``          |
+    +------------------+------------------------------------------+
+
+    Steps:
+    1. Derive ``to_dt`` from anchor event/created time.
+    2. Fire four parallel searches + focal-only temporal wrangle.
+    3. Merge anchor into each cohort, dedupe, sort, wrangle.
+    4. Emit trace row counts for operational verification.
+    """
+    # Step 1 — anchor end time and shared row budget.
+    to_dt = _history_search_end_from_anchor(anchor)
+    limit = _scope_history_limit(cfg)
+    eid = str(payload.estate_id)
+    uid = str(payload.user_id)
+    sec = str(payload.security_id)
+
+    resident_filters = {"estate_id": eid, "user_id": uid}
+    estate_filters = {"estate_id": eid}
+    security_filters = {"estate_id": eid, "security_id": sec}
+    visitor_filters: dict[str, Any] = {"user_id": uid}
+    vname = anchor.get("visitor_fullname")
+    if isinstance(vname, str) and vname.strip():
+        visitor_filters["visitor_fullname"] = vname.strip()
+
+    # Step 2 — parallel db fetches (temporal is local wrangle only).
+    temporal_task = _wrangled_focal_only(anchor)
+    estate_raw, visitor_raw, resident_raw, security_raw = await asyncio.gather(
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=estate_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=visitor_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=resident_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=security_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+    )
+
+    # Step 3 — merge anchor, dedupe, sort, wrangle each cohort independently.
+    (
+        temporal_clean,
+        estate_clean,
+        visitor_clean,
+        resident_clean,
+        security_clean,
+    ) = await asyncio.gather(
+        temporal_task,
+        _wrangled_scope_rows(estate_raw, anchor),
+        _wrangled_scope_rows(visitor_raw, anchor),
+        _wrangled_scope_rows(resident_raw, anchor),
+        _wrangled_scope_rows(security_raw, anchor),
+    )
+
+    if not (
+        temporal_clean
+        or estate_clean
+        or visitor_clean
+        or resident_clean
+        or security_clean
+    ):
+        raise LogHistoryError(
+            "No log rows available for analysis after per-scope fetch; "
+            "anchor could not be merged into any scope cohort.",
+            status_code=422,
+        )
+
+    # Step 4 — operational trace for log verification (see ai-service stdout).
+    trace(
+        "log-fetch",
+        "visitor log per-scope history fetched and wrangled",
+        scope_limit=limit,
+        search_end=_format_query_datetime(to_dt),
+        anchor_id=anchor.get("id"),
+        temporal_rows=len(temporal_clean),
+        estate_wide_rows=len(estate_clean),
+        visitor_specific_rows=len(visitor_clean),
+        resident_specific_rows=len(resident_clean),
+        security_specific_rows=len(security_clean),
+    )
+
+    return LogHistorySlices(
+        source="visitor_log",
+        payload=payload,
+        focal_record=anchor,
+        merged_full=estate_clean,
+        temporal=temporal_clean,
+        estate_wide=estate_clean,
+        visitor_specific=visitor_clean,
+        resident_specific=resident_clean,
+        security_specific=security_clean,
+    )
+
+
+async def _load_resident_log_slices(
+    client: httpx.AsyncClient,
+    cfg: Settings,
+    *,
+    anchor: dict[str, Any],
+    payload: CodeValidationPayload,
+    search_url: str,
+) -> LogHistorySlices:
+    """
+    Build :class:`LogHistorySlices` for a resident-log anchor.
+
+    Same per-scope cap as visitor anchors, but **no visitor_specific fetch**
+    (resident anomaly pipeline omits that scope).
+
+    Filter matrix:
+
+    +-------------+-------------------------------------+
+    | Slice       | db-service filters                  |
+    +=============+=====================================+
+    | temporal    | focal anchor only                   |
+    | resident    | ``estate_id`` + ``user_id``         |
+    | estate_wide | ``estate_id`` only                  |
+    | security    | ``estate_id`` + ``security_id``     |
+    | visitor     | ``[]`` (not fetched)                |
+    +-------------+-------------------------------------+
+    """
+    # Step 1 — anchor end time and shared row budget.
+    to_dt = _history_search_end_from_anchor(anchor)
+    limit = _scope_history_limit(cfg)
+    eid = str(payload.estate_id)
+    uid = str(payload.user_id)
+    sec = str(payload.security_id)
+
+    resident_filters = {"estate_id": eid, "user_id": uid}
+    estate_filters = {"estate_id": eid}
+    security_filters = {"estate_id": eid, "security_id": sec}
+
+    # Step 2 — three parallel db fetches (no visitor_specific for resident scans).
+    temporal_task = _wrangled_focal_only(anchor)
+    estate_raw, resident_raw, security_raw = await asyncio.gather(
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=estate_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=resident_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+        _fetch_scope_records(
+            client,
+            search_url,
+            filters=security_filters,
+            to_dt=to_dt,
+            limit=limit,
+        ),
+    )
+
+    # Step 3 — merge anchor, dedupe, sort, wrangle each cohort independently.
+    (
+        temporal_clean,
+        estate_clean,
+        resident_clean,
+        security_clean,
+    ) = await asyncio.gather(
+        temporal_task,
+        _wrangled_scope_rows(estate_raw, anchor),
+        _wrangled_scope_rows(resident_raw, anchor),
+        _wrangled_scope_rows(security_raw, anchor),
+    )
+
+    if not (
+        temporal_clean or estate_clean or resident_clean or security_clean
+    ):
+        raise LogHistoryError(
+            "No log rows available for analysis after per-scope fetch; "
+            "anchor could not be merged into any scope cohort.",
+            status_code=422,
+        )
+
+    # Step 4 — operational trace (visitor_specific intentionally zero).
+    trace(
+        "log-fetch",
+        "resident log per-scope history fetched and wrangled",
+        scope_limit=limit,
+        search_end=_format_query_datetime(to_dt),
+        anchor_id=anchor.get("id"),
+        temporal_rows=len(temporal_clean),
+        estate_wide_rows=len(estate_clean),
+        visitor_specific_rows=0,
+        resident_specific_rows=len(resident_clean),
+        security_specific_rows=len(security_clean),
+    )
+
+    return LogHistorySlices(
+        source="resident_log",
+        payload=payload,
+        focal_record=anchor,
+        merged_full=estate_clean,
+        temporal=temporal_clean,
+        estate_wide=estate_clean,
+        visitor_specific=[],
+        resident_specific=resident_clean,
+        security_specific=security_clean,
+    )
 
 
 async def load_log_records_for_analysis(
@@ -300,62 +548,44 @@ async def load_log_records_for_analysis(
     payload: CodeValidationPayload,
 ) -> LogHistorySlices:
     """
-    Load the anchor, fetch the wide time window from db-service, merge and sort,
-    **wrangle** the merged rows, then **split** the wrangled rows for scopes:
+    Load the anchor and fetch **separate** capped history cohorts per scope.
 
-    * **Estate-wide** — full wrangled window (visitor: host ``user_id`` visits;
-      resident: estate-wide accesses).
-    * **Visitor-specific** — visitor logs: same ``visitor_fullname`` as anchor;
-      resident logs: same ``hashed_code`` as anchor.
-    * **Resident-specific** — ``payload.user_id``.
-    * **Security-specific** — ``payload.security_id``.
+    Each scope uses db-service search with scope-specific filters and
+    ``limit=SPATIAL_SCOPE_HISTORY_LIMIT`` (default 40), ending at the anchor
+    time. No shared ``from_date`` window — security and visitor cohorts can
+    reach further back independently.
 
-    Returns only wrangled row lists plus the raw ``focal_record`` (anchor).
+    * **Temporal** — focal row only (no db search; features are anchor clock
+      fields). Detector history uses stored temporal vectors from the resident
+      cohort at scoring time.
+    * **Resident** — ``estate_id`` + ``user_id`` (both anchor types).
+    * **Estate-wide** — ``estate_id`` only (both anchor types; down-weighted
+      in ensemble config because it is noisier).
+    * **Visitor-specific** — ``user_id`` + ``visitor_fullname`` (visitor
+      anchors only; not fetched for resident anchors).
+    * **Security-specific** — ``estate_id`` + ``security_id`` (both anchor
+      types).
+
+    Scope fetches and wrangling run concurrently via ``asyncio.gather``.
 
     Raises:
-        LogHistoryError: If the anchor cannot be loaded, the window is empty, or
-        HTTP transport fails when calling db-service.
+        LogHistoryError: If the anchor cannot be loaded or no scope cohort
+        contains the anchor after merge.
     """
-    # Local import avoids ``app.pipeline`` package init (orchestrator) while this
-    # module is still loading.
-    from app.pipeline.data_wrangler import wrangle_visit_records
-
     if payload.visitor_log_id is not None:
         anchor_url = _db_url(
             settings,
             f"api/v1/codeservice/visitorlog/{payload.visitor_log_id}",
         )
         anchor = await _get_json(client, anchor_url)
-        from_dt, to_dt = _history_window_from_anchor(anchor)
         search_url = _db_url(settings, "api/v1/codeservice/visitorlog/search")
-        records = await _fetch_all_search_pages(
+        return await _load_visitor_log_slices(
             client,
-            search_url,
-            {"user_id": str(payload.user_id)},
-            from_dt=from_dt,
-            to_dt=to_dt,
+            settings,
+            anchor=anchor,
+            payload=payload,
+            search_url=search_url,
         )
-        logger.debug(
-            "visitor log wide history rows=%s window=%s..%s",
-            len(records),
-            _format_query_datetime(from_dt),
-            _format_query_datetime(to_dt),
-        )
-        if not records:
-            logger.debug(
-                "visitor log search empty for window; using anchor only "
-                "anchor_id=%s",
-                anchor.get("id"),
-            )
-        merged_raw = _merge_anchor_and_sort(records, anchor)
-        if not merged_raw:
-            raise LogHistoryError(
-                "No log rows returned for the one-month window ending at the "
-                "anchor visit/access time; analysis cannot proceed.",
-                status_code=422,
-            )
-        cleaned_merged = await wrangle_visit_records(merged_raw)
-        return _split_visitor_log_cleaned(cleaned_merged, anchor, payload)
 
     if payload.resident_log_id is not None:
         anchor_url = _db_url(
@@ -363,36 +593,14 @@ async def load_log_records_for_analysis(
             f"api/v1/codeservice/residentlog/{payload.resident_log_id}",
         )
         anchor = await _get_json(client, anchor_url)
-        from_dt, to_dt = _history_window_from_anchor(anchor)
         search_url = _db_url(settings, "api/v1/codeservice/residentlog/search")
-        records = await _fetch_all_search_pages(
+        return await _load_resident_log_slices(
             client,
-            search_url,
-            {"estate_id": str(payload.estate_id)},
-            from_dt=from_dt,
-            to_dt=to_dt,
+            settings,
+            anchor=anchor,
+            payload=payload,
+            search_url=search_url,
         )
-        logger.debug(
-            "resident log wide history rows=%s window=%s..%s",
-            len(records),
-            _format_query_datetime(from_dt),
-            _format_query_datetime(to_dt),
-        )
-        if not records:
-            logger.debug(
-                "resident log search empty for window; using anchor only "
-                "anchor_id=%s",
-                anchor.get("id"),
-            )
-        merged_raw = _merge_anchor_and_sort(records, anchor)
-        if not merged_raw:
-            raise LogHistoryError(
-                "No log rows returned for the one-month window ending at the "
-                "anchor visit/access time; analysis cannot proceed.",
-                status_code=422,
-            )
-        cleaned_merged = await wrangle_visit_records(merged_raw)
-        return _split_resident_log_cleaned(cleaned_merged, anchor, payload)
 
     raise LogHistoryError(
         "Exactly one of visitor_log_id or resident_log_id is required.",

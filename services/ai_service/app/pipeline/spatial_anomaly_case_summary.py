@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.config import Settings
+from app.core.severity_config import severity_label_from_final_score
 from app.models.spatial_anomaly_resultpage import InhouseSummary, LlmSummary
 from app.pipeline.incident_llm_summarizer import _extract_json_object
 from app.pipeline.spatial_anomaly_resultpage import (
@@ -19,20 +20,6 @@ from app.pipeline.spatial_anomaly_resultpage import (
 )
 
 logger = logging.getLogger(__name__)
-
-_SEVERITY_HIGH = 0.8
-_SEVERITY_MEDIUM = 0.5
-
-
-def _severity_label(score: float | None) -> str:
-    """Map final_score onto low / medium / high wording."""
-    if score is None:
-        return "unknown"
-    if score >= _SEVERITY_HIGH:
-        return "high"
-    if score >= _SEVERITY_MEDIUM:
-        return "medium"
-    return "low"
 
 
 def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
@@ -48,7 +35,7 @@ def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
     anomalous = bool(payload.get("is_anomalous"))
     anomaly_type = str(payload.get("anomaly_type") or "unknown")
     verdict = "anomalous" if anomalous else "within expected behaviour"
-    severity = _severity_label(score)
+    severity = severity_label_from_final_score(score)
     score_txt = f"{score:.3f}" if score is not None else "n/a"
     executive = (
         f"This {anomaly_type} prediction is {verdict} "
@@ -91,14 +78,12 @@ def build_inhouse_summary(raw: dict[str, Any]) -> InhouseSummary:
             )
             for fc in ranked[:8]:
                 fname = str(fc.get("feature_name"))
+                display = fc.get("label") or _describe_feature(fname)
                 value = _to_float(fc.get("value"))
                 weight = _to_float(fc.get("weight"))
                 v_txt = f"{value:.3f}" if value is not None else "n/a"
                 w_txt = f"{weight:.3f}" if weight is not None else "n/a"
-                lines.append(
-                    f"  - {_describe_feature(fname)}: value {v_txt}, "
-                    f"weight {w_txt}"
-                )
+                lines.append(f"  - {display}: value {v_txt}, weight {w_txt}")
     return InhouseSummary(
         executive_summary=executive,
         detailed_insight="\n".join(lines),
