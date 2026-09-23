@@ -41,13 +41,19 @@ class Settings(BaseSettings):
 
     # Scheduler — internal API key shared across services
     INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
-    # Hour (UTC, 0-23) at which the daily cron runs
-    CRON_HOUR: int = int(os.getenv("CRON_HOUR", 0))
+    # Hour (UTC, 0-23) at which the daily crons run
+    CRON_HOUR: int = int(os.getenv("CRON_HOUR", "0"))
     # Full URL of the user-profile-service daily cron endpoint
     USER_PROFILE_CRON_URL: str = os.getenv(
         "USER_PROFILE_CRON_URL",
         "http://user-profile-service:9034/api/v1/internal/cron/daily",
     )
+    # Full URL of the revenue-service daily cron endpoint
+    REVENUE_CRON_URL: str = os.getenv(
+        "REVENUE_CRON_URL",
+        "http://revenue-service:9037/api/v1/internal/cron/daily",
+    )
+    REVENUE_CRON_HOUR: int = int(os.getenv("REVENUE_CRON_HOUR", "2"))
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_db_url(cls, v, info: ValidationInfo):

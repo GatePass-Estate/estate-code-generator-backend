@@ -43,6 +43,11 @@ class NotificationType(str, Enum):
     HOUSEHOLD_HEAD_ASSIGNED = "HOUSEHOLD_HEAD_ASSIGNED"
     HOUSEHOLD_NEEDS_HEAD = "HOUSEHOLD_NEEDS_HEAD"
     SPATIAL_ANOMALY_DETECTED = "SPATIAL_ANOMALY_DETECTED"
+    # Subscription lifecycle
+    SUBSCRIPTION_PAYMENT_FAILED = "SUBSCRIPTION_PAYMENT_FAILED"
+    SUBSCRIPTION_GRACE_PERIOD = "SUBSCRIPTION_GRACE_PERIOD"
+    SUBSCRIPTION_GRACE_PERIOD_ADMIN = "SUBSCRIPTION_GRACE_PERIOD_ADMIN"
+    SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED"
 
 
 # Types for which user preferences are ignored — always delivered
@@ -70,6 +75,10 @@ MANDATORY_TYPES: set[NotificationType] = {
     NotificationType.ESTATE_DEACTIVATION_SCHEDULED,
     NotificationType.ESTATE_REACTIVATED,
     NotificationType.SPATIAL_ANOMALY_DETECTED,
+    NotificationType.SUBSCRIPTION_PAYMENT_FAILED,
+    NotificationType.SUBSCRIPTION_GRACE_PERIOD,
+    NotificationType.SUBSCRIPTION_GRACE_PERIOD_ADMIN,
+    NotificationType.SUBSCRIPTION_EXPIRED,
 }
 
 # Types that do NOT create an in-app notification row.
@@ -111,6 +120,8 @@ EMAIL_TYPES: set[NotificationType] = {
     NotificationType.ESTATE_DEACTIVATED,
     NotificationType.ESTATE_DEACTIVATION_SCHEDULED,
     NotificationType.ESTATE_REACTIVATED,
+    NotificationType.SUBSCRIPTION_GRACE_PERIOD,
+    NotificationType.SUBSCRIPTION_EXPIRED,
 }
 
 # Types that send push by default
@@ -131,6 +142,10 @@ PUSH_TYPES: set[NotificationType] = {
     NotificationType.HOUSEHOLD_HEAD_ASSIGNED,
     NotificationType.HOUSEHOLD_NEEDS_HEAD,
     NotificationType.SPATIAL_ANOMALY_DETECTED,
+    NotificationType.SUBSCRIPTION_PAYMENT_FAILED,
+    NotificationType.SUBSCRIPTION_GRACE_PERIOD,
+    NotificationType.SUBSCRIPTION_GRACE_PERIOD_ADMIN,
+    NotificationType.SUBSCRIPTION_EXPIRED,
 }
 
 

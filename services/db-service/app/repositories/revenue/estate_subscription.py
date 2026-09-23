@@ -223,6 +223,10 @@ class EstateSubscriptionRepository:
                     if key == "from_date"
                     else query.where(TableModel.created_at <= request.to_date)
                 )
+            elif key == "period_end_before":
+                query = query.where(
+                    TableModel.period_end < request.period_end_before
+                )
             elif hasattr(TableModel, key):
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)

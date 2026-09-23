@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints.ai_features import router as ai_features_router
 from app.api.v1.endpoints.checkout import router as checkout_router
 from app.api.v1.endpoints.entitlements import router as entitlements_router
+from app.api.v1.endpoints.internal import router as internal_router
 from app.api.v1.endpoints.subscriptions import router as subscriptions_router
 from app.api.v1.endpoints.webhooks import router as webhooks_router
 
@@ -34,4 +35,9 @@ api_router.include_router(
     subscriptions_router,
     prefix="/subscriptions",
     tags=["subscriptions"],
+)
+api_router.include_router(
+    internal_router,
+    prefix="/internal",
+    tags=["internal"],
 )

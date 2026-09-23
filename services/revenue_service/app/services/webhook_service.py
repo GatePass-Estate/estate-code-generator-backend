@@ -9,6 +9,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
+from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.entitlement_service import EntitlementService
 from app.services.subscription_service import SubscriptionService
@@ -557,11 +558,6 @@ class WebhookService:
         Failures that arrive after period_end (grace-window retries) are
         logged but do NOT change the subscription status.
         """
-        # TODO: Integrate the notification service to send payment failure
-        # emails to the estate admin. Paystack may send its own receipts
-        # via dashboard email settings — verify before adding our own to
-        # avoid duplicate notifications.
-
         # Auto-renewal invoice failures carry a subscription_code; use it
         # as the primary lookup. Initial-payment failures have no
         # subscription_code — fall back to the GP- reference.
@@ -625,6 +621,22 @@ class WebhookService:
                 "estate_id=%s subscription_id=%s",
                 estate_id,
                 subscription["id"],
+            )
+            await fire_notify(
+                {
+                    "type": "SUBSCRIPTION_PAYMENT_FAILED",
+                    "title": "Subscription payment failed",
+                    "body": (
+                        "Your automatic subscription renewal payment failed. "
+                        "Your access continues until your current period ends — "
+                        "please update your payment method to avoid any interruption."
+                    ),
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["primary_admin"],
+                    },
+                    "metadata": {"estate_id": estate_id},
+                }
             )
         else:
             logger.info(

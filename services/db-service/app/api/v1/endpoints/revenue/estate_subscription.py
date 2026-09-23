@@ -134,6 +134,7 @@ async def search(
     paystack_customer_code: str | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
+    period_end_before: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
     service: Service = Depends(get_service),

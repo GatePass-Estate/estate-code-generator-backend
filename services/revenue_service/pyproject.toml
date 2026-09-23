@@ -10,6 +10,7 @@ packages = [{include = "app"}]
 python = "^3.11"
 gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
 gatepass-rbac = {path = "../../shared/gatepass_rbac", develop = true}
+gatepass-notify = {path = "../../shared/gatepass_notify", develop = true}
 fastapi = "^0.138.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
 pydantic = {extras = ["email"], version = "^2.11.4"}

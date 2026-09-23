@@ -16,7 +16,7 @@ logger = logging.getLogger("cache-service")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cron_task = asyncio.create_task(
+    ups_task = asyncio.create_task(
         scheduled_http_job(
             url=settings.USER_PROFILE_CRON_URL,
             internal_api_key=settings.INTERNAL_API_KEY,
@@ -24,16 +24,30 @@ async def lifespan(app: FastAPI):
             name="user-profile-daily-cron",
         )
     )
+    revenue_task = asyncio.create_task(
+        scheduled_http_job(
+            url=settings.REVENUE_CRON_URL,
+            internal_api_key=settings.INTERNAL_API_KEY,
+            hour=settings.REVENUE_CRON_HOUR,
+            name="revenue-daily-expiry",
+        )
+    )
     logger.info(
         "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
         settings.CRON_HOUR,
     )
+    logger.info(
+        "Scheduler started: revenue-daily-expiry at %02d:00 UTC",
+        settings.REVENUE_CRON_HOUR,
+    )
     yield
-    cron_task.cancel()
-    try:
-        await cron_task
-    except asyncio.CancelledError:
-        logger.info("Scheduler stopped: user-profile-daily-cron")
+    for task in (ups_task, revenue_task):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Schedulers stopped")
 
 
 app = FastAPI(
