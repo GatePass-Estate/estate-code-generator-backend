@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
 from gatepass_rbac import require_admin, require_estate_membership
 
 from app.repositories.incident_report import IncidentReportRepository
@@ -100,6 +101,35 @@ class IncidentReportService:
             category=category,
             from_date=from_date,
             to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+
+    async def get_own(
+        self,
+        incident_id: str,
+        *,
+        user_id: str,
+        user_estate_id: str,
+    ) -> IncidentReportItem:
+        item = await self.repository.get_for_reporter(incident_id)
+        if item.estate_id != user_estate_id:
+            raise HTTPException(status_code=404, detail="Report not found.")
+        if item.reported_by_user_id != user_id:
+            raise HTTPException(status_code=404, detail="Report not found.")
+        return item
+
+    async def list_my(
+        self,
+        *,
+        user_id: str,
+        user_estate_id: str,
+        page: int = 1,
+        limit: int = 20,
+    ) -> IncidentReportListResponse:
+        return await self.repository.list_my_reports(
+            reported_by_user_id=user_id,
+            estate_id=user_estate_id,
             page=page,
             limit=limit,
         )

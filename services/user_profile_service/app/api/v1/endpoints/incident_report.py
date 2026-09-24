@@ -118,6 +118,36 @@ async def search(
     )
 
 
+@router.get("/my-reports", response_model=IncidentReportListResponse)
+async def list_my_reports(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+    service: IncidentReportService = Depends(get_service),
+) -> IncidentReportListResponse:
+    """List incident reports filed by the current user."""
+    return await service.list_my(
+        user_id=str(current_user.get("id")),
+        user_estate_id=str(current_user.get("estate_id")),
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/my-reports/{incident_id}", response_model=IncidentReportItem)
+async def get_my_report(
+    incident_id: str,
+    current_user: dict = Depends(get_current_user),
+    service: IncidentReportService = Depends(get_service),
+) -> IncidentReportItem:
+    """Get a single incident report filed by the current user."""
+    return await service.get_own(
+        incident_id,
+        user_id=str(current_user.get("id")),
+        user_estate_id=str(current_user.get("estate_id")),
+    )
+
+
 @router.get("/{incident_id}", response_model=IncidentReportItem)
 async def get(
     incident_id: str,

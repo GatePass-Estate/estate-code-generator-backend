@@ -76,6 +76,7 @@ class EstateRepository:
             country=estate_data["country"],
             postal_code=estate_data["postal_code"],
             primary_admin_id=estate_data.get("primary_admin_id"),
+            estate_type=estate_data.get("estate_type"),
             created_at=response["created_at"],
         )
 
@@ -115,6 +116,8 @@ class EstateRepository:
             payload["postal_code"] = estate_data.postal_code
         if estate_data.primary_admin_id is not None:
             payload["primary_admin_id"] = str(estate_data.primary_admin_id)
+        if estate_data.estate_type is not None:
+            payload["estate_type"] = estate_data.estate_type.value
 
         url = f"{self.estates_endpoint}/{estate_id}"
 
@@ -294,6 +297,7 @@ class EstateRepository:
                 country=item.get("country"),
                 postal_code=item.get("postal_code"),
                 primary_admin_id=item.get("primary_admin_id"),
+                estate_type=item.get("estate_type"),
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
                 is_deleted=item.get("is_deleted", False),
