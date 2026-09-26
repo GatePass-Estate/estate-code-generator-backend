@@ -1,7 +1,6 @@
 import logging
 
 from sqlalchemy import (
-    ARRAY,
     Column,
     DateTime,
     Enum as SQLEnum,
@@ -11,7 +10,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 from app.models.base import BaseModelDB
 from app.schemas.user_profile.incident_report import IncidentCategory
