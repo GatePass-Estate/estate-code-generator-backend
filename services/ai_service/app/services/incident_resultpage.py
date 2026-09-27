@@ -23,6 +23,7 @@ from app.core.exceptions import (
 )
 from app.domain.ai_summary import incident_lookup_key
 from app.integrations.db_service_ai_summary import (
+    consume_third_party_incident_summary,
     fetch_ai_summary,
     upsert_ai_summary,
 )
@@ -297,6 +298,11 @@ class IncidentResultPageService:
 
         The cohort is every retained incident in the window (no row
         cap). Rows are loaded only when an entitled tier is missing.
+        A cached LLM report is returned without touching the daily
+        generation counter. A new third-party report reserves one
+        slot first: the estate is inserted at 1 if it has no row, a
+        new UTC date resets the counter to 1, and a count of 100
+        rejects the call until after UTC midnight.
 
         Arguments:
             estate_id: Estate used for grants and the cache key.
@@ -310,7 +316,9 @@ class IncidentResultPageService:
         Raises:
             EntitlementDeniedError: No in-house (catalog tier 2)
                 grant.
-            ResultPageError: Incident load or cache I/O failed.
+            ResultPageError: Incident load or cache I/O failed, or
+                the estate has already generated 100 third-party
+                summaries on this UTC date.
         """
         async with httpx.AsyncClient(timeout=_SUMMARY_TIMEOUT) as client:
             # 1. Catalog tier 2 is required; catalog tier 3 is optional.
@@ -369,7 +377,13 @@ class IncidentResultPageService:
                 patch_t1 = inhouse.model_dump()
                 generated = True
             # 7. LLM: only if catalog tier 3 is granted and missing.
+            #    Cached reports skip the daily generation counter.
             if llm_ok and llm is None:
+                await consume_third_party_incident_summary(
+                    client,
+                    self.settings,
+                    estate_id=estate_id,
+                )
                 eda = build_incident_eda(records or [])
                 raw, _model, _used = await summarize_incidents_with_llm(
                     client=client,

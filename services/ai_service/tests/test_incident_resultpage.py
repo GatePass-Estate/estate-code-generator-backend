@@ -339,3 +339,198 @@ async def test_get_summary_tier2_only_skips_llm(monkeypatch):
     assert llm_called is False
     assert upsert_calls and upsert_calls[0].get("tier2") is None
     assert upsert_calls[0].get("tier1")
+
+
+def _sample_records() -> list[dict]:
+    return [
+        {
+            "category": ["theft"],
+            "custom_category": None,
+            "title": "Gate",
+            "narrative": "Forced gate at night after patrol.",
+            "occurred_at": "2026-04-01T21:00:00Z",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_new_third_party_summary_consumes_a_slot_then_generates(
+    monkeypatch,
+):
+    from app.services.incident_resultpage import IncidentResultPageService
+
+    estate_id = uuid4()
+    order: list[str] = []
+
+    async def _grants(*_args, **_kwargs):
+        return True, True, True
+
+    async def _no_cache(*_args, **_kwargs):
+        return None
+
+    async def _records(*_args, **_kwargs):
+        return _sample_records()
+
+    async def _consume(*_args, **kwargs):
+        order.append("consume")
+        assert kwargs["estate_id"] == estate_id
+        return {"generation_count": 1}
+
+    async def _llm(*_args, **_kwargs):
+        order.append("llm")
+        return (
+            {"executive_summary": "Night gate theft."},
+            "gpt-test",
+            True,
+        )
+
+    async def _upsert(*_args, **_kwargs):
+        order.append("upsert")
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.resolve_incident_entitlements",
+        _grants,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.fetch_ai_summary",
+        _no_cache,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.load_incident_reports_for_estate",
+        _records,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.consume_third_party_incident_summary",
+        _consume,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.summarize_incidents_with_llm",
+        _llm,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.upsert_ai_summary",
+        _upsert,
+    )
+    service = IncidentResultPageService()
+    result = await service.get_summary(
+        estate_id=estate_id,
+        from_date=None,
+        to_date=None,
+    )
+    assert result.tier2 is not None
+    assert result.tier2.executive_summary == "Night gate theft."
+    assert order == ["consume", "llm", "upsert"]
+
+
+@pytest.mark.asyncio
+async def test_cached_third_party_summary_does_not_consume_a_slot(monkeypatch):
+    from app.services.incident_resultpage import IncidentResultPageService
+
+    async def _grants(*_args, **_kwargs):
+        return True, True, True
+
+    async def _cache(*_args, **_kwargs):
+        return {
+            "ai_summary": {
+                "tier1": {
+                    "executive_summary": "Stored topics.",
+                    "detailed_insight": "Stored detail.",
+                },
+                "tier2": {"executive_summary": "Stored narrative."},
+            }
+        }
+
+    async def _consume(*_args, **_kwargs):
+        raise AssertionError("cached summaries must not spend a slot")
+
+    async def _llm(*_args, **_kwargs):
+        raise AssertionError("cached summaries must not call the LLM")
+
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.resolve_incident_entitlements",
+        _grants,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.fetch_ai_summary",
+        _cache,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.consume_third_party_incident_summary",
+        _consume,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.summarize_incidents_with_llm",
+        _llm,
+    )
+    service = IncidentResultPageService()
+    result = await service.get_summary(
+        estate_id=uuid4(),
+        from_date=None,
+        to_date=None,
+    )
+    assert result.from_cache is True
+    assert result.tier2 is not None
+    assert result.tier2.executive_summary == "Stored narrative."
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_blocks_a_new_third_party_summary(monkeypatch):
+    from app.core.exceptions import ResultPageError
+    from app.integrations.db_service_ai_summary import (
+        DAILY_SUMMARY_LIMIT_MESSAGE,
+    )
+    from app.services.incident_resultpage import IncidentResultPageService
+
+    async def _grants(*_args, **_kwargs):
+        return True, True, True
+
+    async def _no_cache(*_args, **_kwargs):
+        return None
+
+    async def _records(*_args, **_kwargs):
+        return _sample_records()
+
+    async def _consume(*_args, **_kwargs):
+        raise ResultPageError(DAILY_SUMMARY_LIMIT_MESSAGE, status_code=429)
+
+    async def _llm(*_args, **_kwargs):
+        raise AssertionError("a blocked generation must not call the LLM")
+
+    async def _upsert(*_args, **_kwargs):
+        raise AssertionError("a blocked generation must not be stored")
+
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.resolve_incident_entitlements",
+        _grants,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.fetch_ai_summary",
+        _no_cache,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.load_incident_reports_for_estate",
+        _records,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.consume_third_party_incident_summary",
+        _consume,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.summarize_incidents_with_llm",
+        _llm,
+    )
+    monkeypatch.setattr(
+        "app.services.incident_resultpage.upsert_ai_summary",
+        _upsert,
+    )
+    service = IncidentResultPageService()
+    with pytest.raises(ResultPageError) as blocked:
+        await service.get_summary(
+            estate_id=uuid4(),
+            from_date=None,
+            to_date=None,
+        )
+    assert blocked.value.status_code == 429
+    assert "daily limit for report summary" in blocked.value.message
+    assert "UTC midnight" in blocked.value.message

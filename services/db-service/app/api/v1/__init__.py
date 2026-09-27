@@ -15,6 +15,9 @@ from app.api.v1.endpoints.ai_features.ai_response import (
 from app.api.v1.endpoints.ai_features.incident_resultpage import (
     router as incident_resultpage_router,
 )
+from app.api.v1.endpoints.ai_features.incident_summary_generation import (
+    router as incident_summary_generation_router,
+)
 from app.api.v1.endpoints.code_service.prediction_result import (
     router as predictionresult_router,
 )
@@ -132,6 +135,12 @@ api_router.include_router(
     incident_resultpage_router,
     prefix="/ai-features/incident-report",
     tags=["Incident Report Result Page"],
+)
+
+api_router.include_router(
+    incident_summary_generation_router,
+    prefix="/ai-features/incident-summary-generation",
+    tags=["Incident Summary Generation"],
 )
 
 api_router.include_router(
