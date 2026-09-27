@@ -3,7 +3,7 @@ Exploratory descriptive statistics for incident cohorts.
 
 Counts category labels, custom categories, field completeness, and occurred-at
 range. Also builds the result-page category EDA (top five + remainder) and a
-string-formatted trends line.
+list of separate trend insights.
 """
 
 from __future__ import annotations
@@ -335,60 +335,151 @@ def build_category_eda(records: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+_PEAK_LABELS = {
+    "morning": "morning",
+    "afternoon": "afternoon",
+    "evening_night": "evening/night",
+}
+
+
+def _category_name(raw: Any) -> str:
+    """Turn a taxonomy key into display text."""
+    return str(raw or "unknown").replace("_", " ")
+
+
+def _share_clause(share: Any) -> str:
+    """Return a percentage phrase, or an empty string when share is missing."""
+    if share is None:
+        return ""
+    return f", {share}% of the total"
+
+
+def _trend(kind: str, title: str, detail: str) -> dict[str, str]:
+    """One formattable trend item."""
+    return {"kind": kind, "title": title, "detail": detail}
+
+
 def format_incident_trends(
     *,
     record_count: int,
     category_eda: dict[str, Any],
     stats: dict[str, Any] | None = None,
-) -> str:
+    resident_count: int = 0,
+    security_count: int = 0,
+    resident_percentage: int = 0,
+    security_percentage: int = 0,
+) -> list[dict[str, str]]:
     """
-    Build a one-paragraph trend line from category EDA and stats.
+    Build separate trend insights from category EDA and reporter mix.
+
+    Always returns at least three items, each a different kind, so the
+    client can format them as a list. Extra items are added only when
+    the window has a runner-up category, uncategorised rows, or a
+    resident/security mix.
 
     Arguments:
         record_count: Total incidents in the window.
         category_eda: Output of ``build_category_eda``.
         stats: Optional ``build_incident_eda`` payload for the
             uncategorised-row count.
+        resident_count: Resident-side report count.
+        security_count: Security report count.
+        resident_percentage: Whole-number resident share of the mix.
+        security_percentage: Whole-number security share of the mix.
 
     Returns:
-        A single formatted sentence (or short paragraph).
+        At least three ``{kind, title, detail}`` trend objects.
     """
-    if record_count <= 0:
-        return "No incident reports matched this estate and date window."
-    top = category_eda.get("top_1") if isinstance(category_eda, dict) else None
+    if not isinstance(category_eda, dict):
+        category_eda = {}
     noun = "report" if record_count == 1 else "reports"
-    if not isinstance(top, dict):
-        return (
-            f"{record_count} incident {noun} in this window, with no "
-            "categorised labels to rank."
+    if record_count <= 0:
+        volume = _trend(
+            "volume",
+            "Report volume",
+            "No incident reports matched this estate and date window.",
         )
-    name = str(top.get("category") or "unknown").replace("_", " ")
-    count = int(top.get("incident_count") or 0)
-    share = top.get("percentage_share")
-    peak = str(top.get("peak_time") or "afternoon").replace("_", "/")
-    labelled = sum(
-        1
-        for key in ("top_1", "top_2", "top_3", "top_4", "top_5")
-        if category_eda.get(key)
-    )
-    other = category_eda.get("other_categories") or {}
-    if isinstance(other, dict):
-        labelled += len(other)
+    else:
+        volume = _trend(
+            "volume",
+            "Report volume",
+            f"{record_count} incident {noun} in this window.",
+        )
+
+    top = category_eda.get("top_1")
+    if not isinstance(top, dict):
+        trends = [
+            volume,
+            _trend(
+                "leading_category",
+                "Leading category",
+                "No categorised labels are available to rank in this window.",
+            ),
+            _trend(
+                "peak_time",
+                "Peak time",
+                "No peak time can be read because this window has no "
+                "categorised reports.",
+            ),
+        ]
+    else:
+        name = _category_name(top.get("category"))
+        count = int(top.get("incident_count") or 0)
+        share = _share_clause(top.get("percentage_share"))
+        peak_key = str(top.get("peak_time") or "afternoon")
+        peak = _PEAK_LABELS.get(peak_key, peak_key.replace("_", "/"))
+        report_noun = "report" if count == 1 else "reports"
+        trends = [
+            volume,
+            _trend(
+                "leading_category",
+                "Leading category",
+                f"{name} is the most frequent category "
+                f"({count} {report_noun}{share}).",
+            ),
+            _trend(
+                "peak_time",
+                "Peak time",
+                f"{name} peaks in the {peak}.",
+            ),
+        ]
+        second = category_eda.get("top_2")
+        if isinstance(second, dict):
+            second_name = _category_name(second.get("category"))
+            second_count = int(second.get("incident_count") or 0)
+            second_share = _share_clause(second.get("percentage_share"))
+            second_noun = "report" if second_count == 1 else "reports"
+            trends.append(
+                _trend(
+                    "runner_up",
+                    "Next category",
+                    f"{second_name} is the next most frequent category "
+                    f"({second_count} {second_noun}{second_share}).",
+                )
+            )
+
     missing = int((stats or {}).get("rows_without_category") or 0)
-    parts = [
-        f"{record_count} incident {noun} in this window.",
-        (
-            f"{name} is the most frequent category "
-            f"({count} report{'s' if count != 1 else ''}"
-            f"{f', {share}% of the total' if share is not None else ''}), "
-            f"peaking in the {peak}."
-        ),
-        f"{labelled} categor{'y' if labelled == 1 else 'ies'} observed.",
-    ]
     if missing:
         verb = "has" if missing == 1 else "have"
-        parts.append(
-            f"{missing} report{'s' if missing != 1 else ''} "
-            f"{verb} no taxonomy category."
+        trends.append(
+            _trend(
+                "uncategorised",
+                "Uncategorised reports",
+                f"{missing} report{'s' if missing != 1 else ''} "
+                f"{verb} no taxonomy category.",
+            )
         )
-    return " ".join(parts)
+
+    mix = resident_count + security_count
+    if mix > 0:
+        trends.append(
+            _trend(
+                "reporter_mix",
+                "Who filed them",
+                "Resident-side roles filed "
+                f"{resident_count} reports ({resident_percentage}%) and "
+                f"security filed {security_count} reports "
+                f"({security_percentage}%).",
+            )
+        )
+    return trends

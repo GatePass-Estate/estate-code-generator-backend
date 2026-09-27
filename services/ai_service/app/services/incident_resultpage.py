@@ -170,7 +170,7 @@ class IncidentResultPageService:
 
         Returns:
             Estate identity, reporter-role ratio, ranked fixed
-            categories, a trends sentence, and
+            categories, a list of trend insights, and
             ``has_tier1_summary`` / ``has_tier2_summary``.
 
         Raises:

@@ -63,12 +63,27 @@ class CategoryEdaSection(BaseModel):
     other_categories: dict[str, CategoryEdaItem] = Field(default_factory=dict)
 
 
+class DetectedTrend(BaseModel):
+    """One overview insight the client can format on its own."""
+
+    kind: Literal[
+        "volume",
+        "leading_category",
+        "peak_time",
+        "runner_up",
+        "uncategorised",
+        "reporter_mix",
+    ]
+    title: str
+    detail: str
+
+
 class IncidentOverviewEda(BaseModel):
     """Existing cohort stats plus ranked category EDA and trends."""
 
     stats: dict = Field(default_factory=dict)
     categories: CategoryEdaSection = Field(default_factory=CategoryEdaSection)
-    trends_detected: str = ""
+    trends_detected: list[DetectedTrend] = Field(default_factory=list)
 
 
 class IncidentOverviewResponse(BaseModel):

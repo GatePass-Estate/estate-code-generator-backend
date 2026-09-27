@@ -72,6 +72,10 @@ def overview_from_parts(
         record_count=int(db_overview.get("total_reports") or len(records)),
         category_eda=categories.model_dump(),
         stats=stats,
+        resident_count=resident,
+        security_count=security,
+        resident_percentage=resident_pct,
+        security_percentage=security_pct,
     )
     return IncidentOverviewResponse(
         demographic=IncidentDemographic(

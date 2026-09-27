@@ -103,7 +103,7 @@ async def get_result_page_overview(
     Returns demographic counts and exploratory statistics for the
     requested date window. Requires a bearer token. Estate identity
     and reporter-role counts come from db-service; category EDA and
-    the trends sentence are computed here.
+    the trend list are computed here.
 
     Date window (``from_date``, ``to_date``) filters incident rows by
     ``created_at``. Omit both dates to include all retained reports.
@@ -125,7 +125,9 @@ async def get_result_page_overview(
         category text is not ranked. Each category includes peak time
         (morning, afternoon, evening/night), count, percentage of all
         reports, and two sample snippets. ``trends_detected`` is a
-        formatted sentence from those figures.
+        list of at least three insights. Each item has ``kind``,
+        ``title``, and ``detail`` so the client can format them
+        separately.
 
     Cache
         ``has_tier1_summary`` / ``has_tier2_summary`` are true when
