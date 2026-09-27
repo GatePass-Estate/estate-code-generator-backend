@@ -427,9 +427,11 @@ async def get_case_results(
     """
     Spider plot and contributing factors for the selected prediction.
 
-    Expected-normal values reuse the first-level 30% non-anomalous
-    sample. The spider plot also includes this instance's value, the
-    period max (scale), and percentages of both versus that max.
+    The spider plot is this prediction's highest-weight features.
+    Expected-normal values for those features reuse the first-level
+    30% non-anomalous sample. The plot also includes this instance's
+    value, the period max (scale), and percentages of both versus
+    that max.
     Contributing factors include instance value, max, and percentage.
     Which sections appear follows ``scopes_for_anomaly_type`` for this
     prediction (visitor: all four; resident: no visitor-specific).

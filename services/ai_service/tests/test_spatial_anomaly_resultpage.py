@@ -485,6 +485,66 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     assert all(p.instance_value is not None for p in overview.spider_plot)
 
 
+def test_case_spider_plot_ranks_by_instance_weight_not_sample():
+    from app.pipeline.spatial_anomaly_resultpage import (
+        build_case_anomaly_overview,
+    )
+
+    sample = [
+        {
+            "result": {
+                "is_anomalous": False,
+                "transparency": {
+                    "scopes": [
+                        _scope(
+                            "visitor_specific",
+                            0.2,
+                            [
+                                _fc("visitor_weekly_frequency", 4.0, 0.9),
+                                _fc("hour_of_day", 8.0, 0.1),
+                            ],
+                        )
+                    ]
+                },
+            }
+        }
+    ]
+    instance = {
+        "result": {
+            "is_anomalous": True,
+            "final_score": 0.9,
+            "transparency": {
+                "scopes": [
+                    _scope(
+                        "visitor_specific",
+                        0.7,
+                        [
+                            _fc("visitor_weekly_frequency", 5.0, 0.1),
+                            _fc("hour_of_day", 22.0, 0.9),
+                        ],
+                    )
+                ]
+            },
+        }
+    }
+    overview = build_case_anomaly_overview(
+        instance,
+        sample,
+        feature_max_values={
+            "visitor_weekly_frequency": 10.0,
+            "hour_of_day": 22.0,
+        },
+    )
+    names = [p.feature_name for p in overview.spider_plot]
+    assert names == ["hour_of_day", "visitor_weekly_frequency"]
+    hour, weekly = overview.spider_plot
+    assert hour.weight == pytest.approx(0.9)
+    assert hour.instance_value == pytest.approx(22.0)
+    assert hour.normal_value == pytest.approx(8.0)
+    assert weekly.weight == pytest.approx(0.1)
+    assert weekly.normal_value == pytest.approx(4.0)
+
+
 def test_case_results_from_db_payload_maps_score_and_severity():
     instance = {
         "result": {
