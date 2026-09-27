@@ -75,7 +75,8 @@ async def get_result_page_overview(
         active resident-side users (role resident, admin, or
         primary_admin), security users, and those unique guests.
         ``ratio`` is guest / resident / security counts and each
-        group's percentage of guest + resident + security.
+        group's whole-number percentage of guest + resident + security.
+        Those percentages sum to 100 when the total is non-zero.
         ``total_anomalous_instances`` and
         ``total_high_risk_instances`` are prediction *row* counts, not
         unique people. High-risk is ``final_score >= 0.8``.
@@ -426,9 +427,11 @@ async def get_case_results(
     """
     Spider plot and contributing factors for the selected prediction.
 
-    Expected-normal values reuse the first-level 30% non-anomalous
-    sample. The spider plot also includes this instance's value, the
-    period max (scale), and percentages of both versus that max.
+    The spider plot is this prediction's highest-weight features.
+    Expected-normal values for those features reuse the first-level
+    30% non-anomalous sample. The plot also includes this instance's
+    value, the period max (scale), and percentages of both versus
+    that max.
     Contributing factors include instance value, max, and percentage.
     Which sections appear follows ``scopes_for_anomaly_type`` for this
     prediction (visitor: all four; resident: no visitor-specific).

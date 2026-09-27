@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Severity(StrEnum):
@@ -28,8 +28,12 @@ class RatioShare(BaseModel):
     """Headcount and share of guest + resident + security."""
 
     count: int
-    percentage: float = Field(
-        ..., description="Share of guest + resident + security, 0-100."
+    percentage: int = Field(
+        ...,
+        description=(
+            "Whole-number share of guest + resident + security. "
+            "The ratio sums to 100 when that total is non-zero."
+        ),
     )
 
 
@@ -64,16 +68,31 @@ class EvidenceSummary(BaseModel):
     total_anomalous_visitors_instances: int = 0
 
 
+def _chart_number(value: Any) -> Any:
+    """Use 0 when a gauge input is missing so charts can render an empty estate."""
+    if value is None:
+        return 0.0
+    return value
+
+
 class SubFactor(BaseModel):
     """One feature inside a contributing-factor scope."""
 
     feature_name: str
     label: str
     description: str
-    normal_value: float | None = None
-    weight: float | None = None
-    scale: float | None = None
-    percentage: float | None = None
+    normal_value: float = 0.0
+    weight: float = 0.0
+    scale: float = 0.0
+    percentage: float = 0.0
+
+    @field_validator(
+        "normal_value", "weight", "scale", "percentage", mode="before"
+    )
+    @classmethod
+    def _missing_chart_value_is_zero(cls, value: Any) -> Any:
+        """Replace a missing chart number with 0."""
+        return _chart_number(value)
 
 
 class ContributingFactor(BaseModel):
@@ -82,13 +101,21 @@ class ContributingFactor(BaseModel):
     name: str
     label: str
     description: str
-    normal_value: float | None = Field(
-        default=None, description="Averaged scope score for normal behaviour."
+    normal_value: float = Field(
+        default=0.0, description="Averaged scope score for normal behaviour."
     )
-    weight: float | None = None
-    scale: float | None = None
-    percentage: float | None = None
+    weight: float = 0.0
+    scale: float = 0.0
+    percentage: float = 0.0
     sub_factors: list[SubFactor] = Field(default_factory=list)
+
+    @field_validator(
+        "normal_value", "weight", "scale", "percentage", mode="before"
+    )
+    @classmethod
+    def _missing_chart_value_is_zero(cls, value: Any) -> Any:
+        """Replace a missing chart number with 0."""
+        return _chart_number(value)
 
 
 class SpiderPlotPoint(BaseModel):

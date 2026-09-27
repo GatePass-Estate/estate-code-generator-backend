@@ -160,7 +160,8 @@ def test_overview_factors_use_period_max_keys_when_sample_misses_scope():
     names = [s.feature_name for s in visitor.sub_factors]
     assert "hour_of_day" not in names
     assert "visitor_weekly_frequency" in names
-    assert hour.normal_value is None
+    assert hour.normal_value == 0.0
+    assert hour.percentage == 0.0
     assert hour.scale == pytest.approx(22.0)
 
 
@@ -175,6 +176,13 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
         "estate_wide",
     ]
     assert all(f.sub_factors == [] for f in empty.contributing_factors)
+    assert all(
+        f.normal_value == 0.0
+        and f.weight == 0.0
+        and f.scale == 0.0
+        and f.percentage == 0.0
+        for f in empty.contributing_factors
+    )
 
     raw = {
         "transparency": {
@@ -191,7 +199,7 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
     assert overview.spider_plot[0].feature_name == "hour_of_day"
     assert overview.spider_plot[0].weight is None
     by_scope = {f.name: f for f in overview.contributing_factors}
-    assert by_scope["security_specific"].sub_factors[0].weight is None
+    assert by_scope["security_specific"].sub_factors[0].weight == 0.0
     assert [f.name for f in overview.contributing_factors] == [
         "temporal",
         "visitor_specific",
@@ -222,11 +230,17 @@ def test_overview_from_db_payload_maps_demographic_fields():
     assert result.demographic.estate_name == "Lekki Gardens"
     assert result.demographic.total_users == 47
     assert result.demographic.ratio["guest"].count == 12
-    assert result.demographic.ratio["guest"].percentage == 25.53
+    assert result.demographic.ratio["guest"].percentage == 25
     assert result.demographic.ratio["resident"].count == 30
-    assert result.demographic.ratio["resident"].percentage == 63.83
+    assert result.demographic.ratio["resident"].percentage == 64
     assert result.demographic.ratio["security"].count == 5
-    assert result.demographic.ratio["security"].percentage == 10.64
+    assert result.demographic.ratio["security"].percentage == 11
+    assert (
+        result.demographic.ratio["guest"].percentage
+        + result.demographic.ratio["resident"].percentage
+        + result.demographic.ratio["security"].percentage
+        == 100
+    )
     assert result.demographic.total_anomalous_instances == 9
     assert result.demographic.total_high_risk_instances == 4
     assert result.evidence_summary.total_anomalous_visitors_instances == 7
@@ -469,6 +483,66 @@ def test_case_spider_plot_skips_features_missing_on_instance():
     assert "relationship_transition" not in names
     assert "hour_of_day" in names
     assert all(p.instance_value is not None for p in overview.spider_plot)
+
+
+def test_case_spider_plot_ranks_by_instance_weight_not_sample():
+    from app.pipeline.spatial_anomaly_resultpage import (
+        build_case_anomaly_overview,
+    )
+
+    sample = [
+        {
+            "result": {
+                "is_anomalous": False,
+                "transparency": {
+                    "scopes": [
+                        _scope(
+                            "visitor_specific",
+                            0.2,
+                            [
+                                _fc("visitor_weekly_frequency", 4.0, 0.9),
+                                _fc("hour_of_day", 8.0, 0.1),
+                            ],
+                        )
+                    ]
+                },
+            }
+        }
+    ]
+    instance = {
+        "result": {
+            "is_anomalous": True,
+            "final_score": 0.9,
+            "transparency": {
+                "scopes": [
+                    _scope(
+                        "visitor_specific",
+                        0.7,
+                        [
+                            _fc("visitor_weekly_frequency", 5.0, 0.1),
+                            _fc("hour_of_day", 22.0, 0.9),
+                        ],
+                    )
+                ]
+            },
+        }
+    }
+    overview = build_case_anomaly_overview(
+        instance,
+        sample,
+        feature_max_values={
+            "visitor_weekly_frequency": 10.0,
+            "hour_of_day": 22.0,
+        },
+    )
+    names = [p.feature_name for p in overview.spider_plot]
+    assert names == ["hour_of_day", "visitor_weekly_frequency"]
+    hour, weekly = overview.spider_plot
+    assert hour.weight == pytest.approx(0.9)
+    assert hour.instance_value == pytest.approx(22.0)
+    assert hour.normal_value == pytest.approx(8.0)
+    assert weekly.weight == pytest.approx(0.1)
+    assert weekly.normal_value == pytest.approx(4.0)
 
 
 def test_case_results_from_db_payload_maps_score_and_severity():

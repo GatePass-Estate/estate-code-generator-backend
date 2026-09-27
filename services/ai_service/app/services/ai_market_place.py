@@ -8,6 +8,7 @@ from app.core.config import settings
 from gatepass_entitlement import is_purchased as _is_purchased
 from app.repositories.ai_market_place import AiMarketPlaceRepository
 from app.schemas.ai_market_place import (
+    DataInsight,
     MarketplaceDetailResponse,
     MarketplaceListItem,
     MarketplaceListResponse,
@@ -15,6 +16,7 @@ from app.schemas.ai_market_place import (
     RatingResponse,
     RatingSample,
     SubscribeResponse,
+    TierBenefitGroup,
     UserRating,
 )
 
@@ -34,6 +36,48 @@ def _tier_entries(tiers: Any) -> list[dict]:
             entries.append({"tier": str(key), "ai_feature_id": str(fid)})
         return entries
     return []
+
+
+def _string_list(raw: Any) -> list[str]:
+    """Return ``raw`` as a list of strings, or an empty list."""
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw]
+
+
+def _tier_benefits(raw: Any) -> list[TierBenefitGroup]:
+    """Normalize parent ``tier_benefits`` JSON into tier groups."""
+    if not isinstance(raw, list):
+        return []
+    groups = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        groups.append(
+            TierBenefitGroup(
+                tier=str(item.get("tier") or ""),
+                benefits=_string_list(item.get("benefits")),
+            )
+        )
+    return groups
+
+
+def _benefits_for_tier(groups: list[TierBenefitGroup], tier: str) -> list[str]:
+    """Return the benefit strings stored for ``tier``."""
+    for group in groups:
+        if group.tier == tier:
+            return group.benefits
+    return []
+
+
+def _data_insight(raw: Any) -> DataInsight:
+    """Normalize parent ``data_insight`` JSON. Missing legal stays empty."""
+    if not isinstance(raw, dict):
+        return DataInsight()
+    return DataInsight(
+        legal=_string_list(raw.get("legal")),
+        data=_string_list(raw.get("data")),
+    )
 
 
 def _ai_feature_ids(tiers: Any) -> list[str]:
@@ -221,6 +265,11 @@ class AiMarketPlaceService:
                     price=(None if purchased else _min_price(fids, prices)),
                     currency_code=None if purchased else currency,
                     ai_feature_ids=fids,
+                    tier_benefits=_tier_benefits(product.get("tier_benefits")),
+                    product_features=_string_list(
+                        product.get("product_features")
+                    ),
+                    data_insight=_data_insight(product.get("data_insight")),
                 )
             )
 
@@ -259,6 +308,7 @@ class AiMarketPlaceService:
             or {}
         )
 
+        tier_benefits = _tier_benefits(product.get("tier_benefits"))
         tiers: list[MarketplaceTier] = []
         for i, entry in enumerate(_tier_entries(product.get("tiers"))):
             fid = str(entry.get("ai_feature_id") or "")
@@ -266,9 +316,11 @@ class AiMarketPlaceService:
                 continue
             feature = catalog.get(fid) or {}
             grant = grants.get(fid)
+            tier_name = str(entry.get("tier") or f"tier_{i + 1}")
+            catalog_benefits = _string_list(feature.get("tier_benefits"))
             tiers.append(
                 MarketplaceTier(
-                    tier=str(entry.get("tier") or f"tier_{i + 1}"),
+                    tier=tier_name,
                     ai_feature_id=fid,
                     feature_key=feature.get("feature_key"),
                     name=feature.get("name"),
@@ -278,6 +330,10 @@ class AiMarketPlaceService:
                     currency_code=currency if fid in prices else None,
                     status=_tier_status(grant),
                     is_installed=bool(grant and grant.get("is_installed")),
+                    benefits=(
+                        catalog_benefits
+                        or _benefits_for_tier(tier_benefits, tier_name)
+                    ),
                 )
             )
 
@@ -291,6 +347,9 @@ class AiMarketPlaceService:
             rating_samples=rating_row.get("rating_samples")
             or _parse_samples(None),
             tiers=tiers,
+            tier_benefits=tier_benefits,
+            product_features=_string_list(product.get("product_features")),
+            data_insight=_data_insight(product.get("data_insight")),
             display_picture_url=product.get("display_picture_path"),
             video_url=product.get("explanatory_video_path"),
         )

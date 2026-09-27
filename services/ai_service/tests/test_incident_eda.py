@@ -92,12 +92,16 @@ def test_format_trends_uses_top_category_and_missing_count():
             },
         ]
     )
-    text = format_incident_trends(
+    trends = format_incident_trends(
         record_count=3,
         category_eda=eda,
         stats={"rows_without_category": 1},
     )
-    assert "3 incident reports" in text
-    assert "theft is the most frequent" in text
-    assert "evening/night" in text
-    assert "1 report has no taxonomy category" in text
+    assert len(trends) >= 3
+    assert len({item["kind"] for item in trends}) == len(trends)
+    details = " ".join(item["detail"] for item in trends)
+    assert "3 incident reports" in details
+    assert "theft is the most frequent" in details
+    assert "evening/night" in details
+    assert "1 report has no taxonomy category" in details
+    assert all(item["title"] and item["detail"] for item in trends)

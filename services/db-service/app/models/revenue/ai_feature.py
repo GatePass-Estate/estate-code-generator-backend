@@ -1,6 +1,7 @@
 import logging
 
-from sqlalchemy import Boolean, Column, String, Text
+from sqlalchemy import Boolean, Column, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import BaseModelDB
 
@@ -20,3 +21,6 @@ class AiFeature(BaseModelDB):
     description = Column(Text, nullable=True)
     is_free = Column(Boolean, nullable=False, server_default="false")
     is_active = Column(Boolean, nullable=False, server_default="true")
+    tier_benefits = Column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )

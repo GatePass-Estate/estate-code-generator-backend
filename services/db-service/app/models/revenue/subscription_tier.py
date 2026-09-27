@@ -18,6 +18,7 @@ class SubscriptionTier(BaseModelDB):
 
     slug = Column(String, nullable=False, unique=True)
     name = Column(String, nullable=False)
+    description = Column(Text, nullable=False, server_default="")
     display_order = Column(Integer, nullable=False, server_default="0")
     entitlements = Column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")

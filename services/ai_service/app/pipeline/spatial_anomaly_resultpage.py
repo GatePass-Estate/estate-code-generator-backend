@@ -70,6 +70,7 @@ from app.models.spatial_anomaly_resultpage import (
     SpiderPlotPoint,
     SubFactor,
 )
+from app.pipeline.demographic_ratio import whole_number_shares
 
 SPIDER_TOP_N = 6
 
@@ -403,12 +404,6 @@ def build_anomaly_overview(
     return overview
 
 
-def _ratio_share(count: int, whole: int) -> RatioShare:
-    """Count plus that count as a percentage of ``whole`` (0 if empty)."""
-    pct = round(100.0 * count / whole, 2) if whole else 0.0
-    return RatioShare(count=count, percentage=pct)
-
-
 def overview_from_db_payload(
     data: dict[str, Any],
 ) -> ResultPageOverviewResponse:
@@ -417,8 +412,9 @@ def overview_from_db_payload(
 
     Counts pass through with light coercion. ``total_users`` is
     resident-side users, security, and unique guests (not
-    subscription seats). ``ratio`` percentages use that same
-    guest + resident + security total. ``normal_sample`` and the
+    subscription seats). ``ratio`` percentages are whole numbers of that
+    same guest + resident + security total and sum to 100 when the
+    total is non-zero. ``normal_sample`` and the
     three max maps are sanitized then handed to
     ``build_anomaly_overview``.
 
@@ -437,7 +433,9 @@ def overview_from_db_payload(
     guests = int(data.get("total_guests") or 0)
     residents = int(data.get("resident_count") or 0)
     security = int(data.get("security_count") or 0)
-    whole = guests + residents + security  # ratio percentage denominator
+    guest_pct, resident_pct, security_pct = whole_number_shares(
+        [guests, residents, security]
+    )
 
     # 2. Sanitize the 30% non-anomalous sample and period-max maps.
     sample = data.get("normal_sample") or []
@@ -467,12 +465,16 @@ def overview_from_db_payload(
             estate_name=str(data.get("estate_name") or ""),
             state=data.get("state"),
             country=data.get("country"),
-            total_users=whole,
+            total_users=guests + residents + security,
             total_guests=guests,
             ratio={
-                "guest": _ratio_share(guests, whole),
-                "resident": _ratio_share(residents, whole),
-                "security": _ratio_share(security, whole),
+                "guest": RatioShare(count=guests, percentage=guest_pct),
+                "resident": RatioShare(
+                    count=residents, percentage=resident_pct
+                ),
+                "security": RatioShare(
+                    count=security, percentage=security_pct
+                ),
             },
             total_anomalous_instances=int(
                 data.get("total_anomalous_instances") or anom_res + anom_vis
@@ -508,14 +510,16 @@ def _instance_maps(
     dict[str, dict[str, float]],
     dict[str, str],
     dict[str, dict[str, str]],
+    dict[str, float],
 ]:
-    """Feature values, scope scores, labels, and per-scope features."""
+    """Feature values, scope scores, labels, per-scope features, and weights."""
     payload = _unwrap(raw)
     global_vals: dict[str, float] = {}
     scope_scores: dict[str, float] = {}
     scope_feats: dict[str, dict[str, float]] = {}
     global_labels: dict[str, str] = {}
     scope_feat_labels: dict[str, dict[str, str]] = {}
+    global_weights: dict[str, float] = {}
     scopes = (payload.get("transparency") or {}).get("scopes") or []
     if not isinstance(scopes, list):
         return (
@@ -524,6 +528,7 @@ def _instance_maps(
             scope_feats,
             global_labels,
             scope_feat_labels,
+            global_weights,
         )
     for detail in scopes:
         if not isinstance(detail, dict):
@@ -556,12 +561,20 @@ def _instance_maps(
             # global max across scopes → spider_plot[].instance_value
             prev = global_vals.get(name)
             global_vals[name] = value if prev is None else max(prev, value)
+            # highest weight across scopes → case spider ranking
+            weight = _to_float(fc.get("weight"))
+            if weight is not None:
+                prev_weight = global_weights.get(name)
+                global_weights[name] = (
+                    weight if prev_weight is None else max(prev_weight, weight)
+                )
     return (
         global_vals,
         scope_scores,
         scope_feats,
         global_labels,
         scope_feat_labels,
+        global_weights,
     )
 
 
@@ -620,14 +633,13 @@ def build_case_anomaly_overview(
     Expected-normal values come from ``build_anomaly_overview`` on the
     30% non-anomalous sample. Instance values come from this prediction.
     Scale is the period max (all predictions). Percentages are value /
-    scale * 100. Spider ranking walks the full sample-ranked list and
-    keeps only features that this instance actually has, up to
-    ``SPIDER_TOP_N``. Remaining slots, if any, are filled from other
-    instance features. Contributing-factor sections use
+    scale * 100. Spider features are this prediction's own highest
+    weights, up to ``SPIDER_TOP_N``. The sample supplies
+    ``normal_value`` and its percentage for comparison; it does not
+    choose which features appear. Contributing-factor sections use
     ``scopes_for_anomaly_type`` for this prediction's type (visitor:
-    all four; resident: omit visitor-specific). When the sample is
-    empty, spider ranking uses the instance itself and ``normal_value``
-    is left unset.
+    all four; resident: omit visitor-specific). When the sample has no
+    value for a selected feature, ``normal_value`` is left unset.
 
     Arguments:
         instance: Selected prediction JSON (wrapped or unwrapped).
@@ -645,10 +657,12 @@ def build_case_anomaly_overview(
     feature_max_values = feature_max_values or {}
     scope_max_scores = scope_max_scores or {}
     scope_feature_max_values = scope_feature_max_values or {}
-    # 1. Instance maps: global feature values, scope scores, per-scope
-    #    features. Expected-normal is the first-level sample overview
-    #    (full ranked list). Empty sample → rank from this instance.
-    inst_g, inst_s, inst_sf, inst_gl, inst_sfl = _instance_maps(instance)
+    # 1. Instance maps, including this prediction's feature weights.
+    #    The sample overview supplies expected-normal comparison values
+    #    only; it does not rank the spider plot.
+    inst_g, inst_s, inst_sf, inst_gl, inst_sfl, inst_w = _instance_maps(
+        instance
+    )
     normal = build_anomaly_overview(
         sample,
         feature_max_values=feature_max_values,
@@ -656,74 +670,54 @@ def build_case_anomaly_overview(
         scope_feature_max_values=scope_feature_max_values,
         spider_limit=None,
     )
-    use_instance_as_rank = not normal.spider_plot
-    rank_overview = (
-        build_anomaly_overview(
-            [instance],
-            feature_max_values=feature_max_values,
-            scope_max_scores=scope_max_scores,
-            scope_feature_max_values=scope_feature_max_values,
-            spider_limit=None,
-        )
-        if use_instance_as_rank
-        else normal
-    )
+    normal_by_name = {p.feature_name: p for p in normal.spider_plot}
 
-    # 2. Spider: walk sample rank, skip features this instance lacks,
-    #    keep up to SPIDER_TOP_N. Fill leftovers from instance-only
-    #    features so the top six never have a null instance_value.
+    # 2. Spider: this prediction's highest weights, up to SPIDER_TOP_N.
+    #    Sample means stay on normal_value / percentage for comparison.
+    ranked_names = sorted(
+        inst_g,
+        key=lambda name: (
+            inst_w.get(name) is not None,
+            inst_w[name] if inst_w.get(name) is not None else 0.0,
+            name,
+        ),
+        reverse=True,
+    )
     spider: list[CaseSpiderPlotPoint] = []
-    seen: set[str] = set()
-    for p in rank_overview.spider_plot:
-        inst = inst_g.get(p.feature_name)
-        if inst is None:
-            continue
-        _, inst_pct = _scale_fields(inst, p.scale)
+    for name in ranked_names[:SPIDER_TOP_N]:
+        inst = inst_g[name]
+        sample_point = normal_by_name.get(name)
+        if sample_point is not None:
+            scale = sample_point.scale
+            normal_value = sample_point.normal_value
+            percentage = sample_point.percentage
+            description = sample_point.description
+        else:
+            scale, _ = _scale_fields(None, feature_max_values.get(name))
+            normal_value = None
+            percentage = None
+            description = _describe_feature(name)
+        _, inst_pct = _scale_fields(inst, scale)
         spider.append(
             CaseSpiderPlotPoint(
-                feature_name=p.feature_name,
-                label=inst_gl.get(p.feature_name, p.label),
-                description=p.description,
-                weight=p.weight,
-                normal_value=None if use_instance_as_rank else p.normal_value,
+                feature_name=name,
+                label=inst_gl.get(name, feature_label(name)),
+                description=description,
+                weight=inst_w.get(name),
+                normal_value=normal_value,
                 instance_value=inst,
-                scale=p.scale,
-                percentage=None if use_instance_as_rank else p.percentage,
+                scale=scale,
+                percentage=percentage,
                 instance_percentage=inst_pct,
             )
         )
-        seen.add(p.feature_name)
-        if len(spider) >= SPIDER_TOP_N:
-            break
-    if len(spider) < SPIDER_TOP_N:
-        leftover = sorted(
-            (n for n, v in inst_g.items() if n not in seen and v is not None),
-            reverse=True,
-        )
-        for name in leftover:
-            inst = inst_g[name]
-            scale, inst_pct = _scale_fields(inst, feature_max_values.get(name))
-            spider.append(
-                CaseSpiderPlotPoint(
-                    feature_name=name,
-                    label=inst_gl.get(name, feature_label(name)),
-                    description=_describe_feature(name),
-                    weight=None,
-                    normal_value=None,
-                    instance_value=inst,
-                    scale=scale,
-                    percentage=None,
-                    instance_percentage=inst_pct,
-                )
-            )
-            if len(spider) >= SPIDER_TOP_N:
-                break
 
     # 3. Contributing factors: sections from scopes_for_anomaly_type
     #    (not the sample). Overlay instance scores; skip sub-factors
     #    this instance does not have, then append remaining instance
-    #    features for that scope.
-    factor_by_name = {f.name: f for f in rank_overview.contributing_factors}
+    #    features for that scope. Sample overview supplies labels and
+    #    period-max scale when this feature was in the draw.
+    factor_by_name = {f.name: f for f in normal.contributing_factors}
     factors: list[CaseContributingFactor] = []
     for scope in _case_factor_scopes(
         instance, prediction_type=prediction_type
