@@ -20,8 +20,12 @@ class RatioShare(BaseModel):
     """Headcount and share of resident + security reports."""
 
     count: int
-    percentage: float = Field(
-        ..., description="Share of resident + security reports, 0-100."
+    percentage: int = Field(
+        ...,
+        description=(
+            "Whole-number share of resident + security reports. "
+            "The ratio sums to 100 when that mix is non-zero."
+        ),
     )
 
 

@@ -70,6 +70,7 @@ from app.models.spatial_anomaly_resultpage import (
     SpiderPlotPoint,
     SubFactor,
 )
+from app.pipeline.demographic_ratio import whole_number_shares
 
 SPIDER_TOP_N = 6
 
@@ -403,12 +404,6 @@ def build_anomaly_overview(
     return overview
 
 
-def _ratio_share(count: int, whole: int) -> RatioShare:
-    """Count plus that count as a percentage of ``whole`` (0 if empty)."""
-    pct = round(100.0 * count / whole, 2) if whole else 0.0
-    return RatioShare(count=count, percentage=pct)
-
-
 def overview_from_db_payload(
     data: dict[str, Any],
 ) -> ResultPageOverviewResponse:
@@ -417,8 +412,9 @@ def overview_from_db_payload(
 
     Counts pass through with light coercion. ``total_users`` is
     resident-side users, security, and unique guests (not
-    subscription seats). ``ratio`` percentages use that same
-    guest + resident + security total. ``normal_sample`` and the
+    subscription seats). ``ratio`` percentages are whole numbers of that
+    same guest + resident + security total and sum to 100 when the
+    total is non-zero. ``normal_sample`` and the
     three max maps are sanitized then handed to
     ``build_anomaly_overview``.
 
@@ -437,7 +433,9 @@ def overview_from_db_payload(
     guests = int(data.get("total_guests") or 0)
     residents = int(data.get("resident_count") or 0)
     security = int(data.get("security_count") or 0)
-    whole = guests + residents + security  # ratio percentage denominator
+    guest_pct, resident_pct, security_pct = whole_number_shares(
+        [guests, residents, security]
+    )
 
     # 2. Sanitize the 30% non-anomalous sample and period-max maps.
     sample = data.get("normal_sample") or []
@@ -467,12 +465,16 @@ def overview_from_db_payload(
             estate_name=str(data.get("estate_name") or ""),
             state=data.get("state"),
             country=data.get("country"),
-            total_users=whole,
+            total_users=guests + residents + security,
             total_guests=guests,
             ratio={
-                "guest": _ratio_share(guests, whole),
-                "resident": _ratio_share(residents, whole),
-                "security": _ratio_share(security, whole),
+                "guest": RatioShare(count=guests, percentage=guest_pct),
+                "resident": RatioShare(
+                    count=residents, percentage=resident_pct
+                ),
+                "security": RatioShare(
+                    count=security, percentage=security_pct
+                ),
             },
             total_anomalous_instances=int(
                 data.get("total_anomalous_instances") or anom_res + anom_vis

@@ -75,7 +75,8 @@ async def get_result_page_overview(
         active resident-side users (role resident, admin, or
         primary_admin), security users, and those unique guests.
         ``ratio`` is guest / resident / security counts and each
-        group's percentage of guest + resident + security.
+        group's whole-number percentage of guest + resident + security.
+        Those percentages sum to 100 when the total is non-zero.
         ``total_anomalous_instances`` and
         ``total_high_risk_instances`` are prediction *row* counts, not
         unique people. High-risk is ``final_score >= 0.8``.

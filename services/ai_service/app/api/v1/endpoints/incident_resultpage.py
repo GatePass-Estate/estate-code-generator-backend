@@ -112,8 +112,9 @@ async def get_result_page_overview(
         ``estate_name``, ``state``, and ``country`` come from the estate
         record. ``total_reports`` is the incident row count in the
         window. ``ratio`` is resident / security counts and each
-        group's percentage of resident + security. Resident covers
-        every reporter role except security, guest, and root.
+        group's whole-number percentage of resident + security.
+        Those percentages sum to 100 when the mix is non-zero. Resident
+        covers every reporter role except security, guest, and root.
 
     EDA
         ``stats`` is the existing cohort EDA (category distribution,

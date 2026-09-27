@@ -18,6 +18,20 @@ class RatingSample(BaseModel):
     created_at: str | None = None
 
 
+class TierBenefitGroup(BaseModel):
+    """Benefits for one child AI feature tier."""
+
+    tier: str
+    benefits: list[str] = Field(default_factory=list)
+
+
+class DataInsight(BaseModel):
+    """Legal notes and the data a parent feature consumes."""
+
+    legal: list[str] = Field(default_factory=list)
+    data: list[str] = Field(default_factory=list)
+
+
 class MarketplaceListItem(BaseModel):
     """One parent product on the marketplace list."""
 
@@ -31,6 +45,9 @@ class MarketplaceListItem(BaseModel):
     price: float | None = None
     currency_code: str | None = None
     ai_feature_ids: list[str] = Field(default_factory=list)
+    tier_benefits: list[TierBenefitGroup] = Field(default_factory=list)
+    product_features: list[str] = Field(default_factory=list)
+    data_insight: DataInsight = Field(default_factory=DataInsight)
 
 
 class MarketplaceListResponse(BaseModel):
@@ -55,6 +72,7 @@ class MarketplaceTier(BaseModel):
     currency_code: str | None = None
     status: str
     is_installed: bool = False
+    benefits: list[str] = Field(default_factory=list)
 
 
 class MarketplaceDetailResponse(BaseModel):
@@ -68,6 +86,9 @@ class MarketplaceDetailResponse(BaseModel):
     rating_count: int = 0
     rating_samples: dict[str, list[RatingSample]] = Field(default_factory=dict)
     tiers: list[MarketplaceTier] = Field(default_factory=list)
+    tier_benefits: list[TierBenefitGroup] = Field(default_factory=list)
+    product_features: list[str] = Field(default_factory=list)
+    data_insight: DataInsight = Field(default_factory=DataInsight)
     display_picture_url: str | None = None
     video_url: str | None = None
 

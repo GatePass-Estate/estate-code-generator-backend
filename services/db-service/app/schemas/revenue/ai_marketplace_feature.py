@@ -22,6 +22,33 @@ __all__ = [
 ]
 
 
+class TierBenefitGroup(BaseModel):
+    """Benefits for one child AI feature tier."""
+
+    tier: str = Field(..., description="Tier label, such as tier_1")
+    benefits: list[str] = Field(
+        default_factory=list,
+        description="Benefits of this AI feature tier",
+    )
+
+    model_config = model_config
+
+
+class DataInsight(BaseModel):
+    """Personal and non-personal data this parent feature consumes."""
+
+    legal: list[str] = Field(
+        default_factory=list,
+        description="Legal notes. Empty until supplied.",
+    )
+    data: list[str] = Field(
+        default_factory=list,
+        description="Data this feature consumes",
+    )
+
+    model_config = model_config
+
+
 class AiMarketplaceFeatureBase(BaseModel):
     """Base fields for the resource."""
 
@@ -35,6 +62,18 @@ class AiMarketplaceFeatureBase(BaseModel):
         default_factory=list,
         description="Child ai_feature tiers, e.g. "
         "[{tier, ai_feature_id}, ...]",
+    )
+    tier_benefits: list[TierBenefitGroup] = Field(
+        default_factory=list,
+        description="Benefits for each child AI feature tier",
+    )
+    product_features: list[str] = Field(
+        default_factory=list,
+        description="Product features of this parent AI feature",
+    )
+    data_insight: DataInsight = Field(
+        default_factory=DataInsight,
+        description="Legal notes and data this parent feature consumes",
     )
     display_picture_path: str | None = Field(
         None, description="GCS object path for the display picture"
@@ -85,6 +124,18 @@ class UpdateRequest(BaseModel):
     )
     tiers: Any | None = Field(
         default=None, description="Child ai_feature tiers"
+    )
+    tier_benefits: list[TierBenefitGroup] | None = Field(
+        default=None,
+        description="Benefits for each child AI feature tier",
+    )
+    product_features: list[str] | None = Field(
+        default=None,
+        description="Product features of this parent AI feature",
+    )
+    data_insight: DataInsight | None = Field(
+        default=None,
+        description="Legal notes and data this parent feature consumes",
     )
     display_picture_path: str | None = Field(
         default=None, description="GCS object path for the display picture"

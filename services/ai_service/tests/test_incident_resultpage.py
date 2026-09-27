@@ -49,8 +49,14 @@ def test_overview_from_parts_builds_ratio_and_trends():
         records=records,
     )
     assert payload.demographic.estate_name == "Lakeside"
-    assert payload.demographic.ratio["resident"].percentage == 100.0
+    assert payload.demographic.ratio["resident"].percentage == 100
     assert payload.demographic.ratio["security"].count == 0
+    assert payload.demographic.ratio["security"].percentage == 0
+    assert (
+        payload.demographic.ratio["resident"].percentage
+        + payload.demographic.ratio["security"].percentage
+        == 100
+    )
     assert payload.eda.categories.top_1 is not None
     assert payload.eda.categories.top_1.category == "theft"
     assert "2 incident reports" in payload.eda.trends_detected
@@ -75,6 +81,8 @@ def test_overview_from_parts_passes_summary_cache_flags():
     )
     assert payload.has_tier1_summary is True
     assert payload.has_tier2_summary is False
+    assert payload.demographic.ratio["resident"].percentage == 0
+    assert payload.demographic.ratio["security"].percentage == 0
 
 
 def test_inhouse_and_llm_share_the_same_category_eda():

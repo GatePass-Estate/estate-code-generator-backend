@@ -13,28 +13,13 @@ from app.models.incident_resultpage import (
     IncidentOverviewResponse,
     RatioShare,
 )
+from app.pipeline.demographic_ratio import whole_number_shares
 from app.pipeline.incident_eda import (
     build_category_eda,
     build_incident_eda,
     format_incident_trends,
 )
 from app.pipeline.incident_topic_modelling import discover_incident_topics
-
-
-def _pct(count: int, total: int) -> float:
-    """
-    Return ``count / total * 100`` rounded, or 0 when total is 0.
-
-    Arguments:
-        count: Numerator headcount.
-        total: Denominator headcount.
-
-    Returns:
-        A percentage in ``0..100``, rounded to two decimals.
-    """
-    if total <= 0:
-        return 0.0
-    return round((count / total) * 100.0, 2)
 
 
 def category_eda_from_records(
@@ -63,8 +48,9 @@ def overview_from_parts(
     Combine db-service counts with Python EDA for the overview.
 
     Resident share is every reporter role except security, guest, and
-    root. Percentages are of resident + security reports, not of
-    ``total_reports`` (unknown / excluded roles sit outside the ratio).
+    root. Percentages are whole numbers of resident + security reports,
+    not of ``total_reports`` (unknown / excluded roles sit outside the
+    ratio). When that mix is non-zero, the percentages sum to 100.
     Cache flags report whether each summary tier is already stored
     for this estate and date window.
 
@@ -79,7 +65,7 @@ def overview_from_parts(
     """
     resident = int(db_overview.get("resident_report_count") or 0)
     security = int(db_overview.get("security_report_count") or 0)
-    mix = resident + security
+    resident_pct, security_pct = whole_number_shares([resident, security])
     stats = build_incident_eda(records)
     categories = category_eda_from_records(records)
     trends = format_incident_trends(
@@ -95,10 +81,10 @@ def overview_from_parts(
             total_reports=int(db_overview.get("total_reports") or 0),
             ratio={
                 "resident": RatioShare(
-                    count=resident, percentage=_pct(resident, mix)
+                    count=resident, percentage=resident_pct
                 ),
                 "security": RatioShare(
-                    count=security, percentage=_pct(security, mix)
+                    count=security, percentage=security_pct
                 ),
             },
         ),

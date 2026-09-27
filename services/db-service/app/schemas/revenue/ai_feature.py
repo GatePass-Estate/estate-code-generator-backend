@@ -32,6 +32,10 @@ class AiFeatureBase(BaseModel):
     is_active: bool = Field(
         default=True, description="Whether feature is active"
     )
+    tier_benefits: list[str] = Field(
+        default_factory=list,
+        description="Benefits of this AI feature tier",
+    )
 
     model_config = model_config
 
@@ -68,6 +72,9 @@ class UpdateRequest(BaseModel):
     )
     is_active: bool | None = Field(
         default=None, description="Whether feature is active"
+    )
+    tier_benefits: list[str] | None = Field(
+        default=None, description="Benefits of this AI feature tier"
     )
 
     model_config = model_config
