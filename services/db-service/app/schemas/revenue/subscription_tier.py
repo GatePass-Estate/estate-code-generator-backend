@@ -27,6 +27,10 @@ class SubscriptionTierBase(BaseModel):
 
     slug: str = Field(..., description="Unique tier slug")
     name: str = Field(..., description="Display name")
+    description: str = Field(
+        default="",
+        description="What this subscription tier includes",
+    )
     display_order: int = Field(default=0, description="UI ordering")
     entitlements: dict = Field(
         default_factory=dict, description="Entitlements JSONB map"
@@ -67,6 +71,9 @@ class UpdateRequest(BaseModel):
 
     slug: str | None = Field(default=None, description="Unique tier slug")
     name: str | None = Field(default=None, description="Display name")
+    description: str | None = Field(
+        default=None, description="What this subscription tier includes"
+    )
     display_order: int | None = Field(default=None, description="UI ordering")
     entitlements: dict | None = Field(
         default=None, description="Entitlements JSONB map"
