@@ -108,3 +108,67 @@ async def upsert_ai_summary(
             status_code=502,
         )
     return data
+
+
+DAILY_SUMMARY_LIMIT_MESSAGE = (
+    "The daily limit for report summary has been reached. "
+    "The limit will reset after UTC midnight."
+)
+
+
+async def consume_third_party_incident_summary(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    *,
+    estate_id: UUID,
+) -> dict[str, Any]:
+    """
+    Reserve one new third-party incident summary for ``estate_id``.
+
+    db-service creates the estate row on the first call, resets the
+    counter when the stored UTC date is not today, and rejects the
+    call once today's count is already 100.
+
+    Arguments:
+        client: Shared HTTP client for this request.
+        settings: Service settings, including the db-service URL.
+        estate_id: Estate spending a generation.
+
+    Returns:
+        The stored estate id, UTC date, and counter after this call.
+
+    Raises:
+        ResultPageError: 429 when the daily limit is already reached;
+            502 when db-service cannot be reached.
+    """
+    url = _db_url(settings, "api/v1/ai-features/incident-summary-generation")
+    try:
+        response = await client.post(url, json={"estate_id": str(estate_id)})
+    except httpx.RequestError as exc:
+        raise ResultPageError(
+            f"db-service summary generation cap failed: {exc}",
+            status_code=502,
+        ) from exc
+    if response.status_code == 429:
+        detail = DAILY_SUMMARY_LIMIT_MESSAGE
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and isinstance(body.get("detail"), str):
+            detail = body["detail"]
+        raise ResultPageError(detail, status_code=429)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ResultPageError(
+            f"db-service summary generation cap HTTP error: {exc}",
+            status_code=502,
+        ) from exc
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ResultPageError(
+            "db-service returned a non-object payload.",
+            status_code=502,
+        )
+    return data

@@ -276,6 +276,9 @@ async def get_result_page_summary(
     modelling. ``incident_report_summary_tier_3`` adds the LLM
     narrative and includes tier 2. Those grants are checked in the
     service layer. Both summary payloads carry the same category EDA.
+    A new LLM narrative counts toward a per-estate daily cap of 100,
+    reset after UTC midnight. A report already stored for this window
+    is served without using a slot.
 
     Arguments:
         estate_id: Estate used for the AI feature check and cache key.
@@ -288,7 +291,8 @@ async def get_result_page_summary(
     Raises:
         HTTPException: 401 if unauthenticated; 403 if the caller is not
             an admin, does not belong to the estate, or no summary
-            grant is allowed; 502 on downstream errors.
+            grant is allowed; 429 when the estate has already generated
+            100 third-party summaries today; 502 on downstream errors.
     """
     require_admin(current_user["role"])
     require_estate_membership(current_user, estate_id)
