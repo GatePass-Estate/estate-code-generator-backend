@@ -160,7 +160,8 @@ def test_overview_factors_use_period_max_keys_when_sample_misses_scope():
     names = [s.feature_name for s in visitor.sub_factors]
     assert "hour_of_day" not in names
     assert "visitor_weekly_frequency" in names
-    assert hour.normal_value is None
+    assert hour.normal_value == 0.0
+    assert hour.percentage == 0.0
     assert hour.scale == pytest.approx(22.0)
 
 
@@ -175,6 +176,13 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
         "estate_wide",
     ]
     assert all(f.sub_factors == [] for f in empty.contributing_factors)
+    assert all(
+        f.normal_value == 0.0
+        and f.weight == 0.0
+        and f.scale == 0.0
+        and f.percentage == 0.0
+        for f in empty.contributing_factors
+    )
 
     raw = {
         "transparency": {
@@ -191,7 +199,7 @@ def test_build_anomaly_overview_handles_null_weights_and_empty_sample():
     assert overview.spider_plot[0].feature_name == "hour_of_day"
     assert overview.spider_plot[0].weight is None
     by_scope = {f.name: f for f in overview.contributing_factors}
-    assert by_scope["security_specific"].sub_factors[0].weight is None
+    assert by_scope["security_specific"].sub_factors[0].weight == 0.0
     assert [f.name for f in overview.contributing_factors] == [
         "temporal",
         "visitor_specific",
