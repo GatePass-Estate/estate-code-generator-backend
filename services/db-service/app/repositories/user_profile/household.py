@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import UUID4
 from sqlalchemy import Select, func, select
-from sqlalchemy.exc import NoResultFound, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
@@ -118,6 +118,8 @@ class HouseholdRepository:
             await session.refresh(request)
             # return the record
             return request
+        except IntegrityError:
+            raise
         except SQLAlchemyError as e:
             message = "Database error in creating/updating a record"
             logger.exception(message)
@@ -224,6 +226,10 @@ class HouseholdRepository:
             created_record = CreateResponse.model_validate(record.__dict__)
             # return the created record.
             return created_record
+        except IntegrityError as e:
+            raise ValidationError(
+                "Household name already exists in this estate"
+            ) from e
         except DatabaseError as e:
             message = "Database error in creating the prompt template"
             logger.exception(message)
@@ -319,6 +325,10 @@ class HouseholdRepository:
             message = "Record with ID %s not found" % id
             logger.exception(message)
             raise NotFoundError(message) from e
+        except IntegrityError as e:
+            raise ValidationError(
+                "Household name already exists in this estate"
+            ) from e
         except DatabaseError as e:
             message = "Database error in updating a record with ID %s" % id
             logger.exception(message)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.db.session import get_db_session
 from app.schemas.user_profile.household import (
     CreateRequest,
@@ -66,6 +66,8 @@ async def create(
     """
     try:
         return await service.create(request=request)
+    except ValidationError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         logger.exception(
             "An unexpected error happened while creating the item"
@@ -108,6 +110,8 @@ async def update(
         return await service.update(id=id, request=request)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail="Item not found") from e
+    except ValidationError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         logger.exception(
             "An unexpected error happened while updating the item"

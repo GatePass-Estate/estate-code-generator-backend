@@ -7,6 +7,7 @@ from pydantic import (
     UUID4,
     ConfigDict,
     field_serializer,
+    field_validator,
 )
 from typing import List, Optional
 
@@ -82,6 +83,20 @@ class RegisterUserRequest(BaseModel):
     household_id: Optional[UUID4] = Field(
         None, description="Optional household ID"
     )
+
+    @field_validator("first_name", "last_name", mode="before")
+    @classmethod
+    def _capitalize_name(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip().capitalize()
+        return v
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, estate_id: UUID4) -> str:
