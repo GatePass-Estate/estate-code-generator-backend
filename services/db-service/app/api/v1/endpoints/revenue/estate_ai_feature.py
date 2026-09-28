@@ -1,7 +1,7 @@
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,11 +131,15 @@ async def search(
     ai_feature_id: UUID4 | None = None,
     is_installed: bool | None = None,
     status: AiGrantStatus | None = None,
+    statuses: list[AiGrantStatus] | None = Query(None),
     source: str | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     is_free: bool | None = None,
     expires_at_before: datetime.datetime | None = None,
+    expires_at_after: datetime.datetime | None = None,
+    paystack_subscription_code: str | None = None,
+    pre_expiry_notified: bool | None = None,
     page: int = 1,
     limit: int = 10,
     service: Service = Depends(get_service),

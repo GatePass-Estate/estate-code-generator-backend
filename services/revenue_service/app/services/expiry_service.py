@@ -25,6 +25,7 @@ class ExpiryService:
     async def run(self) -> dict:
         n_subs = await self._expire_subscriptions()
         n_grants = await self._expire_ai_grants()
+        await self._pre_expiry_warnings()
         return {"expired_subscriptions": n_subs, "expired_ai_grants": n_grants}
 
     async def _expire_subscriptions(self) -> int:
@@ -103,22 +104,138 @@ class ExpiryService:
 
     async def _expire_ai_grants(self) -> int:
         now = datetime.now(tz=timezone.utc)
-        grace_cutoff = (
-            now - timedelta(days=settings.RENEWAL_GRACE_PERIOD_DAYS)
-        ).isoformat()
+        grace_cutoff = now - timedelta(days=settings.RENEWAL_GRACE_PERIOD_DAYS)
+        now_iso = now.isoformat()
+        grace_cutoff_iso = grace_cutoff.isoformat()
 
-        grants = await self.repo.search_ai_grants(
+        # Pass A — active grants whose expires_at < now
+        all_active_expired = await self.repo.search_ai_grants(
             status="active",
             is_free=False,
-            expires_at_before=grace_cutoff,
+            expires_at_before=now_iso,
         )
-        for grant in grants:
+        in_grace: list[dict] = []
+        past_grace: list[dict] = []
+        for grant in all_active_expired:
+            expires_at = _parse_dt(str(grant.get("expires_at") or ""))
+            if expires_at is not None and expires_at >= grace_cutoff:
+                in_grace.append(grant)
+            else:
+                past_grace.append(grant)
+
+        for grant in in_grace:
+            await _notify_ai_grant_grace(grant)
+
+        count = 0
+        for grant in past_grace:
             await self.repo.update_estate_ai_feature(
                 str(grant["id"]),
                 {"status": "expired", "is_installed": False},
             )
+            await _notify_ai_grant_expired(grant)
+            count += 1
 
-        return len(grants)
+        # Pass B — stale cleanup: cancelled/past_due past their expires_at
+        stale = await self.repo.search_stale_ai_grants(
+            expires_at_before=grace_cutoff_iso,
+        )
+        for grant in stale:
+            await self.repo.update_estate_ai_feature(
+                str(grant["id"]),
+                {"status": "expired", "is_installed": False},
+            )
+            count += 1
+
+        return count
+
+    async def _pre_expiry_warnings(self) -> None:
+        now = datetime.now(tz=timezone.utc)
+        warning_cutoff = now + timedelta(days=settings.PRE_EXPIRY_WARNING_DAYS)
+        now_iso = now.isoformat()
+        warning_cutoff_iso = warning_cutoff.isoformat()
+
+        # Estate subscriptions approaching period_end
+        subs = await self.repo.search_subscriptions_pre_expiry(
+            period_end_before=warning_cutoff_iso,
+            period_end_after=now_iso,
+        )
+        for sub in subs:
+            auto_renew = bool(sub.get("auto_renew"))
+            period_end = _parse_dt(str(sub.get("period_end") or ""))
+            period_end_str = (
+                period_end.strftime("%d %b %Y") if period_end else "soon"
+            )
+            estate_id = str(sub["estate_id"])
+            if auto_renew:
+                title = "Subscription renewing soon"
+                body = (
+                    f"Your estate subscription will automatically renew "
+                    f"on {period_end_str}. No action is needed — "
+                    f"we'll handle the rest."
+                )
+            else:
+                title = "Subscription expiring soon"
+                body = (
+                    f"Your estate subscription expires on "
+                    f"{period_end_str}. Renew before this date to avoid "
+                    f"losing access to your estate's features."
+                )
+            await fire_notify(
+                {
+                    "type": "SUBSCRIPTION_RENEWAL_REMINDER",
+                    "title": title,
+                    "body": body,
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["primary_admin"],
+                    },
+                    "metadata": {"estate_id": estate_id},
+                }
+            )
+            await self.repo.update_estate_subscription(
+                str(sub["id"]), {"pre_expiry_notified": True}
+            )
+
+        # Standalone AI grants approaching expires_at
+        grants = await self.repo.search_ai_grants_pre_expiry(
+            expires_at_before=warning_cutoff_iso,
+            expires_at_after=now_iso,
+        )
+        for grant in grants:
+            auto_renew = bool(grant.get("auto_renew"))
+            expires_at = _parse_dt(str(grant.get("expires_at") or ""))
+            expires_str = (
+                expires_at.strftime("%d %b %Y") if expires_at else "soon"
+            )
+            estate_id = str(grant["estate_id"])
+            if auto_renew:
+                title = "AI feature renewing soon"
+                body = (
+                    f"Your AI feature subscription will automatically "
+                    f"renew on {expires_str}. No action needed."
+                )
+            else:
+                title = "AI feature expiring soon"
+                body = (
+                    f"Your access to this AI feature expires on "
+                    f"{expires_str}. Renew before this date to keep the "
+                    f"feature active for your estate."
+                )
+            await fire_notify(
+                {
+                    "type": "AI_GRANT_RENEWAL_REMINDER",
+                    "title": title,
+                    "body": body,
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["primary_admin"],
+                    },
+                    "metadata": {"estate_id": estate_id},
+                }
+            )
+            await self.repo.update_estate_ai_feature(
+                str(grant["id"]), {"pre_expiry_notified": True}
+            )
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -150,7 +267,7 @@ async def _notify_grace_warning(estate_id: str) -> None:
             "metadata": {"estate_id": estate_id},
         }
     )
-    # In-app only → regular admins (type is in PUSH_TYPES only, not EMAIL_TYPES)
+    # In-app only → regular admins (PUSH_TYPES only, not EMAIL_TYPES)
     await fire_notify(
         {
             "type": "SUBSCRIPTION_GRACE_PERIOD_ADMIN",
@@ -160,6 +277,58 @@ async def _notify_grace_warning(estate_id: str) -> None:
                 "Contact your primary admin to renew."
             ),
             "fan_out": {"estate_id": estate_id, "roles": ["admin"]},
+            "metadata": {"estate_id": estate_id},
+        }
+    )
+
+
+async def _notify_ai_grant_grace(grant: dict) -> None:
+    """Push + in-app to primary_admin: AI grant in grace period."""
+    estate_id = str(grant["estate_id"])
+    await fire_notify(
+        {
+            "type": "AI_GRANT_GRACE_PERIOD",
+            "title": "AI feature payment overdue",
+            "body": (
+                "Your AI feature payment is overdue. Please renew "
+                "within the grace period to avoid losing access."
+            ),
+            "fan_out": {
+                "estate_id": estate_id,
+                "roles": ["primary_admin"],
+            },
+            "metadata": {"estate_id": estate_id},
+        }
+    )
+    await fire_notify(
+        {
+            "type": "AI_GRANT_GRACE_PERIOD_ADMIN",
+            "title": "AI feature payment overdue",
+            "body": (
+                "Your estate's AI feature payment is overdue. "
+                "Contact your primary admin to renew."
+            ),
+            "fan_out": {"estate_id": estate_id, "roles": ["admin"]},
+            "metadata": {"estate_id": estate_id},
+        }
+    )
+
+
+async def _notify_ai_grant_expired(grant: dict) -> None:
+    """Email + in-app to primary_admin: AI grant expired."""
+    estate_id = str(grant["estate_id"])
+    await fire_notify(
+        {
+            "type": "AI_GRANT_EXPIRED",
+            "title": "AI feature access expired",
+            "body": (
+                "Your AI feature access has expired. Renew now to "
+                "restore the feature for your estate."
+            ),
+            "fan_out": {
+                "estate_id": estate_id,
+                "roles": ["primary_admin"],
+            },
             "metadata": {"estate_id": estate_id},
         }
     )

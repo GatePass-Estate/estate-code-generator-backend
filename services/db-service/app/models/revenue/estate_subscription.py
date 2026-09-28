@@ -45,3 +45,6 @@ class EstateSubscription(BaseModelDB):
     last_renewal_failure_at = Column(DateTime(timezone=True), nullable=True)
     last_renewal_failure_reason = Column(Text, nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    pre_expiry_notified = Column(
+        Boolean, nullable=False, server_default="false"
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
 from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
+from app.services.ai_grant_sync import setup_standalone_ai_subscription
 from app.services.entitlement_service import EntitlementService
 from app.services.subscription_service import SubscriptionService
 
@@ -390,7 +391,7 @@ class WebhookService:
                 )
 
         elif kind == "ai_only":
-            await self._ent_svc.activate_ai_features(
+            grants = await self._ent_svc.activate_ai_features(
                 {
                     "estate_id": estate_id,
                     "ai_feature_keys": (metadata.get("ai_feature_keys") or []),
@@ -402,6 +403,63 @@ class WebhookService:
                 str(session["id"]),
                 {"status": "paid", "paid_at": paid_at.isoformat()},
             )
+
+            # Set up Paystack recurring subscription for card payments.
+            authorization_code = (data.get("authorization") or {}).get(
+                "authorization_code", ""
+            )
+            customer_email = (data.get("customer") or {}).get("email", "")
+            is_reusable = (data.get("authorization") or {}).get(
+                "reusable", False
+            )
+            features = (grants or {}).get("features") or []
+            if (
+                authorization_code
+                and customer_email
+                and is_reusable
+                and features
+            ):
+                catalog = await self.repo.get_ai_feature_map()
+                period_months = int(metadata.get("period_months", 1))
+                interval = _MONTHS_TO_INTERVAL.get(period_months, "monthly")
+                amount_kobo = int(Decimal(str(session["amount"])) * 100)
+                currency = session.get("currency_code", "NGN")
+                for item in features:
+                    feature_key = item.get("feature_key", "")
+                    ai_feature = catalog.get(feature_key)
+                    grant = item.get("grant")
+                    if not ai_feature or not grant:
+                        continue
+                    await setup_standalone_ai_subscription(
+                        self.repo,
+                        self._paystack,
+                        grant=grant,
+                        ai_feature=ai_feature,
+                        customer_email=customer_email,
+                        authorization_code=authorization_code,
+                        amount_kobo=amount_kobo,
+                        billing_interval=interval,
+                        currency=currency,
+                    )
+            elif (
+                authorization_code
+                and customer_email
+                and not is_reusable
+                and features
+            ):
+                logger.warning(
+                    "ai_only: authorization not reusable — skipping "
+                    "recurring billing, marking auto_renew=False "
+                    "estate_id=%s reference=%s",
+                    estate_id,
+                    reference,
+                )
+                for item in features:
+                    grant = item.get("grant")
+                    if grant:
+                        await self.repo.update_estate_ai_feature(
+                            str(grant["id"]), {"auto_renew": False}
+                        )
 
     async def _handle_renewal_charge(self, data: dict[str, Any]) -> None:
         """
@@ -429,11 +487,20 @@ class WebhookService:
             )
         )
         if not subscription:
-            logger.warning(
-                "charge.success auto-renewal: subscription_code=%s not "
-                "linked to any estate — skipping",
-                paystack_sub_code,
+            # Not an estate subscription — check standalone AI grant.
+            ai_grant = (
+                await self.repo.get_ai_grant_by_paystack_subscription_code(
+                    paystack_sub_code
+                )
             )
+            if ai_grant:
+                await self._handle_ai_grant_renewal(data, ai_grant)
+            else:
+                logger.warning(
+                    "charge.success auto-renewal: subscription_code=%s not "
+                    "linked to any estate or AI grant — skipping",
+                    paystack_sub_code,
+                )
             return
 
         estate_id = str(subscription["estate_id"])
@@ -455,7 +522,7 @@ class WebhookService:
                 "estate_id": estate_id,
                 "checkout_session_id": None,
                 "amount": str(data.get("amount", 0) / 100),
-                # Prefer currency from the event; fall back to subscription row.
+                # Prefer currency from the event; fall back to sub row.
                 "currency_code": (
                     data.get("currency")
                     or subscription.get("currency_code", "NGN")
@@ -477,6 +544,57 @@ class WebhookService:
             estate_id,
             reference,
             period_months,
+        )
+
+    async def _handle_ai_grant_renewal(
+        self, data: dict[str, Any], ai_grant: dict[str, Any]
+    ) -> None:
+        """
+        Extend an AI grant's expires_at after a successful auto-renewal charge.
+        """
+        reference = data.get("reference", "")
+        interval = (data.get("plan") or {}).get("interval", "monthly")
+        period_months = _INTERVAL_TO_MONTHS.get(interval, 1)
+        paid_at_raw = data.get("paid_at") or data.get("created_at", "")
+        try:
+            paid_at = datetime.fromisoformat(
+                str(paid_at_raw).replace("Z", "+00:00")
+            )
+            if paid_at.tzinfo is None:
+                paid_at = paid_at.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            paid_at = datetime.now(tz=timezone.utc)
+
+        new_expires_at = paid_at + timedelta(days=30 * period_months)
+        estate_id = str(ai_grant["estate_id"])
+
+        await self.repo.create_payment_transaction(
+            {
+                "estate_id": estate_id,
+                "checkout_session_id": None,
+                "amount": str(data.get("amount", 0) / 100),
+                "currency_code": data.get("currency", "NGN"),
+                "status": "success",
+                "provider_reference": reference,
+                "raw": data,
+            }
+        )
+        await self.repo.update_estate_ai_feature(
+            str(ai_grant["id"]),
+            {
+                "status": "active",
+                "is_installed": True,
+                "expires_at": new_expires_at.isoformat(),
+                "pre_expiry_notified": False,
+            },
+        )
+        logger.info(
+            "AI grant auto-renewal processed grant_id=%s estate_id=%s "
+            "reference=%s new_expires_at=%s",
+            ai_grant["id"],
+            estate_id,
+            reference,
+            new_expires_at.isoformat(),
         )
 
     async def _handle_subscription_create(self, data: dict[str, Any]) -> None:
@@ -514,6 +632,54 @@ class WebhookService:
                     subscription_code,
                 )
 
+    async def _handle_ai_grant_invoice_failed(
+        self, ai_grant: dict[str, Any]
+    ) -> None:
+        """Mark a standalone AI grant past_due when mid-cycle payment fails."""
+        now = datetime.now(tz=timezone.utc)
+        expires_at_raw = ai_grant.get("expires_at")
+        if expires_at_raw:
+            expires_at = datetime.fromisoformat(
+                str(expires_at_raw).replace("Z", "+00:00")
+            )
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at:
+                logger.info(
+                    "invoice.payment_failed in grace window for AI grant "
+                    "grant_id=%s — no status change",
+                    ai_grant["id"],
+                )
+                return
+
+        estate_id = str(ai_grant["estate_id"])
+        await self.repo.update_estate_ai_feature(
+            str(ai_grant["id"]), {"status": "past_due"}
+        )
+        logger.info(
+            "invoice.payment_failed mid-cycle: set AI grant past_due "
+            "grant_id=%s estate_id=%s",
+            ai_grant["id"],
+            estate_id,
+        )
+        await fire_notify(
+            {
+                "type": "AI_GRANT_PAYMENT_FAILED",
+                "title": "AI feature payment failed",
+                "body": (
+                    "Your automatic renewal payment for an AI feature "
+                    "failed. Your access continues until the current "
+                    "period ends — please update your payment method "
+                    "to avoid losing access."
+                ),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["primary_admin"],
+                },
+                "metadata": {"estate_id": estate_id},
+            }
+        )
+
     async def _handle_subscription_disable(self, data: dict[str, Any]) -> None:
         """
         Paystack subscription was disabled — mark auto_renew=false on our
@@ -532,11 +698,28 @@ class WebhookService:
             )
         )
         if not subscription:
-            logger.warning(
-                "subscription.disable subscription_code=%s not linked "
-                "to any estate — skipping",
-                subscription_code,
+            # Not an estate subscription — check standalone AI grant.
+            ai_grant = (
+                await self.repo.get_ai_grant_by_paystack_subscription_code(
+                    subscription_code
+                )
             )
+            if ai_grant:
+                await self.repo.update_estate_ai_feature(
+                    str(ai_grant["id"]), {"auto_renew": False}
+                )
+                logger.info(
+                    "subscription.disable: set auto_renew=False on AI "
+                    "grant grant_id=%s subscription_code=%s",
+                    ai_grant["id"],
+                    subscription_code,
+                )
+            else:
+                logger.warning(
+                    "subscription.disable subscription_code=%s not linked "
+                    "to any estate or AI grant — skipping",
+                    subscription_code,
+                )
             return
 
         estate_id = str(subscription["estate_id"])
@@ -572,11 +755,20 @@ class WebhookService:
                 )
             )
             if not subscription:
-                logger.warning(
-                    "invoice.payment_failed subscription_code=%s not "
-                    "linked to any estate — skipping",
-                    paystack_sub_code,
+                # Not an estate subscription — check standalone AI grant.
+                ai_grant = (
+                    await self.repo.get_ai_grant_by_paystack_subscription_code(
+                        paystack_sub_code
+                    )
                 )
+                if ai_grant:
+                    await self._handle_ai_grant_invoice_failed(ai_grant)
+                else:
+                    logger.warning(
+                        "invoice.payment_failed subscription_code=%s not "
+                        "linked to any estate or AI grant — skipping",
+                        paystack_sub_code,
+                    )
                 return
             estate_id = str(subscription["estate_id"])
         else:
@@ -627,9 +819,10 @@ class WebhookService:
                     "type": "SUBSCRIPTION_PAYMENT_FAILED",
                     "title": "Subscription payment failed",
                     "body": (
-                        "Your automatic subscription renewal payment failed. "
-                        "Your access continues until your current period ends — "
-                        "please update your payment method to avoid any interruption."
+                        "Your automatic subscription renewal payment "
+                        "failed. Your access continues until your current "
+                        "period ends — please update your payment method "
+                        "to avoid any interruption."
                     ),
                     "fan_out": {
                         "estate_id": estate_id,

@@ -24,3 +24,4 @@ class AiFeature(BaseModelDB):
     tier_benefits = Column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    paystack_plan_code = Column(String, nullable=True)

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     RENEWAL_GRACE_PERIOD_DAYS: int = int(
         os.getenv("RENEWAL_GRACE_PERIOD_DAYS", "7")
     )
+    PRE_EXPIRY_WARNING_DAYS: int = int(
+        os.getenv("PRE_EXPIRY_WARNING_DAYS", "1")
+    )
 
     # Bounded retries for grant sync + compensation across db-service calls.
     REVENUE_TRANSIENT_RETRY_ATTEMPTS: int = int(
