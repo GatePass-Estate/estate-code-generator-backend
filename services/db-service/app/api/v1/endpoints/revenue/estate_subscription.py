@@ -135,6 +135,8 @@ async def search(
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     period_end_before: datetime.datetime | None = None,
+    period_end_after: datetime.datetime | None = None,
+    pre_expiry_notified: bool | None = None,
     page: int = 1,
     limit: int = 10,
     service: Service = Depends(get_service),

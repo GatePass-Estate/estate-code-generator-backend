@@ -227,6 +227,10 @@ class EstateSubscriptionRepository:
                 query = query.where(
                     TableModel.period_end < request.period_end_before
                 )
+            elif key == "period_end_after":
+                query = query.where(
+                    TableModel.period_end > request.period_end_after
+                )
             elif hasattr(TableModel, key):
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)

@@ -42,3 +42,7 @@ class EstateAiFeature(BaseModelDB):
     auto_renew = Column(Boolean, nullable=False, server_default="true")
     starts_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    paystack_subscription_code = Column(String, nullable=True)
+    pre_expiry_notified = Column(
+        Boolean, nullable=False, server_default="false"
+    )
