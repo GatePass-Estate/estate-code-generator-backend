@@ -135,6 +135,55 @@ def _timeline_sentence(temporal: dict[str, Any], n_docs: int) -> str:
     return "; ".join(parts).capitalize() + "."
 
 
+def _build_executive_summary(
+    *,
+    record_count: int,
+    n_topics: int,
+    topics: list[dict[str, Any]],
+    timeline: str,
+    note: str | None = None,
+) -> str:
+    """
+    Tier-1 executive summary for the API (frontend renders styling).
+
+    Always at least 20 words so the headline is substantive on its own.
+    """
+    if note or n_topics == 0 or not topics:
+        summary = (
+            f"This analysis covers {record_count} incident report(s) in the "
+            f"selected date window. Distinct recurring themes were not "
+            f"identified for this cohort, often because the sample is small "
+            f"or narratives are too varied. {timeline}"
+        )
+        if note:
+            summary = (
+                f"This analysis covers {record_count} incident report(s) in "
+                f"the selected date window. {note} {timeline}"
+            )
+    else:
+        theme_phrases: list[str] = []
+        for topic in topics:
+            name = (
+                topic.get("display_name")
+                or topic.get("label")
+                or "Unnamed theme"
+            )
+            share = topic.get("share_percent", 0)
+            theme_phrases.append(f"{name} ({share}%)")
+        themes_list = "; ".join(theme_phrases)
+        summary = (
+            f"This analysis covers {record_count} incident reports in the "
+            f"selected date window and surfaces {n_topics} recurring "
+            f"theme(s): {themes_list}. {timeline}"
+        )
+    if len(summary.split()) < 20:
+        summary = (
+            f"{summary} Review the detailed insight below for theme "
+            f"keywords, example incidents, and timing breakdown."
+        )
+    return summary.strip()
+
+
 def enrich_topics_for_display(
     records: list[dict[str, Any]],
     topics: list[dict[str, Any]],
@@ -183,17 +232,16 @@ def format_topic_report_text(
     timeline: str,
     note: str | None = None,
 ) -> str:
-    """Plain-text report suitable for terminals and logs."""
+    """Plain-text body for tier-1 detailed insight (no markdown or decorations)."""
     lines: list[str] = [
-        "=" * 60,
-        "INCIDENT THEME REPORT",
-        "=" * 60,
-        f"Reports analysed: {record_count} ({documents_modelled} with text)",
-        f"Themes discovered: {n_topics}",
+        "Incident theme report",
+        "",
+        f"Reports analysed: {record_count} ({documents_modelled} with text).",
+        f"Themes discovered: {n_topics}.",
         "",
     ]
     if note:
-        lines.extend([f"Note: {note}", ""])
+        lines.extend([f"Note: {note}.", ""])
 
     for i, topic in enumerate(topics, start=1):
         name = topic.get("display_name") or topic.get("label") or f"Theme {i}"
@@ -203,22 +251,23 @@ def format_topic_report_text(
         kw = ", ".join(keywords) if keywords else "(none)"
         lines.extend(
             [
-                f"── Theme {i}: {name}",
-                f"   {count} incidents ({share}% of cohort)",
-                f"   Keywords: {kw}",
+                f"Theme {i}: {name}",
+                f"{count} incidents ({share}% of cohort).",
+                f"Keywords: {kw}.",
+                "",
             ]
         )
         for ex in topic.get("example_incidents") or []:
             title = ex.get("title")
             snippet = ex.get("narrative_snippet")
             if title:
-                lines.append(f"   • {title}")
+                lines.append(title)
             elif snippet:
-                lines.append(f"   • {snippet}")
+                lines.append(snippet)
         lines.append("")
 
-    lines.extend(["── Timing", f"   {timeline}", "=" * 60])
-    return "\n".join(lines)
+    lines.extend([f"Timing: {timeline}", ""])
+    return "\n".join(lines).strip()
 
 
 def build_human_topic_report(
@@ -257,10 +306,15 @@ def build_human_topic_report(
         }
         for t in enriched
     ]
+    headline = _build_executive_summary(
+        record_count=record_count,
+        n_topics=n_topics,
+        topics=enriched,
+        timeline=timeline,
+        note=note,
+    )
     return {
-        "headline": (
-            f"{record_count} incident reports · {n_topics} recurring themes"
-        ),
+        "headline": headline,
         "themes": themes,
         "timeline_summary": timeline,
         "full_text": full_text,
