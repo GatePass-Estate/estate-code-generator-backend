@@ -1,6 +1,17 @@
 from typing import AsyncGenerator
 
 import httpx
+from fastapi import HTTPException
+
+
+def _raise_if_client_error(e: httpx.HTTPStatusError) -> None:
+    """Re-raise 4xx responses from downstream services as HTTPException."""
+    if 400 <= e.response.status_code < 500:
+        try:
+            detail = e.response.json().get("detail", e.response.text)
+        except Exception:
+            detail = e.response.text
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
 
 
 class AsyncHttpHandler:
@@ -61,6 +72,7 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
+                _raise_if_client_error(e)
                 print(
                     f"POST request failed with status {e.response.status_code}"
                     f": {e.response.text}"
@@ -95,6 +107,7 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
+                _raise_if_client_error(e)
                 print(
                     f"PATCH request failed"
                     f" with status {e.response.status_code}"
@@ -130,6 +143,7 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
+                _raise_if_client_error(e)
                 print(
                     f"PUT request failed"
                     f" with status {e.response.status_code}"
@@ -163,6 +177,7 @@ class AsyncHttpHandler:
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as e:
+                _raise_if_client_error(e)
                 print(
                     f"DELETE request failed"
                     f" with status {e.response.status_code}"

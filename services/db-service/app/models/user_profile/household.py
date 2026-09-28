@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, String, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
 
@@ -24,7 +24,14 @@ class Household(BaseModelDB):
     """
 
     __tablename__ = "household"
-    __table_args__ = {"schema": "core"}
+    __table_args__ = (
+        UniqueConstraint(
+            "estate_id",
+            "name",
+            name="uq_household_estate_name",
+        ),
+        {"schema": "core"},
+    )
 
     estate_id = Column(UUID(as_uuid=True), ForeignKey("core.estates.id"))
     name = Column(String, nullable=True)
