@@ -48,3 +48,4 @@ class EstateSubscription(BaseModelDB):
     pre_expiry_notified = Column(
         Boolean, nullable=False, server_default="false"
     )
+    pending_tier_slug = Column(String, nullable=True)

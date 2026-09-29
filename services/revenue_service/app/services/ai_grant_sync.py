@@ -263,6 +263,8 @@ async def sync_tier_ai_grants(
         operation="sync_tier_ai_grants",
     )
 
+    new_feature_ids = {str(catalog[k]["id"]) for k in keys if k in catalog}
+
     try:
         for feature_key in keys:
             feature = catalog.get(feature_key)
@@ -352,6 +354,31 @@ async def sync_tier_ai_grants(
                     payload["expires_at"] = period_end_iso
                 created = await repo.create_estate_ai_feature(payload)
                 rollback.record_create(str(created["id"]))
+
+        # Cancel tier_bundle grants for features no longer in the new tier.
+        # Safe on upgrade (no excess grants). Handles downgrade at period end.
+        for grant in existing:
+            if str(grant.get("source") or "") != "subscription_tier":
+                continue
+            if str(grant.get("status") or "") != "active":
+                continue
+            if str(grant.get("ai_feature_id") or "") in new_feature_ids:
+                continue
+            rollback.record_update(grant)
+            await repo.update_estate_ai_feature(
+                str(grant["id"]),
+                {"status": "cancelled", "auto_renew": False},
+            )
+            logger.info(
+                "Cancelled excess tier grant grant_id=%s "
+                "ai_feature_id=%s estate_id=%s — feature not in "
+                "new tier tier_id=%s",
+                grant["id"],
+                grant.get("ai_feature_id"),
+                estate_id,
+                tier_id,
+            )
+
     except Exception:
         logger.exception(
             "AI grant sync failed estate_id=%s subscription_id=%s "

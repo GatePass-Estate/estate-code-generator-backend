@@ -73,6 +73,10 @@ class EstateSubscriptionBase(BaseModel):
             "True after pre-expiry warning fires; reset to False on renewal"
         ),
     )
+    pending_tier_slug: str | None = Field(
+        None,
+        description="Scheduled tier change slug; applied on next renewal cycle",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -148,6 +152,10 @@ class UpdateRequest(BaseModel):
     pre_expiry_notified: bool | None = Field(
         default=None,
         description="True after pre-expiry warning fires; reset to False on renewal",
+    )
+    pending_tier_slug: str | None = Field(
+        default=None,
+        description="Scheduled tier change slug; applied on next renewal cycle",
     )
 
     @field_serializer("estate_id")

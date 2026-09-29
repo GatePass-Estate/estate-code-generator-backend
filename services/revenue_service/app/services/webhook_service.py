@@ -225,6 +225,72 @@ class WebhookService:
                 paystack_subscription_code,
             )
 
+    async def _update_plan_for_tier_upgrade(
+        self,
+        *,
+        estate_id: str,
+        paystack_subscription_code: str,
+        pricing_snapshot: dict,
+        new_tier_slug: str,
+    ) -> None:
+        """
+        Update the Paystack plan amount after an immediate tier upgrade so
+        the next auto-renewal charges the full new-tier price.
+
+        Failures are logged but do not propagate — the tier change and AI
+        grants are already applied.
+        """
+        try:
+            sub_data = await self._paystack.get_subscription(
+                paystack_subscription_code
+            )
+            plan = sub_data.get("plan") or {}
+            plan_code: str = plan.get("plan_code", "")
+            if not plan_code:
+                logger.error(
+                    "tier_upgrade: Paystack subscription missing plan_code "
+                    "estate_id=%s subscription_code=%s",
+                    estate_id,
+                    paystack_subscription_code,
+                )
+                return
+
+            interval: str = plan.get("interval", "monthly")
+            new_price_per_seat = Decimal(
+                str(pricing_snapshot.get("new_price_per_seat") or 0)
+            )
+            covered_users = int(pricing_snapshot.get("covered_users") or 1)
+            period_months = int(pricing_snapshot.get("period_months") or 1)
+            new_amount_kobo = int(
+                new_price_per_seat * covered_users * period_months * 100
+            )
+            new_name = (
+                f"GatePass - {new_tier_slug} - "
+                f"{covered_users} seats - {interval}"
+            )
+            await self._paystack.update_plan(
+                plan_code,
+                amount_kobo=new_amount_kobo,
+                name=new_name,
+            )
+            logger.info(
+                "tier_upgrade: updated Paystack plan estate_id=%s "
+                "plan_code=%s new_amount_kobo=%s new_tier_slug=%s",
+                estate_id,
+                plan_code,
+                new_amount_kobo,
+                new_tier_slug,
+            )
+        except Exception:
+            logger.exception(
+                "tier_upgrade: failed to update Paystack plan "
+                "estate_id=%s subscription_code=%s new_tier_slug=%s "
+                "— DB is updated but auto-renewal amount may be stale",
+                estate_id,
+                paystack_subscription_code,
+                new_tier_slug,
+            )
+
     # ------------------------------------------------------------------ #
     # Handlers
     # ------------------------------------------------------------------ #
@@ -460,6 +526,36 @@ class WebhookService:
                         await self.repo.update_estate_ai_feature(
                             str(grant["id"]), {"auto_renew": False}
                         )
+
+        elif kind == "tier_upgrade_immediate":
+            tier_slug = metadata.get("tier_slug", "")
+            await self._sub_svc.change_tier_immediate(
+                estate_id,
+                tier_slug,
+                paid_at,
+            )
+            await self.repo.update_checkout_session(
+                str(session["id"]),
+                {"status": "paid", "paid_at": paid_at.isoformat()},
+            )
+            # Best-effort: update Paystack plan so next auto-renewal
+            # charges the full new-tier price.
+            active_sub = await self.repo.get_active_subscription(estate_id)
+            sub_code = (active_sub or {}).get("paystack_subscription_code")
+            if sub_code:
+                await self._update_plan_for_tier_upgrade(
+                    estate_id=estate_id,
+                    paystack_subscription_code=sub_code,
+                    pricing_snapshot=(session.get("pricing_snapshot") or {}),
+                    new_tier_slug=tier_slug,
+                )
+            else:
+                logger.warning(
+                    "tier_upgrade: no paystack_subscription_code on "
+                    "estate_id=%s — Paystack plan not updated; "
+                    "auto-renewal amount will remain unchanged",
+                    estate_id,
+                )
 
     async def _handle_renewal_charge(self, data: dict[str, Any]) -> None:
         """

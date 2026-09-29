@@ -26,7 +26,9 @@ from app.services.pricing_service import (
     VAT_KEY,
     apply_vat,
     compute_ai_monthly,
+    compute_price_per_seat,
     compute_seat_proration,
+    prorate_tier_change,
     quote_pricing,
     round_charge,
 )
@@ -191,11 +193,178 @@ class AiOnlyCheckoutHandler(CheckoutHandler):
         }
 
 
+class TierChangeCheckoutHandler(CheckoutHandler):
+    """Handles 'tier_upgrade_immediate' checkout kind (prorated upgrade)."""
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        super().__init__(repo, svc)
+        self._covered_users: int = 0
+        self._period_months: int = 1
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        active_sub = await self._repo.get_active_subscription(
+            request["estate_id"]
+        )
+        if not active_sub or active_sub.get("status") not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="No active subscription to upgrade",
+            )
+        current_tier = await self._repo.get_tier_by_id(
+            str(active_sub["tier_id"])
+        )
+        if not current_tier:
+            raise HTTPException(
+                status_code=500, detail="Current subscription tier not found"
+            )
+        new_tier = await self._repo.get_tier_by_slug(request["tier_slug"])
+        if not new_tier:
+            raise HTTPException(status_code=404, detail="Tier not found")
+        if new_tier.get("is_custom"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Custom tier upgrades require negotiated entitlements. "
+                    "Use the custom checkout flow instead."
+                ),
+            )
+        current_order = current_tier.get("display_order") or 0
+        new_order = new_tier.get("display_order") or 0
+        if new_order <= current_order:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Target tier is not an upgrade. "
+                    "Use POST /estate/{id}/schedule-tier-change"
+                    " for downgrades."
+                ),
+            )
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        estate_id = request["estate_id"]
+        active_sub = await self._repo.get_active_subscription(estate_id)
+        if not active_sub or active_sub.get("status") not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=400, detail="No active subscription to upgrade"
+            )
+
+        period_start_raw = active_sub["period_start"]
+        period_end_raw = active_sub["period_end"]
+        period_start = datetime.fromisoformat(
+            str(period_start_raw).replace("Z", "+00:00")
+        )
+        period_end = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+        period_days = (period_end.date() - period_start.date()).days + 1
+        period_months = max(1, round(period_days / 30))
+        covered_users = int(active_sub.get("covered_users") or 1)
+        self._covered_users = covered_users
+        self._period_months = period_months
+
+        (
+            country,
+            service_prices,
+            _ai_prices,
+            currency,
+            vat_rate,
+        ) = await self._svc._pricing_context(estate_id)
+
+        current_tier = await self._repo.get_tier_by_id(
+            str(active_sub["tier_id"])
+        )
+        if not current_tier:
+            raise HTTPException(
+                status_code=500, detail="Current subscription tier not found"
+            )
+        new_tier = await self._repo.get_tier_by_slug(request["tier_slug"])
+        if not new_tier:
+            raise HTTPException(status_code=404, detail="Tier not found")
+
+        def _seat_price_from_tier(tier: dict[str, Any]) -> Decimal:
+            if tier.get("is_custom"):
+                entitlements = ensure_admin_fee_entitlement(
+                    dict(active_sub.get("entitlements") or {})
+                )
+            else:
+                entitlements = dict(tier.get("entitlements") or {})
+            included_keys = [
+                k
+                for k, v in entitlements.items()
+                if k != VAT_KEY
+                and (
+                    (isinstance(v, bool) and v)
+                    or (isinstance(v, int) and v > 0)
+                )
+            ]
+            result = compute_price_per_seat(service_prices, included_keys)
+            return result["price_per_seat"]
+
+        try:
+            old_pps = _seat_price_from_tier(current_tier)
+            new_pps = _seat_price_from_tier(new_tier)
+            proration = prorate_tier_change(
+                old_price_per_seat=old_pps,
+                new_price_per_seat=new_pps,
+                covered_users=covered_users,
+                period_months=period_months,
+                period_start=period_start,
+                period_end=period_end,
+                currency_code=currency,
+                country_code=country,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        vat = apply_vat(proration["subtotal"], vat_rate)
+        snapshot = {
+            **proration,
+            "subtotal": float(vat["subtotal"]),
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": float(vat["vat_amount"]),
+            "client_total": float(vat["client_total"]),
+            "old_price_per_seat": float(proration["old_price_per_seat"]),
+            "new_price_per_seat": float(proration["new_price_per_seat"]),
+            "tier_diff_per_seat": float(proration["tier_diff_per_seat"]),
+            "prorated_charge": float(proration["prorated_charge"]),
+            "daily_seat_rate": float(proration["daily_seat_rate"]),
+            "period_seat_price": float(proration["period_seat_price"]),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        }
+        return {
+            "amount": float(vat["client_total"]),
+            "currency_code": currency,
+            "country_code": country,
+            "snapshot": snapshot,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "tier_upgrade_immediate",
+            "initiated_by_user_id": user_id,
+            "tier_slug": request["tier_slug"],
+            "covered_users": self._covered_users,
+            "period_months": self._period_months,
+        }
+
+
 _HANDLERS: dict[str, type[CheckoutHandler]] = {
     "tier": SubscriptionCheckoutHandler,
     "custom": SubscriptionCheckoutHandler,
     "seat_add": SeatAddCheckoutHandler,
     "ai_only": AiOnlyCheckoutHandler,
+    "tier_upgrade_immediate": TierChangeCheckoutHandler,
 }
 
 

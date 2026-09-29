@@ -23,8 +23,11 @@ from app.schemas.checkout import (
 )
 from app.schemas.subscriptions import (
     ActivateSubscriptionResponse,
+    BillingCycleResponse,
     EstateSubscriptionResponse,
     MutationSubscriptionResponse,
+    ScheduleTierChangeRequest,
+    ScheduleTierChangeResponse,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -63,6 +66,36 @@ async def get_estate_subscription(
         logger.exception(
             "Get estate subscription failed for estate_id=%s",
             estate_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/estate/{estate_id}/billing-cycle",
+    response_model=BillingCycleResponse,
+)
+async def get_billing_cycle(
+    estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Return next billing cycle projection for an estate.
+
+    Complements GET /estate/{estate_id} (full subscription +
+    entitlements) by computing what the next auto-renewal will charge
+    and under which tier, including any scheduled tier change.
+    """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.get_billing_cycle(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "get_billing_cycle failed for estate_id=%s", estate_id
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"
@@ -158,6 +191,65 @@ async def cancel_subscription(
         raise
     except Exception as e:
         logger.exception("Cancel failed estate_id=%s", estate_id)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post(
+    "/estate/{estate_id}/schedule-tier-change",
+    response_model=ScheduleTierChangeResponse,
+)
+async def schedule_tier_change(
+    estate_id: str,
+    request: ScheduleTierChangeRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Schedule a tier upgrade or downgrade for the next billing cycle.
+
+    No payment is collected now. The pending tier and AI grants are
+    applied automatically on the next auto-renewal.
+    """
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.schedule_tier_change(estate_id, request.tier_slug)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "schedule_tier_change failed estate_id=%s tier_slug=%s",
+            estate_id,
+            request.tier_slug,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
+    "/estate/{estate_id}/schedule-tier-change",
+    response_model=ScheduleTierChangeResponse,
+)
+async def cancel_tier_change(
+    estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Cancel a previously scheduled tier change.
+
+    Clears pending_tier_slug and reverts the Paystack plan amount so
+    the next auto-renewal charges the current tier price.
+    """
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.cancel_tier_change(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("cancel_tier_change failed estate_id=%s", estate_id)
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
