@@ -58,6 +58,13 @@ class EstateAiFeatureBase(BaseModel):
     auto_renew: bool = Field(default=True, description="Auto renew flag")
     starts_at: datetime | None = Field(None, description="Grant/install start")
     expires_at: datetime | None = Field(None, description="Expiry timestamp")
+    paystack_subscription_code: str | None = Field(
+        None, description="Paystack SUB_xxx code for recurring billing"
+    )
+    pre_expiry_notified: bool = Field(
+        default=False,
+        description="True after pre-expiry warning fires; reset to False on renewal",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -123,6 +130,13 @@ class UpdateRequest(BaseModel):
     expires_at: datetime | None = Field(
         default=None, description="Expiry timestamp"
     )
+    paystack_subscription_code: str | None = Field(
+        default=None, description="Paystack SUB_xxx code for recurring billing"
+    )
+    pre_expiry_notified: bool | None = Field(
+        default=None,
+        description="True after pre-expiry warning fires; reset to False on renewal",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -170,12 +184,24 @@ class SearchRequest(BaseSearchRequest):
     ai_feature_id: Optional[UUID4] = Field(None, description="AI feature ID")
     is_installed: Optional[bool] = Field(None, description="Installed flag")
     status: Optional[AiGrantStatus] = Field(None, description="Grant status")
+    statuses: Optional[List[AiGrantStatus]] = Field(
+        None, description="Filter by multiple statuses (OR)"
+    )
     source: str | None = Field(None, description="tier_bundle|standalone")
     is_free: Optional[bool] = Field(
         None, description="Filter by free grant flag"
     )
     expires_at_before: Optional[datetime] = Field(
         None, description="Filter: expires_at < this value"
+    )
+    expires_at_after: Optional[datetime] = Field(
+        None, description="Filter: expires_at > this value"
+    )
+    paystack_subscription_code: Optional[str] = Field(
+        None, description="Filter by Paystack subscription code"
+    )
+    pre_expiry_notified: Optional[bool] = Field(
+        None, description="Filter by pre_expiry_notified flag"
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
@@ -22,7 +23,13 @@ from app.services.entitlement_resolver import (
     PAID_ACCESS_STATUSES,
     resolve_entitlements,
 )
-from app.services.pricing_service import omit_vat
+from app.services.pricing_service import (
+    VAT_KEY,
+    apply_vat,
+    compute_price_per_seat,
+    omit_vat,
+    round_charge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +46,7 @@ _SUBSCRIPTION_ROLLBACK_FIELDS = (
     "covered_users",
     "entitlements",
     "cancelled_at",
+    "pending_tier_slug",
 )
 
 
@@ -177,6 +185,139 @@ class SubscriptionService:
             "effective_entitlements": omit_vat(entitlements),
         }
 
+    async def get_billing_cycle(self, estate_id: str) -> dict:
+        """Return next billing cycle projection for an estate.
+
+        Complements GET /estate/{estate_id} (which returns the full
+        subscription + entitlements) by adding what the next auto-
+        renewal will charge and under which tier.
+
+        Returns a minimal dict keyed only on ``estate_id`` when no
+        active subscription exists.
+        """
+        subscription = await self.repo.get_active_subscription(estate_id)
+        if not subscription:
+            return {"estate_id": estate_id}
+
+        auto_renew = bool(subscription.get("auto_renew"))
+        period_end_raw = subscription.get("period_end")
+
+        tier_id = str(subscription.get("tier_id") or "")
+        current_tier = (
+            await self.repo.get_tier_by_id(tier_id) if tier_id else None
+        )
+
+        # Resolve the tier that will apply at next renewal.
+        pending_slug = subscription.get("pending_tier_slug") or ""
+        tier_change_scheduled = bool(pending_slug)
+        if tier_change_scheduled:
+            next_tier = await self.repo.get_tier_by_slug(pending_slug)
+            if not next_tier:
+                logger.warning(
+                    "get_billing_cycle: pending_tier_slug=%r not "
+                    "found for estate_id=%s — treating as no change",
+                    pending_slug,
+                    estate_id,
+                )
+                tier_change_scheduled = False
+                next_tier = current_tier
+        else:
+            next_tier = current_tier
+
+        # Compute next billing amount only when auto-renew is on
+        # and we have a resolvable next tier.
+        next_billing_amount: float | None = None
+        next_billing_currency: str | None = None
+
+        if auto_renew and next_tier and not next_tier.get("is_custom"):
+            try:
+                # Late import to avoid circular dependency;
+                # CheckoutService does not import SubscriptionService.
+                from app.services.checkout_service import (
+                    CheckoutService,
+                )
+
+                checkout_svc = CheckoutService(self.repo)
+                (
+                    _country,
+                    service_prices,
+                    _ai_prices,
+                    currency,
+                    vat_rate,
+                ) = await checkout_svc._pricing_context(estate_id)
+
+                entitlements = dict(next_tier.get("entitlements") or {})
+                included_keys = [
+                    k
+                    for k, v in entitlements.items()
+                    if k != VAT_KEY
+                    and (
+                        (isinstance(v, bool) and v)
+                        or (isinstance(v, int) and v > 0)
+                    )
+                ]
+                seat_result = compute_price_per_seat(
+                    service_prices, included_keys
+                )
+                price_per_seat = seat_result["price_per_seat"]
+                covered_users = int(subscription.get("covered_users") or 1)
+
+                period_start_raw = subscription.get("period_start")
+                if period_end_raw and period_start_raw:
+                    period_end_dt = datetime.fromisoformat(
+                        str(period_end_raw).replace("Z", "+00:00")
+                    )
+                    period_start_dt = datetime.fromisoformat(
+                        str(period_start_raw).replace("Z", "+00:00")
+                    )
+                    period_days = (
+                        period_end_dt.date() - period_start_dt.date()
+                    ).days + 1
+                    period_months = max(1, round(period_days / 30))
+                else:
+                    period_months = 1
+
+                subtotal = round_charge(
+                    price_per_seat * covered_users * period_months
+                )
+                vat_result = apply_vat(subtotal, vat_rate or 0)
+                next_billing_amount = float(vat_result["client_total"])
+                next_billing_currency = currency
+            except Exception:
+                logger.exception(
+                    "get_billing_cycle: failed to compute "
+                    "next_billing_amount estate_id=%s",
+                    estate_id,
+                )
+
+        def _to_str(v: Any) -> str | None:
+            if v is None:
+                return None
+            return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+        return {
+            "estate_id": estate_id,
+            "period_end": _to_str(period_end_raw),
+            "covered_users": subscription.get("covered_users"),
+            "auto_renew": auto_renew,
+            "current_tier_slug": (
+                current_tier.get("slug") if current_tier else None
+            ),
+            "next_renewal_date": _to_str(period_end_raw),
+            "tier_change_scheduled": tier_change_scheduled,
+            "next_tier_slug": (next_tier.get("slug") if next_tier else None),
+            "next_tier": (
+                {
+                    **next_tier,
+                    "entitlements": omit_vat(next_tier.get("entitlements")),
+                }
+                if next_tier
+                else None
+            ),
+            "next_billing_amount": next_billing_amount,
+            "next_billing_currency": next_billing_currency,
+        }
+
     async def _latest_subscription(self, estate_id: str) -> dict | None:
         items = await self.repo.list_estate_subscriptions(estate_id)
         if not items:
@@ -263,6 +404,7 @@ class SubscriptionService:
             "covered_users": covered_users,
             "entitlements": snapshot,
             "cancelled_at": None,
+            "pending_tier_slug": None,  # Clear any stale scheduled tier change
         }
 
         if existing:
@@ -389,29 +531,71 @@ class SubscriptionService:
 
         prior_state = dict(subscription)
         subscription_id = str(subscription["id"])
+
+        # Apply a pending tier change if one was scheduled.
+        pending_slug = subscription.get("pending_tier_slug")
+        pending_tier: dict | None = None
+        update_payload: dict[str, Any] = {
+            "status": "active",
+            "period_end": new_end.isoformat(),
+            "auto_renew": True,
+            "cancelled_at": None,
+            "pre_expiry_notified": False,
+        }
+        if pending_slug:
+            pending_tier = await self.repo.get_tier_by_slug(pending_slug)
+            if pending_tier:
+                update_payload["tier_id"] = pending_tier["id"]
+                update_payload["pending_tier_slug"] = None
+                logger.info(
+                    "Applying pending tier change estate_id=%s "
+                    "pending_slug=%s new_tier_id=%s",
+                    estate_id,
+                    pending_slug,
+                    pending_tier["id"],
+                )
+            else:
+                logger.warning(
+                    "Pending tier slug %r not found for estate_id=%s "
+                    "— clearing stale pending_tier_slug",
+                    pending_slug,
+                    estate_id,
+                )
+                update_payload["pending_tier_slug"] = None
+
         updated = await self.repo.update_estate_subscription(
-            subscription_id,
-            {
-                "status": "active",
-                "period_end": new_end.isoformat(),
-                "auto_renew": True,
-                "cancelled_at": None,
-            },
+            subscription_id, update_payload
         )
         try:
-            await retry_transient(
-                lambda: extend_subscription_ai_grants(
-                    self.repo,
-                    estate_id=estate_id,
-                    subscription_id=subscription_id,
-                    new_period_end=new_end,
-                ),
-                attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
-                base_delay_seconds=(
-                    settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
-                ),
-                operation_name="renew_extend_subscription_ai_grants",
-            )
+            if pending_tier:
+                await retry_transient(
+                    lambda: sync_tier_ai_grants(
+                        self.repo,
+                        estate_id=estate_id,
+                        subscription_id=subscription_id,
+                        tier=pending_tier,
+                        period_end=new_end,
+                    ),
+                    attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                    base_delay_seconds=(
+                        settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                    ),
+                    operation_name="renew_sync_tier_ai_grants",
+                )
+            else:
+                await retry_transient(
+                    lambda: extend_subscription_ai_grants(
+                        self.repo,
+                        estate_id=estate_id,
+                        subscription_id=subscription_id,
+                        new_period_end=new_end,
+                    ),
+                    attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                    base_delay_seconds=(
+                        settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                    ),
+                    operation_name="renew_extend_subscription_ai_grants",
+                )
         except Exception as exc:
             logger.exception(
                 "Renew grant sync failed; compensating subscription "
@@ -541,4 +725,338 @@ class SubscriptionService:
             "estate_id": estate_id,
             "covered_users": current + seats_added,
             "subscription": updated,
+        }
+
+    async def change_tier_immediate(
+        self,
+        estate_id: str,
+        new_tier_slug: str,
+        paid_at: datetime,
+    ) -> dict:
+        """Upgrade to a new tier immediately after a prorated payment.
+
+        Updates subscription tier_id, syncs AI grants for the new tier,
+        and resets pre_expiry_notified. The Paystack plan amount update
+        is handled by the webhook caller (best-effort, with the session
+        amount already available there).
+        """
+        active_sub = await self.repo.get_active_subscription(estate_id)
+        if not active_sub:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+
+        new_tier = await self.repo.get_tier_by_slug(new_tier_slug)
+        if not new_tier:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown tier '{new_tier_slug}'",
+            )
+
+        subscription_id = str(active_sub["id"])
+        period_end_raw = active_sub.get("period_end")
+        period_end = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+        if period_end.tzinfo is None:
+            period_end = period_end.replace(tzinfo=timezone.utc)
+
+        updated = await self.repo.update_estate_subscription(
+            subscription_id,
+            {
+                "tier_id": new_tier["id"],
+                "pre_expiry_notified": False,
+                "pending_tier_slug": None,  # Clear any stale scheduled change
+            },
+        )
+
+        try:
+            await retry_transient(
+                lambda: sync_tier_ai_grants(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=subscription_id,
+                    tier=new_tier,
+                    period_end=period_end,
+                ),
+                attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                base_delay_seconds=(
+                    settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                ),
+                operation_name="tier_change_immediate_sync_ai_grants",
+            )
+        except Exception as exc:
+            logger.exception(
+                "AI grant sync failed after immediate tier change; "
+                "reverting tier_id estate_id=%s subscription_id=%s "
+                "new_tier_slug=%s",
+                estate_id,
+                subscription_id,
+                new_tier_slug,
+            )
+            prior_tier_id = active_sub.get("tier_id")
+            try:
+                await self.repo.update_estate_subscription(
+                    subscription_id,
+                    {
+                        "tier_id": prior_tier_id,
+                        "pre_expiry_notified": active_sub.get(
+                            "pre_expiry_notified", False
+                        ),
+                        # Restore any scheduled tier change that was cleared
+                        # so the user's expected downgrade/upgrade is not
+                        # silently dropped on a failed immediate upgrade.
+                        "pending_tier_slug": active_sub.get(
+                            "pending_tier_slug"
+                        ),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Revert of tier change also failed estate_id=%s "
+                    "subscription_id=%s",
+                    estate_id,
+                    subscription_id,
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Tier upgrade reverted because AI grant sync failed; "
+                    "retry once db-service is healthy."
+                ),
+            ) from exc
+
+        logger.info(
+            "Immediate tier upgrade applied estate_id=%s "
+            "subscription_id=%s new_tier_slug=%s paid_at=%s",
+            estate_id,
+            subscription_id,
+            new_tier_slug,
+            paid_at.isoformat(),
+        )
+        return {
+            "estate_id": estate_id,
+            "subscription_id": subscription_id,
+            "subscription": updated,
+            "tier_slug": new_tier_slug,
+        }
+
+    async def _update_paystack_plan_for_tier(
+        self,
+        *,
+        estate_id: str,
+        tier: dict,
+        active_sub: dict,
+        sub_code: str,
+    ) -> None:
+        """Best-effort Paystack plan amount update for a tier change.
+
+        Computes the full-period price for ``tier`` (seat price ×
+        covered_users × period_months) and updates the Paystack plan so
+        the next auto-renewal charges the correct amount. Logs and returns
+        silently on any failure — the DB change is already committed.
+        """
+        # Late import avoids a circular dependency; CheckoutService does
+        # not import SubscriptionService.
+        from app.services.checkout_service import CheckoutService
+
+        try:
+            checkout_svc = CheckoutService(self.repo)
+            # Paystack plan amount is pre-VAT; VAT is applied at checkout only.
+            (
+                _country,
+                service_prices,
+                _ai_prices,
+                _currency,
+                _vat,
+            ) = await checkout_svc._pricing_context(estate_id)
+            entitlements = dict(tier.get("entitlements") or {})
+            included_keys = [
+                k
+                for k, v in entitlements.items()
+                if k != VAT_KEY
+                and (
+                    (isinstance(v, bool) and v)
+                    or (isinstance(v, int) and v > 0)
+                )
+            ]
+            seat_result = compute_price_per_seat(service_prices, included_keys)
+            price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+            covered_users = int(active_sub.get("covered_users") or 1)
+            period_end_raw = active_sub.get("period_end")
+            period_start_raw = active_sub.get("period_start")
+            if period_end_raw and period_start_raw:
+                period_end_dt = datetime.fromisoformat(
+                    str(period_end_raw).replace("Z", "+00:00")
+                )
+                period_start_dt = datetime.fromisoformat(
+                    str(period_start_raw).replace("Z", "+00:00")
+                )
+                period_days = (
+                    period_end_dt.date() - period_start_dt.date()
+                ).days + 1
+                period_months = max(1, round(period_days / 30))
+            else:
+                period_months = 1
+
+            new_amount_kobo = int(
+                price_per_seat * covered_users * period_months * 100
+            )
+
+            if not self._paystack:
+                return
+            sub_data = await self._paystack.get_subscription(sub_code)
+            plan_code = (sub_data.get("plan") or {}).get("plan_code", "")
+            if not plan_code:
+                return
+            interval = (sub_data.get("plan") or {}).get("interval", "monthly")
+            tier_slug = tier.get("slug", "")
+            await self._paystack.update_plan(
+                plan_code,
+                amount_kobo=new_amount_kobo,
+                name=(
+                    f"GatePass - {tier_slug} - "
+                    f"{covered_users} seats - {interval}"
+                ),
+            )
+            logger.info(
+                "Updated Paystack plan for tier change estate_id=%s "
+                "plan_code=%s tier=%s new_amount_kobo=%s",
+                estate_id,
+                plan_code,
+                tier_slug,
+                new_amount_kobo,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to update Paystack plan for tier change "
+                "estate_id=%s tier=%s — DB updated but "
+                "auto-renewal amount may be stale",
+                estate_id,
+                tier.get("slug"),
+            )
+
+    async def schedule_tier_change(
+        self,
+        estate_id: str,
+        tier_slug: str,
+    ) -> dict:
+        """Schedule a tier change to take effect on the next renewal.
+
+        Stores ``pending_tier_slug`` on the active subscription. Returns
+        the active subscription, current tier, and new tier so the caller
+        can do a best-effort Paystack plan amount update.
+        """
+        active_sub = await self.repo.get_active_subscription(estate_id)
+        if not active_sub or active_sub.get("status") not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        if not active_sub.get("auto_renew"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Auto-renewal is off — purchase the new tier directly "
+                    "when you are ready to renew."
+                ),
+            )
+
+        current_tier = await self.repo.get_tier_by_id(
+            str(active_sub["tier_id"])
+        )
+        new_tier = await self.repo.get_tier_by_slug(tier_slug)
+        if not new_tier:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown tier '{tier_slug}'",
+            )
+        if new_tier.get("is_custom"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Custom tier changes require negotiated entitlements. "
+                    "Use the custom checkout flow instead."
+                ),
+            )
+        if str(new_tier["id"]) == str(active_sub["tier_id"]):
+            raise HTTPException(
+                status_code=400,
+                detail="Target tier is the same as the current tier",
+            )
+
+        await self.repo.update_estate_subscription(
+            str(active_sub["id"]),
+            {"pending_tier_slug": tier_slug},
+        )
+        logger.info(
+            "Scheduled tier change estate_id=%s "
+            "current_tier=%s pending_tier=%s effective_from=%s",
+            estate_id,
+            current_tier.get("slug") if current_tier else None,
+            tier_slug,
+            active_sub.get("period_end"),
+        )
+
+        sub_code = active_sub.get("paystack_subscription_code")
+        if sub_code:
+            await self._update_paystack_plan_for_tier(
+                estate_id=estate_id,
+                tier=new_tier,
+                active_sub=active_sub,
+                sub_code=sub_code,
+            )
+
+        return {
+            "estate_id": estate_id,
+            "pending_tier_slug": tier_slug,
+            "effective_from": active_sub.get("period_end"),
+        }
+
+    async def cancel_tier_change(self, estate_id: str) -> dict:
+        """Cancel a scheduled tier change (clears pending_tier_slug).
+
+        Returns the subscription and current tier so the caller can
+        revert the Paystack plan amount.
+        """
+        active_sub = await self.repo.get_active_subscription(estate_id)
+        if not active_sub:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        if not active_sub.get("pending_tier_slug"):
+            raise HTTPException(
+                status_code=400,
+                detail="No pending tier change to cancel",
+            )
+
+        current_tier = await self.repo.get_tier_by_id(
+            str(active_sub["tier_id"])
+        )
+        await self.repo.update_estate_subscription(
+            str(active_sub["id"]),
+            {"pending_tier_slug": None},
+        )
+        logger.info(
+            "Cancelled tier change estate_id=%s "
+            "current_tier=%s cancelled_pending=%s",
+            estate_id,
+            current_tier.get("slug") if current_tier else None,
+            active_sub.get("pending_tier_slug"),
+        )
+
+        sub_code = active_sub.get("paystack_subscription_code")
+        if sub_code and current_tier:
+            await self._update_paystack_plan_for_tier(
+                estate_id=estate_id,
+                tier=current_tier,
+                active_sub=active_sub,
+                sub_code=sub_code,
+            )
+
+        return {
+            "estate_id": estate_id,
+            "pending_tier_slug": None,
         }

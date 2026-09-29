@@ -71,6 +71,39 @@ class DbRevenueRepository:
             )
         return response.get("items") or []
 
+    async def _paginate_all(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        page_size: int = 100,
+    ) -> list[dict]:
+        """
+        Paginate through all results from a db-service search endpoint.
+
+        Keeps fetching pages until a partial page is returned, which signals
+        the last page. Caller should not pass ``page`` or ``limit`` in params.
+
+        Args:
+            endpoint: Base resource URL (without /search).
+            params: Query filters; None values are dropped.
+            page_size: Items per page (default 100).
+
+        Returns:
+            All matching items across all pages.
+        """
+        page = 1
+        results: list[dict] = []
+        while True:
+            batch = await self._search(
+                endpoint,
+                {**params, "page": page, "limit": page_size},
+            )
+            results.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return results
+
     async def get_estate(self, estate_id: str) -> dict:
         """
         Fetch an estate by ID.
@@ -281,12 +314,11 @@ class DbRevenueRepository:
         with period_end before cutoff."""
         results = []
         for status in statuses:
-            items = await self._search(
+            items = await self._paginate_all(
                 self.estate_subscription,
                 {
                     "status": status,
                     "period_end_before": period_end_before,
-                    "limit": 500,
                 },
             )
             results.extend(items)
@@ -297,13 +329,12 @@ class DbRevenueRepository:
     ) -> list[dict]:
         """Fetch AI grants with status, is_free flag,
         and expires_at before cutoff."""
-        return await self._search(
+        return await self._paginate_all(
             self.estate_ai_feature,
             {
                 "status": status,
                 "is_free": is_free,
                 "expires_at_before": expires_at_before,
-                "limit": 500,
             },
         )
 
@@ -332,6 +363,78 @@ class DbRevenueRepository:
             {"paystack_subscription_code": subscription_code, "limit": 1},
         )
         return items[0] if items else None
+
+    async def get_ai_grant_by_paystack_subscription_code(
+        self, subscription_code: str
+    ) -> dict | None:
+        """Return an AI grant by paystack_subscription_code, or None."""
+        items = await self._search(
+            self.estate_ai_feature,
+            {
+                "paystack_subscription_code": subscription_code,
+                "limit": 1,
+            },
+        )
+        return items[0] if items else None
+
+    async def update_ai_feature(self, feature_id: str, payload: dict) -> dict:
+        """PATCH an ai_feature catalog row by id."""
+        url = f"{self.ai_feature}/{feature_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update ai_feature"
+            )
+        return response
+
+    async def search_subscriptions_pre_expiry(
+        self, *, period_end_before: str, period_end_after: str
+    ) -> list[dict]:
+        """Fetch active/trialing subscriptions whose period_end falls within
+        the pre-expiry warning window and have not yet been notified."""
+        results = []
+        for status in ("active", "trialing"):
+            items = await self._paginate_all(
+                self.estate_subscription,
+                {
+                    "status": status,
+                    "period_end_before": period_end_before,
+                    "period_end_after": period_end_after,
+                    "pre_expiry_notified": False,
+                },
+            )
+            results.extend(items)
+        return results
+
+    async def search_ai_grants_pre_expiry(
+        self, *, expires_at_before: str, expires_at_after: str
+    ) -> list[dict]:
+        """Fetch active non-free AI grants whose expires_at falls within
+        the pre-expiry warning window and have not yet been notified."""
+        return await self._paginate_all(
+            self.estate_ai_feature,
+            {
+                "status": "active",
+                "is_free": False,
+                "expires_at_before": expires_at_before,
+                "expires_at_after": expires_at_after,
+                "pre_expiry_notified": False,
+            },
+        )
+
+    async def search_stale_ai_grants(
+        self, *, expires_at_before: str
+    ) -> list[dict]:
+        """Fetch cancelled/past_due non-free AI grants past their expires_at.
+        Used for stale-status cleanup (#12)."""
+        return await self._paginate_all(
+            self.estate_ai_feature,
+            {
+                "statuses": ["cancelled", "past_due"],
+                "is_free": False,
+                "expires_at_before": expires_at_before,
+            },
+        )
 
     # ------------------------------------------------------------------ #
     # Payment checkout session
