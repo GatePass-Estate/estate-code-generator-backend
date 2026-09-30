@@ -139,8 +139,10 @@ class EntitlementService:
 
         if service_key == MAX_ACTIVE_USERS_KEY and sub is not None:
             covered = sub.get("covered_users")
-            if covered is not None:
-                limit = int(covered)
+            pending = sub.get("pending_covered_users")
+            effective = pending if pending is not None else covered
+            if effective is not None:
+                limit = int(effective)
                 result = {
                     "allowed": limit > 0,
                     "limit": limit,
