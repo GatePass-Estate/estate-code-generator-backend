@@ -36,6 +36,10 @@ class AiFeatureBase(BaseModel):
         default_factory=list,
         description="Benefits of this AI feature tier",
     )
+    paystack_plan_code: str | None = Field(
+        None,
+        description="Paystack plan code for standalone recurring billing",
+    )
 
     model_config = model_config
 
@@ -75,6 +79,10 @@ class UpdateRequest(BaseModel):
     )
     tier_benefits: list[str] | None = Field(
         default=None, description="Benefits of this AI feature tier"
+    )
+    paystack_plan_code: str | None = Field(
+        default=None,
+        description="Paystack plan code for standalone recurring billing",
     )
 
     model_config = model_config

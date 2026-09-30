@@ -67,6 +67,20 @@ class EstateSubscriptionBase(BaseModel):
         None, description="Last renewal failure reason"
     )
     cancelled_at: datetime | None = Field(None, description="Cancelled at")
+    pre_expiry_notified: bool = Field(
+        default=False,
+        description=(
+            "True after pre-expiry warning fires; reset to False on renewal"
+        ),
+    )
+    pending_tier_slug: str | None = Field(
+        None,
+        description="Scheduled tier change slug; applied on next renewal cycle",
+    )
+    pending_covered_users: int | None = Field(
+        None,
+        description="Scheduled seat reduction; applied on next renewal cycle",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -139,6 +153,18 @@ class UpdateRequest(BaseModel):
     cancelled_at: datetime | None = Field(
         default=None, description="Cancelled at"
     )
+    pre_expiry_notified: bool | None = Field(
+        default=None,
+        description="True after pre-expiry warning fires; reset to False on renewal",
+    )
+    pending_tier_slug: str | None = Field(
+        default=None,
+        description="Scheduled tier change slug; applied on next renewal cycle",
+    )
+    pending_covered_users: int | None = Field(
+        default=None,
+        description="Scheduled seat reduction; applied on next renewal cycle",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -187,6 +213,12 @@ class SearchRequest(BaseSearchRequest):
     )
     period_end_before: Optional[datetime] = Field(
         None, description="Filter: period_end < this value"
+    )
+    period_end_after: Optional[datetime] = Field(
+        None, description="Filter: period_end > this value"
+    )
+    pre_expiry_notified: Optional[bool] = Field(
+        None, description="Filter by pre_expiry_notified flag"
     )
 
 

@@ -221,3 +221,55 @@ def compute_seat_proration(
         "daily_seat_rate": daily_seat_rate,
         "prorated_charge": prorated_charge,
     }
+
+
+def prorate_tier_change(
+    *,
+    old_price_per_seat: Any,
+    new_price_per_seat: Any,
+    covered_users: int,
+    period_months: int,
+    period_start: datetime,
+    period_end: datetime,
+    currency_code: str,
+    country_code: str,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """
+    Compute the prorated charge for an immediate mid-period tier upgrade.
+
+    Calculates the price difference per seat × covered_users × remaining days.
+    Raises ValueError if new_price_per_seat <= old_price_per_seat (use
+    schedule-tier-change for downgrades).
+    """
+    old_pps = round_charge(old_price_per_seat)
+    new_pps = round_charge(new_price_per_seat)
+    if new_pps <= old_pps:
+        raise ValueError(
+            "new_price_per_seat must exceed old_price_per_seat for an upgrade; "
+            "use schedule-tier-change for downgrades"
+        )
+
+    diff_per_seat = round_charge(new_pps - old_pps)
+    period_seat_price = round_charge(diff_per_seat * Decimal(period_months))
+
+    proration = compute_seat_proration(
+        period_seat_price=period_seat_price,
+        seats_added=covered_users,
+        period_start=period_start,
+        period_end=period_end,
+        as_of=as_of,
+    )
+
+    subtotal = proration["prorated_charge"]
+    return {
+        **proration,
+        "old_price_per_seat": old_pps,
+        "new_price_per_seat": new_pps,
+        "tier_diff_per_seat": diff_per_seat,
+        "covered_users": covered_users,
+        "period_months": period_months,
+        "currency_code": currency_code,
+        "country_code": country_code,
+        "subtotal": subtotal,
+    }
