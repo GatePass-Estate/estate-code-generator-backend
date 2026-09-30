@@ -47,6 +47,7 @@ _SUBSCRIPTION_ROLLBACK_FIELDS = (
     "entitlements",
     "cancelled_at",
     "pending_tier_slug",
+    "pending_covered_users",
 )
 
 
@@ -178,11 +179,25 @@ class SubscriptionService:
             }
         if tier and isinstance(tier.get("entitlements"), dict):
             tier = {**tier, "entitlements": omit_vat(tier["entitlements"])}
+        covered_users = (
+            int((subscription or {}).get("covered_users") or 0) or None
+        )
+        pending_covered_users = (subscription or {}).get(
+            "pending_covered_users"
+        )
+        effective_covered_users = (
+            pending_covered_users
+            if pending_covered_users is not None
+            else covered_users
+        )
         return {
             "estate_id": estate_id,
             "subscription": subscription,
             "tier": tier,
             "effective_entitlements": omit_vat(entitlements),
+            "covered_users": covered_users,
+            "pending_covered_users": pending_covered_users,
+            "effective_covered_users": effective_covered_users,
         }
 
     async def get_billing_cycle(self, estate_id: str) -> dict:
@@ -260,7 +275,14 @@ class SubscriptionService:
                     service_prices, included_keys
                 )
                 price_per_seat = seat_result["price_per_seat"]
-                covered_users = int(subscription.get("covered_users") or 1)
+                # Use pending_covered_users if a seat reduction is scheduled,
+                # since that is the seat count that will be charged at renewal.
+                pending_seats_next = subscription.get("pending_covered_users")
+                covered_users = int(
+                    pending_seats_next
+                    if pending_seats_next is not None
+                    else (subscription.get("covered_users") or 1)
+                )
 
                 period_start_raw = subscription.get("period_start")
                 if period_end_raw and period_start_raw:
@@ -295,6 +317,13 @@ class SubscriptionService:
                 return None
             return v.isoformat() if hasattr(v, "isoformat") else str(v)
 
+        pending_covered_users_next = subscription.get("pending_covered_users")
+        seat_reduction_scheduled = pending_covered_users_next is not None
+        next_covered_users = (
+            int(pending_covered_users_next)
+            if seat_reduction_scheduled
+            else int(subscription.get("covered_users") or 1)
+        )
         return {
             "estate_id": estate_id,
             "period_end": _to_str(period_end_raw),
@@ -314,6 +343,8 @@ class SubscriptionService:
                 if next_tier
                 else None
             ),
+            "seat_reduction_scheduled": seat_reduction_scheduled,
+            "next_covered_users": next_covered_users,
             "next_billing_amount": next_billing_amount,
             "next_billing_currency": next_billing_currency,
         }
@@ -405,6 +436,7 @@ class SubscriptionService:
             "entitlements": snapshot,
             "cancelled_at": None,
             "pending_tier_slug": None,  # Clear any stale scheduled tier change
+            "pending_covered_users": None,  # Clear any stale scheduled seat reduction
         }
 
         if existing:
@@ -562,6 +594,17 @@ class SubscriptionService:
                     estate_id,
                 )
                 update_payload["pending_tier_slug"] = None
+
+        # Apply a pending seat reduction if one was scheduled.
+        pending_seats = subscription.get("pending_covered_users")
+        if pending_seats is not None:
+            update_payload["covered_users"] = pending_seats
+            update_payload["pending_covered_users"] = None
+            logger.info(
+                "Applying pending seat reduction estate_id=%s new_seats=%s",
+                estate_id,
+                pending_seats,
+            )
 
         updated = await self.repo.update_estate_subscription(
             subscription_id, update_payload
@@ -1060,3 +1103,256 @@ class SubscriptionService:
             "estate_id": estate_id,
             "pending_tier_slug": None,
         }
+
+    # ── Seat reduction ────────────────────────────────────────────────────
+
+    async def get_seat_reduction_eligibility(self, estate_id: str) -> dict:
+        """Return whether a seat reduction is possible and the minimum seat count."""
+        sub = await self.repo.get_active_subscription(estate_id)
+        if not sub or (sub.get("status") or "").lower() not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        current_seats = int(sub.get("covered_users") or 1)
+        active_users = await self.repo.get_estate_active_user_count(estate_id)
+        can_reduce = current_seats > active_users
+        return {
+            "estate_id": estate_id,
+            "can_reduce": can_reduce,
+            "current_seats": current_seats,
+            "active_users": active_users,
+            "min_allowed_seats": active_users,
+        }
+
+    async def schedule_seat_reduction(
+        self, estate_id: str, new_seats: int
+    ) -> dict:
+        """Schedule a seat reduction to take effect on the next renewal.
+
+        Guards (in order):
+        1. Active subscription must exist and be ``active`` or ``trialing``.
+        2. ``new_seats >= 1``
+        3. ``new_seats < current covered_users`` (must be an actual reduction).
+        4. ``new_seats >= active_user_count`` (cannot evict existing members).
+
+        Stores ``pending_covered_users`` on the subscription and updates the
+        Paystack plan amount best-effort so the next auto-charge reflects the
+        lower seat count.
+        """
+        sub = await self.repo.get_active_subscription(estate_id)
+        if not sub or (sub.get("status") or "").lower() not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        if not sub.get("auto_renew"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Auto-renewal is off — reduce seats when you are "
+                    "ready to purchase a new subscription."
+                ),
+            )
+        current_seats = int(sub.get("covered_users") or 1)
+        if new_seats < 1:
+            raise HTTPException(
+                status_code=400, detail="new seats must be >= 1"
+            )
+        if new_seats >= current_seats:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "new seats must be less than the current seat count "
+                    f"({current_seats})"
+                ),
+            )
+        active_users = await self.repo.get_estate_active_user_count(estate_id)
+        if new_seats < active_users:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot reduce below active user count ({active_users}). "
+                    "Remove users first or choose a higher seat count."
+                ),
+            )
+
+        await self.repo.update_estate_subscription(
+            str(sub["id"]), {"pending_covered_users": new_seats}
+        )
+        logger.info(
+            "Scheduled seat reduction estate_id=%s new_seats=%s "
+            "current_seats=%s active_users=%s",
+            estate_id,
+            new_seats,
+            current_seats,
+            active_users,
+        )
+
+        sub_code = sub.get("paystack_subscription_code")
+        if sub_code:
+            await self._update_paystack_plan_for_seat_reduction(
+                estate_id=estate_id,
+                active_sub=sub,
+                new_seats=new_seats,
+                sub_code=sub_code,
+            )
+
+        period_end_raw = sub.get("period_end")
+        effective_from = (
+            period_end_raw.isoformat()
+            if hasattr(period_end_raw, "isoformat")
+            else str(period_end_raw)
+            if period_end_raw
+            else None
+        )
+        return {
+            "estate_id": estate_id,
+            "pending_covered_users": new_seats,
+            "effective_from": effective_from,
+        }
+
+    async def cancel_seat_reduction(self, estate_id: str) -> dict:
+        """Cancel a scheduled seat reduction (clears pending_covered_users)."""
+        sub = await self.repo.get_active_subscription(estate_id)
+        if not sub:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+        if sub.get("pending_covered_users") is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No seat reduction is scheduled",
+            )
+
+        current_seats = int(sub.get("covered_users") or 1)
+        await self.repo.update_estate_subscription(
+            str(sub["id"]), {"pending_covered_users": None}
+        )
+        logger.info(
+            "Cancelled seat reduction estate_id=%s "
+            "cancelled_pending_seats=%s current_seats=%s",
+            estate_id,
+            sub.get("pending_covered_users"),
+            current_seats,
+        )
+
+        # Best-effort revert Paystack plan to current covered_users
+        sub_code = sub.get("paystack_subscription_code")
+        if sub_code:
+            await self._update_paystack_plan_for_seat_reduction(
+                estate_id=estate_id,
+                active_sub=sub,
+                new_seats=current_seats,
+                sub_code=sub_code,
+            )
+
+        return {
+            "estate_id": estate_id,
+            "pending_covered_users": None,
+            "effective_from": None,
+        }
+
+    async def _update_paystack_plan_for_seat_reduction(
+        self,
+        *,
+        estate_id: str,
+        active_sub: dict,
+        new_seats: int,
+        sub_code: str,
+    ) -> None:
+        """Best-effort Paystack plan amount update for a seat count change.
+
+        Computes the full-period price for ``new_seats`` seats at the current
+        tier's rate and updates the Paystack plan so the next auto-renewal
+        charges the correct amount. Logs and returns silently on any failure.
+        """
+        from app.services.checkout_service import CheckoutService
+
+        try:
+            checkout_svc = CheckoutService(self.repo)
+            (
+                _country,
+                service_prices,
+                _ai_prices,
+                _currency,
+                _vat,
+            ) = await checkout_svc._pricing_context(estate_id)
+
+            tier_id = str(active_sub.get("tier_id") or "")
+            tier = await self.repo.get_tier_by_id(tier_id) if tier_id else None
+            if not tier:
+                return
+            if tier.get("is_custom"):
+                return  # Custom tier has negotiated pricing; do not overwrite plan amount
+
+            entitlements = dict(tier.get("entitlements") or {})
+            included_keys = [
+                k
+                for k, v in entitlements.items()
+                if k != VAT_KEY
+                and (
+                    (isinstance(v, bool) and v)
+                    or (isinstance(v, int) and v > 0)
+                )
+            ]
+            seat_result = compute_price_per_seat(service_prices, included_keys)
+            price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+
+            period_end_raw = active_sub.get("period_end")
+            period_start_raw = active_sub.get("period_start")
+            if period_end_raw and period_start_raw:
+                period_end_dt = datetime.fromisoformat(
+                    str(period_end_raw).replace("Z", "+00:00")
+                )
+                period_start_dt = datetime.fromisoformat(
+                    str(period_start_raw).replace("Z", "+00:00")
+                )
+                period_days = (
+                    period_end_dt.date() - period_start_dt.date()
+                ).days + 1
+                period_months = max(1, round(period_days / 30))
+            else:
+                period_months = 1
+
+            new_amount_kobo = int(
+                price_per_seat * new_seats * period_months * 100
+            )
+
+            if not self._paystack:
+                return
+            sub_data = await self._paystack.get_subscription(sub_code)
+            plan_code = (sub_data.get("plan") or {}).get("plan_code", "")
+            if not plan_code:
+                return
+            interval = (sub_data.get("plan") or {}).get("interval", "monthly")
+            tier_slug = tier.get("slug", "")
+            await self._paystack.update_plan(
+                plan_code,
+                amount_kobo=new_amount_kobo,
+                name=(
+                    f"GatePass - {tier_slug} - "
+                    f"{new_seats} seats - {interval}"
+                ),
+            )
+            logger.info(
+                "Updated Paystack plan for seat change estate_id=%s "
+                "plan_code=%s tier=%s new_seats=%s new_amount_kobo=%s",
+                estate_id,
+                plan_code,
+                tier_slug,
+                new_seats,
+                new_amount_kobo,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to update Paystack plan for seat change "
+                "estate_id=%s new_seats=%s — DB updated but "
+                "auto-renewal amount may be stale",
+                estate_id,
+                new_seats,
+            )

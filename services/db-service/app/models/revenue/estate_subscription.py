@@ -49,3 +49,4 @@ class EstateSubscription(BaseModelDB):
         Boolean, nullable=False, server_default="false"
     )
     pending_tier_slug = Column(String, nullable=True)
+    pending_covered_users = Column(Integer, nullable=True)

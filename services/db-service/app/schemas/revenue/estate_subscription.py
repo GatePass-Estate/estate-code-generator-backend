@@ -77,6 +77,10 @@ class EstateSubscriptionBase(BaseModel):
         None,
         description="Scheduled tier change slug; applied on next renewal cycle",
     )
+    pending_covered_users: int | None = Field(
+        None,
+        description="Scheduled seat reduction; applied on next renewal cycle",
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
@@ -156,6 +160,10 @@ class UpdateRequest(BaseModel):
     pending_tier_slug: str | None = Field(
         default=None,
         description="Scheduled tier change slug; applied on next renewal cycle",
+    )
+    pending_covered_users: int | None = Field(
+        default=None,
+        description="Scheduled seat reduction; applied on next renewal cycle",
     )
 
     @field_serializer("estate_id")

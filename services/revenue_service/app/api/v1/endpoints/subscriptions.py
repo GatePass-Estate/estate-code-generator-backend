@@ -26,8 +26,11 @@ from app.schemas.subscriptions import (
     BillingCycleResponse,
     EstateSubscriptionResponse,
     MutationSubscriptionResponse,
+    ScheduleSeatReductionRequest,
+    ScheduleSeatReductionResponse,
     ScheduleTierChangeRequest,
     ScheduleTierChangeResponse,
+    SeatReductionEligibilityResponse,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -250,6 +253,97 @@ async def cancel_tier_change(
         raise
     except Exception as e:
         logger.exception("cancel_tier_change failed estate_id=%s", estate_id)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/estate/{estate_id}/seat-reduction-eligibility",
+    response_model=SeatReductionEligibilityResponse,
+)
+async def get_seat_reduction_eligibility(
+    estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Return whether a seat reduction is currently possible.
+
+    The FE uses this to decide whether to show the seat-reduction UI and
+    what the minimum allowable seat count is (== active user count).
+    """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.get_seat_reduction_eligibility(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "get_seat_reduction_eligibility failed estate_id=%s", estate_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post(
+    "/estate/{estate_id}/schedule-seat-reduction",
+    response_model=ScheduleSeatReductionResponse,
+)
+async def schedule_seat_reduction(
+    estate_id: str,
+    request: ScheduleSeatReductionRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Schedule a seat reduction for the next billing cycle.
+
+    No refund is issued. The reduced seat count takes effect automatically
+    on the next auto-renewal. Registration is capped at the pending count
+    immediately (via effective_covered_users on the subscription response).
+    """
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.schedule_seat_reduction(estate_id, request.seats)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "schedule_seat_reduction failed estate_id=%s seats=%s",
+            estate_id,
+            request.seats,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
+    "/estate/{estate_id}/schedule-seat-reduction",
+    response_model=ScheduleSeatReductionResponse,
+)
+async def cancel_seat_reduction(
+    estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Cancel a previously scheduled seat reduction.
+
+    Clears pending_covered_users and reverts the Paystack plan amount so
+    the next auto-renewal charges for the current (unreduced) seat count.
+    """
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.cancel_seat_reduction(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "cancel_seat_reduction failed estate_id=%s", estate_id
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
