@@ -1,7 +1,9 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
+from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
 from gatepass_rbac import check_permission, require_roles
@@ -26,6 +28,8 @@ from app.schemas.estate import (
 from app.services.admin_management import AdminManagementService
 from app.services.auth import get_current_user
 from app.services.estate import EstateService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -73,7 +77,29 @@ async def register_estate(
     user_repository = UserRepository(ahttp_client)
     service = EstateService(estate_repository, user_repository)
 
-    return await service.register_estate(request)
+    result = await service.register_estate(request)
+
+    # Best-effort: provision an access-tier subscription in revenue-service.
+    # Log on failure but never fail the registration.
+    estate_id = str(result.id) if hasattr(result, "id") else result.get("id")
+    if estate_id:
+        try:
+            url = (
+                settings.REVENUE_SERVICE_URL.rstrip("/")
+                + f"/api/v1/subscriptions/estate/{estate_id}/provision-access"
+            )
+            await ahttp_client.async_post(
+                url,
+                headers={"X-Internal-Key": settings.INTERNAL_API_KEY},
+            )
+        except Exception:
+            logger.exception(
+                "provision-access call failed for estate_id=%s — "
+                "estate registration succeeded; fallback entitlements apply",
+                estate_id,
+            )
+
+    return result
 
 
 @router.get("/", response_model=ListEstateResponse)

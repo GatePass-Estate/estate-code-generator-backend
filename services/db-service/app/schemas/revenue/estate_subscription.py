@@ -41,7 +41,7 @@ class EstateSubscriptionBase(BaseModel):
     tier_id: UUID4 = Field(..., description="Subscription tier ID")
     status: SubscriptionStatus = Field(..., description="Subscription status")
     period_start: datetime = Field(..., description="Period start")
-    period_end: datetime = Field(..., description="Period end")
+    period_end: datetime | None = Field(None, description="Period end")
     auto_renew: bool = Field(default=True, description="Auto renew flag")
     covered_users: int = Field(default=1, description="Seat count")
     over_cap_locked: bool = Field(

@@ -91,9 +91,9 @@ class EntitlementService:
         ``max_active_users`` uses ``covered_users`` on the subscription as the
         seat cap when present.
 
-        When the estate has fallen back to Access and the subscription has
-        ``over_cap_locked`` (set by the expiry sweep), returns a locked denial
-        so UPS can block non-primary-admin logins.
+        When the active subscription has ``over_cap_locked`` (set by the
+        expiry sweep after a paid sub expires over the Access seat cap),
+        returns a locked denial so UPS can block non-primary-admin logins.
 
         Args:
             estate_id: Estate UUID string.
@@ -119,11 +119,7 @@ class EntitlementService:
         sub = ctx["subscription"]
         tier = ctx["tier"]
 
-        if (
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        ):
+        if sub is not None and bool(sub.get("over_cap_locked")):
             return {
                 "estate_id": estate_id,
                 "service_key": service_key,
@@ -134,7 +130,9 @@ class EntitlementService:
                 "limit_type": limit_type,
                 "covered_users": sub.get("covered_users"),
                 "subscription_status": sub.get("status"),
-                "tier_slug": (ctx.get("access_tier") or {}).get("slug"),
+                "tier_slug": (tier or ctx.get("access_tier") or {}).get(
+                    "slug"
+                ),
             }
 
         if service_key == MAX_ACTIVE_USERS_KEY and sub is not None:
@@ -172,8 +170,8 @@ class EntitlementService:
         """
         Return the full effective entitlements map for an estate.
 
-        Omits ``vat`` (a tax rate, not a product). When the estate has
-        fallen back to Access and ``over_cap_locked`` is set, includes
+        Omits ``vat`` (a tax rate, not a product). When the active
+        subscription has ``over_cap_locked`` set, includes
         ``locked=true`` / ``reason=over_cap`` (same signal as
         ``/entitlements/check``) so callers can detect lock without a key.
 
@@ -186,11 +184,7 @@ class EntitlementService:
         ctx = await self._load_context(estate_id)
         sub = ctx["subscription"]
         tier = ctx["tier"]
-        locked = bool(
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        )
+        locked = sub is not None and bool(sub.get("over_cap_locked"))
         return {
             "estate_id": estate_id,
             "entitlements": omit_vat(ctx["entitlements"]),

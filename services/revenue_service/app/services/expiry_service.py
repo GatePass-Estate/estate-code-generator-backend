@@ -55,8 +55,10 @@ class ExpiryService:
         )
 
         access_tier = await self.repo.get_tier_by_slug("access")
-        max_users = ((access_tier or {}).get("entitlements") or {}).get(
-            "max_active_users", 0
+        max_users = int(
+            ((access_tier or {}).get("entitlements") or {}).get(
+                "max_active_users", 0
+            )
         )
 
         # In-grace: warn only, do not expire
@@ -77,30 +79,76 @@ class ExpiryService:
                         sub_code,
                         sub.get("estate_id"),
                     )
-            await self._expire_one(sub, max_users)
+            await self._expire_one(sub, access_tier, max_users)
             await _notify_subscription_expired(sub["estate_id"])
             count += 1
 
         # Immediate: expire + notify (Paystack already handled by webhook)
         for sub in immediate:
-            await self._expire_one(sub, max_users)
+            await self._expire_one(sub, access_tier, max_users)
             await _notify_subscription_expired(sub["estate_id"])
             count += 1
 
         return count
 
-    async def _expire_one(self, sub: dict, max_users: int) -> None:
-        """Patch status=expired and set over_cap_locked if needed."""
+    async def _expire_one(
+        self, sub: dict, access_tier: dict | None, max_users: int
+    ) -> None:
+        """Mark the paid subscription expired and create a new access row.
+
+        The expired row is kept intact as a historical record (original
+        tier_id, period_start, and period_end are preserved). A new active
+        access-tier subscription is created so the estate always has an
+        explicit row on record. over_cap_locked is set on the new row when
+        active users exceed the access seat cap.
+        """
         sub_id = str(sub["id"])
+        estate_id = str(sub["estate_id"])
+
+        # Preserve the original row as history — only flip the status.
         await self.repo.update_estate_subscription(
             sub_id, {"status": "expired"}
         )
-        estate_id = str(sub["estate_id"])
-        active_count = await self.repo.get_estate_active_user_count(estate_id)
-        if active_count > max_users:
-            await self.repo.update_estate_subscription(
-                sub_id, {"over_cap_locked": True}
+
+        if access_tier:
+            active_count = await self.repo.get_estate_active_user_count(
+                estate_id
             )
+            over_cap = active_count > max_users
+            now = datetime.now(tz=timezone.utc)
+            await self.repo.create_estate_subscription(
+                {
+                    "estate_id": estate_id,
+                    "tier_id": access_tier["id"],
+                    "status": "active",
+                    "period_start": now.isoformat(),
+                    "period_end": None,
+                    "auto_renew": False,
+                    "covered_users": max_users or 1,
+                    "entitlements": None,
+                    "cancelled_at": None,
+                    "pending_tier_slug": None,
+                    "pending_covered_users": None,
+                    "over_cap_locked": over_cap,
+                }
+            )
+            logger.info(
+                "Created access subscription after expiry estate_id=%s "
+                "over_cap_locked=%s active_count=%s max_users=%s",
+                estate_id,
+                over_cap,
+                active_count,
+                max_users,
+            )
+        else:
+            # access tier not seeded — fall back to original behaviour
+            active_count = await self.repo.get_estate_active_user_count(
+                estate_id
+            )
+            if active_count > max_users:
+                await self.repo.update_estate_subscription(
+                    sub_id, {"over_cap_locked": True}
+                )
 
     async def _expire_ai_grants(self) -> int:
         now = datetime.now(tz=timezone.utc)

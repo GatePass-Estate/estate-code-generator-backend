@@ -347,3 +347,29 @@ async def cancel_seat_reduction(
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
+
+
+@router.post(
+    "/estate/{estate_id}/provision-access",
+    dependencies=[Depends(require_internal_key)],
+)
+async def provision_access_subscription(
+    estate_id: str,
+    service: SubscriptionService = Depends(get_service),
+):
+    """Provision an access-tier subscription for a newly registered estate.
+
+    Idempotent — safe to call on existing estates (returns current sub).
+    Called by UPS after estate registration; also used for backfilling.
+    """
+    try:
+        return await service.provision_access_subscription(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "provision_access_subscription failed estate_id=%s", estate_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

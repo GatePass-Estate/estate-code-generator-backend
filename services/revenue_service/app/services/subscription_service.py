@@ -48,6 +48,7 @@ _SUBSCRIPTION_ROLLBACK_FIELDS = (
     "cancelled_at",
     "pending_tier_slug",
     "pending_covered_users",
+    "over_cap_locked",
 )
 
 
@@ -437,6 +438,7 @@ class SubscriptionService:
             "cancelled_at": None,
             "pending_tier_slug": None,  # Clear any stale scheduled tier change
             "pending_covered_users": None,  # Clear any stale scheduled seat reduction
+            "over_cap_locked": False,  # Lift any lock from prior expiry
         }
 
         if existing:
@@ -1356,3 +1358,51 @@ class SubscriptionService:
                 estate_id,
                 new_seats,
             )
+
+    # ── Access provisioning ────────────────────────────────────────────────
+
+    async def provision_access_subscription(self, estate_id: str) -> dict:
+        """Create an access-tier subscription for a newly registered estate.
+
+        Idempotent — returns the existing subscription unchanged if one
+        already exists. Called by UPS after estate registration; also
+        available as a standalone endpoint for backfilling existing estates.
+        """
+        existing = await self.repo.get_active_subscription(estate_id)
+        if existing and (existing.get("status") or "").lower() != "expired":
+            return existing
+
+        access_tier = await self.repo.get_tier_by_slug("access")
+        if not access_tier:
+            raise HTTPException(
+                status_code=500, detail="Access tier not seeded"
+            )
+
+        max_users = int(
+            (access_tier.get("entitlements") or {}).get("max_active_users")
+            or 1
+        )
+        now = datetime.now(tz=timezone.utc)
+        created = await self.repo.create_estate_subscription(
+            {
+                "estate_id": estate_id,
+                "tier_id": access_tier["id"],
+                "status": "active",
+                "period_start": now.isoformat(),
+                "period_end": None,
+                "auto_renew": False,
+                "covered_users": max_users,
+                "entitlements": None,
+                "cancelled_at": None,
+                "pending_tier_slug": None,
+                "pending_covered_users": None,
+            }
+        )
+        logger.info(
+            "Provisioned access subscription estate_id=%s "
+            "covered_users=%s tier_id=%s",
+            estate_id,
+            max_users,
+            access_tier["id"],
+        )
+        return created

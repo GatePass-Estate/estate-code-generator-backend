@@ -34,7 +34,7 @@ class EstateSubscription(BaseModelDB):
     )
     status = Column(String, nullable=False)
     period_start = Column(DateTime(timezone=True), nullable=False)
-    period_end = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=True)
     auto_renew = Column(Boolean, nullable=False, server_default="true")
     covered_users = Column(Integer, nullable=False, server_default="1")
     over_cap_locked = Column(Boolean, nullable=False, server_default="false")
