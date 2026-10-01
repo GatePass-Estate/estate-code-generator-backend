@@ -34,7 +34,7 @@ class EstateSubscription(BaseModelDB):
     )
     status = Column(String, nullable=False)
     period_start = Column(DateTime(timezone=True), nullable=False)
-    period_end = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=True)
     auto_renew = Column(Boolean, nullable=False, server_default="true")
     covered_users = Column(Integer, nullable=False, server_default="1")
     over_cap_locked = Column(Boolean, nullable=False, server_default="false")
@@ -45,3 +45,8 @@ class EstateSubscription(BaseModelDB):
     last_renewal_failure_at = Column(DateTime(timezone=True), nullable=True)
     last_renewal_failure_reason = Column(Text, nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    pre_expiry_notified = Column(
+        Boolean, nullable=False, server_default="false"
+    )
+    pending_tier_slug = Column(String, nullable=True)
+    pending_covered_users = Column(Integer, nullable=True)

@@ -227,6 +227,16 @@ class EstateAiFeatureRepository:
                 query = query.where(
                     TableModel.expires_at < request.expires_at_before
                 )
+            elif key == "expires_at_after":
+                query = query.where(
+                    TableModel.expires_at > request.expires_at_after
+                )
+            elif key == "statuses":
+                values = [
+                    s.value if hasattr(s, "value") else s
+                    for s in request.statuses
+                ]
+                query = query.where(TableModel.status.in_(values))
             elif hasattr(TableModel, key):
                 field_value = getattr(request, key)
                 column = getattr(TableModel, key)
