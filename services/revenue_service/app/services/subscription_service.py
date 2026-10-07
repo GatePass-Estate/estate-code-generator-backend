@@ -461,6 +461,7 @@ class SubscriptionService:
                     tier=tier,
                     period_end=period_end,
                     extra_feature_keys=ai_feature_keys,
+                    paystack=self._paystack,
                 ),
                 attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                 base_delay_seconds=(
@@ -569,8 +570,13 @@ class SubscriptionService:
         # Apply a pending tier change if one was scheduled.
         pending_slug = subscription.get("pending_tier_slug")
         pending_tier: dict | None = None
+        # Roll period_start forward to the old period_end so that
+        # period_months = round((new_end - new_start).days / 30) stays
+        # correct across successive renewals.
+        new_start = old_end or paid
         update_payload: dict[str, Any] = {
             "status": "active",
+            "period_start": new_start.isoformat(),
             "period_end": new_end.isoformat(),
             "auto_renew": True,
             "cancelled_at": None,
@@ -620,6 +626,7 @@ class SubscriptionService:
                         subscription_id=subscription_id,
                         tier=pending_tier,
                         period_end=new_end,
+                        paystack=self._paystack,
                     ),
                     attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                     base_delay_seconds=(
@@ -828,6 +835,7 @@ class SubscriptionService:
                     subscription_id=subscription_id,
                     tier=new_tier,
                     period_end=period_end,
+                    paystack=self._paystack,
                 ),
                 attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                 base_delay_seconds=(
@@ -912,26 +920,24 @@ class SubscriptionService:
 
         try:
             checkout_svc = CheckoutService(self.repo)
-            # Paystack plan amount is pre-VAT; VAT is applied at checkout only.
             (
                 _country,
                 service_prices,
-                _ai_prices,
+                ai_prices,
                 _currency,
-                _vat,
+                vat_rate,
             ) = await checkout_svc._pricing_context(estate_id)
             entitlements = dict(tier.get("entitlements") or {})
-            included_keys = [
-                k
-                for k, v in entitlements.items()
-                if k != VAT_KEY
-                and (
-                    (isinstance(v, bool) and v)
-                    or (isinstance(v, int) and v > 0)
-                )
-            ]
+            included_keys = extract_included_keys(entitlements)
             seat_result = compute_price_per_seat(service_prices, included_keys)
             price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+
+            ai_keys = list(tier.get("included_ai_features") or [])
+            ai_monthly = Decimal(0)
+            if ai_keys:
+                ai_result = compute_ai_monthly(ai_prices, ai_keys)
+                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
+
             covered_users = int(active_sub.get("covered_users") or 1)
             period_end_raw = active_sub.get("period_end")
             period_start_raw = active_sub.get("period_start")
@@ -949,9 +955,12 @@ class SubscriptionService:
             else:
                 period_months = 1
 
-            new_amount_kobo = int(
-                price_per_seat * covered_users * period_months * 100
+            subtotal = round_charge(
+                (price_per_seat * covered_users + ai_monthly)
+                * Decimal(period_months)
             )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
 
             if not self._paystack:
                 return
