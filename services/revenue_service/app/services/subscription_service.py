@@ -24,9 +24,10 @@ from app.services.entitlement_resolver import (
     resolve_entitlements,
 )
 from app.services.pricing_service import (
-    VAT_KEY,
     apply_vat,
+    compute_ai_monthly,
     compute_price_per_seat,
+    extract_included_keys,
     omit_vat,
     round_charge,
 )
@@ -257,25 +258,24 @@ class SubscriptionService:
                 (
                     _country,
                     service_prices,
-                    _ai_prices,
+                    ai_prices,
                     currency,
                     vat_rate,
                 ) = await checkout_svc._pricing_context(estate_id)
 
                 entitlements = dict(next_tier.get("entitlements") or {})
-                included_keys = [
-                    k
-                    for k, v in entitlements.items()
-                    if k != VAT_KEY
-                    and (
-                        (isinstance(v, bool) and v)
-                        or (isinstance(v, int) and v > 0)
-                    )
-                ]
+                included_keys = extract_included_keys(entitlements)
                 seat_result = compute_price_per_seat(
                     service_prices, included_keys
                 )
                 price_per_seat = seat_result["price_per_seat"]
+
+                ai_keys = list(next_tier.get("included_ai_features") or [])
+                ai_monthly = Decimal(0)
+                if ai_keys:
+                    ai_result = compute_ai_monthly(ai_prices, ai_keys)
+                    ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
+
                 # Use pending_covered_users if a seat reduction is scheduled,
                 # since that is the seat count that will be charged at renewal.
                 pending_seats_next = subscription.get("pending_covered_users")
@@ -301,7 +301,8 @@ class SubscriptionService:
                     period_months = 1
 
                 subtotal = round_charge(
-                    price_per_seat * covered_users * period_months
+                    (price_per_seat * covered_users + ai_monthly)
+                    * Decimal(period_months)
                 )
                 vat_result = apply_vat(subtotal, vat_rate or 0)
                 next_billing_amount = float(vat_result["client_total"])
@@ -461,6 +462,7 @@ class SubscriptionService:
                     tier=tier,
                     period_end=period_end,
                     extra_feature_keys=ai_feature_keys,
+                    paystack=self._paystack,
                 ),
                 attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                 base_delay_seconds=(
@@ -569,8 +571,13 @@ class SubscriptionService:
         # Apply a pending tier change if one was scheduled.
         pending_slug = subscription.get("pending_tier_slug")
         pending_tier: dict | None = None
+        # Roll period_start forward to the old period_end so that
+        # period_months = round((new_end - new_start).days / 30) stays
+        # correct across successive renewals.
+        new_start = old_end or paid
         update_payload: dict[str, Any] = {
             "status": "active",
+            "period_start": new_start.isoformat(),
             "period_end": new_end.isoformat(),
             "auto_renew": True,
             "cancelled_at": None,
@@ -620,6 +627,7 @@ class SubscriptionService:
                         subscription_id=subscription_id,
                         tier=pending_tier,
                         period_end=new_end,
+                        paystack=self._paystack,
                     ),
                     attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                     base_delay_seconds=(
@@ -762,14 +770,21 @@ class SubscriptionService:
                 ),
             )
         current = int(subscription.get("covered_users") or 0)
+        pending_cleared = subscription.get("pending_covered_users") is not None
+        update_payload: dict[str, Any] = {
+            "covered_users": current + seats_added,
+        }
+        if pending_cleared:
+            update_payload["pending_covered_users"] = None
         updated = await self.repo.update_estate_subscription(
             str(subscription["id"]),
-            {"covered_users": current + seats_added},
+            update_payload,
         )
         return {
             "estate_id": estate_id,
             "covered_users": current + seats_added,
             "subscription": updated,
+            "pending_cleared": pending_cleared,
         }
 
     async def change_tier_immediate(
@@ -823,6 +838,7 @@ class SubscriptionService:
                     subscription_id=subscription_id,
                     tier=new_tier,
                     period_end=period_end,
+                    paystack=self._paystack,
                 ),
                 attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
                 base_delay_seconds=(
@@ -907,27 +923,30 @@ class SubscriptionService:
 
         try:
             checkout_svc = CheckoutService(self.repo)
-            # Paystack plan amount is pre-VAT; VAT is applied at checkout only.
             (
                 _country,
                 service_prices,
-                _ai_prices,
+                ai_prices,
                 _currency,
-                _vat,
+                vat_rate,
             ) = await checkout_svc._pricing_context(estate_id)
             entitlements = dict(tier.get("entitlements") or {})
-            included_keys = [
-                k
-                for k, v in entitlements.items()
-                if k != VAT_KEY
-                and (
-                    (isinstance(v, bool) and v)
-                    or (isinstance(v, int) and v > 0)
-                )
-            ]
+            included_keys = extract_included_keys(entitlements)
             seat_result = compute_price_per_seat(service_prices, included_keys)
             price_per_seat = Decimal(str(seat_result["price_per_seat"]))
-            covered_users = int(active_sub.get("covered_users") or 1)
+
+            ai_keys = list(tier.get("included_ai_features") or [])
+            ai_monthly = Decimal(0)
+            if ai_keys:
+                ai_result = compute_ai_monthly(ai_prices, ai_keys)
+                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
+
+            pending_seats = active_sub.get("pending_covered_users")
+            covered_users = int(
+                pending_seats
+                if pending_seats is not None
+                else (active_sub.get("covered_users") or 1)
+            )
             period_end_raw = active_sub.get("period_end")
             period_start_raw = active_sub.get("period_start")
             if period_end_raw and period_start_raw:
@@ -944,9 +963,12 @@ class SubscriptionService:
             else:
                 period_months = 1
 
-            new_amount_kobo = int(
-                price_per_seat * covered_users * period_months * 100
+            subtotal = round_charge(
+                (price_per_seat * covered_users + ai_monthly)
+                * Decimal(period_months)
             )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
 
             if not self._paystack:
                 return
@@ -1120,7 +1142,9 @@ class SubscriptionService:
             )
         current_seats = int(sub.get("covered_users") or 1)
         active_users = await self.repo.get_estate_active_user_count(estate_id)
-        can_reduce = current_seats > active_users
+        can_reduce = (
+            bool(sub.get("auto_renew")) and current_seats > active_users
+        )
         return {
             "estate_id": estate_id,
             "can_reduce": can_reduce,
@@ -1269,9 +1293,11 @@ class SubscriptionService:
     ) -> None:
         """Best-effort Paystack plan amount update for a seat count change.
 
-        Computes the full-period price for ``new_seats`` seats at the current
-        tier's rate and updates the Paystack plan so the next auto-renewal
-        charges the correct amount. Logs and returns silently on any failure.
+        Computes the full-period price for ``new_seats`` seats and updates
+        the Paystack plan so the next auto-renewal charges the correct
+        amount. When a tier change is pending, uses the pending tier's
+        pricing so the plan reflects what will actually be charged at
+        renewal. Logs and returns silently on any failure.
         """
         from app.services.checkout_service import CheckoutService
 
@@ -1280,30 +1306,38 @@ class SubscriptionService:
             (
                 _country,
                 service_prices,
-                _ai_prices,
+                ai_prices,
                 _currency,
-                _vat,
+                vat_rate,
             ) = await checkout_svc._pricing_context(estate_id)
 
-            tier_id = str(active_sub.get("tier_id") or "")
-            tier = await self.repo.get_tier_by_id(tier_id) if tier_id else None
+            # Use the pending tier if a tier change is scheduled, so
+            # the plan amount matches what renewal will actually charge.
+            pending_slug = active_sub.get("pending_tier_slug")
+            if pending_slug:
+                tier = await self.repo.get_tier_by_slug(pending_slug)
+            else:
+                tier_id = str(active_sub.get("tier_id") or "")
+                tier = (
+                    await self.repo.get_tier_by_id(tier_id)
+                    if tier_id
+                    else None
+                )
             if not tier:
                 return
             if tier.get("is_custom"):
                 return  # Custom tier has negotiated pricing; do not overwrite plan amount
 
             entitlements = dict(tier.get("entitlements") or {})
-            included_keys = [
-                k
-                for k, v in entitlements.items()
-                if k != VAT_KEY
-                and (
-                    (isinstance(v, bool) and v)
-                    or (isinstance(v, int) and v > 0)
-                )
-            ]
+            included_keys = extract_included_keys(entitlements)
             seat_result = compute_price_per_seat(service_prices, included_keys)
             price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+
+            ai_keys = list(tier.get("included_ai_features") or [])
+            ai_monthly = Decimal(0)
+            if ai_keys:
+                ai_result = compute_ai_monthly(ai_prices, ai_keys)
+                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
 
             period_end_raw = active_sub.get("period_end")
             period_start_raw = active_sub.get("period_start")
@@ -1321,9 +1355,12 @@ class SubscriptionService:
             else:
                 period_months = 1
 
-            new_amount_kobo = int(
-                price_per_seat * new_seats * period_months * 100
+            subtotal = round_charge(
+                (price_per_seat * new_seats + ai_monthly)
+                * Decimal(period_months)
             )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
 
             if not self._paystack:
                 return

@@ -833,6 +833,7 @@ class CodeServiceRepository:
             return
         record["prediction_result_id"] = anomaly["prediction_result_id"]
         record["is_anomalous"] = anomaly["is_anomalous"]
+        record["severity"] = anomaly.get("severity")
         if not anomaly["is_anomalous"]:
             return
         await self._notify_admins_of_anomaly(

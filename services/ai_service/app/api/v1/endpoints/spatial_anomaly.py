@@ -102,6 +102,7 @@ async def analyze_spatial_anomalies(
         "SpatialAnalyzeResponse returned to client",
         final_score=response.final_score,
         is_anomalous=response.is_anomalous,
+        severity=response.severity.value,
         prediction_result_id=response.prediction_result_id,
     )
     return response

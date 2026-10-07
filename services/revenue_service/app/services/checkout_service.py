@@ -28,6 +28,7 @@ from app.services.pricing_service import (
     compute_ai_monthly,
     compute_price_per_seat,
     compute_seat_proration,
+    extract_included_keys,
     prorate_tier_change,
     quote_pricing,
     round_charge,
@@ -215,6 +216,18 @@ class TierChangeCheckoutHandler(CheckoutHandler):
                 status_code=400,
                 detail="No active subscription to upgrade",
             )
+        period_end_raw = active_sub.get("period_end")
+        if period_end_raw:
+            period_end_dt = datetime.fromisoformat(
+                str(period_end_raw).replace("Z", "+00:00")
+            )
+            if period_end_dt < datetime.now(tz=timezone.utc):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Billing period has expired; " "renew before upgrading"
+                    ),
+                )
         current_tier = await self._repo.get_tier_by_id(
             str(active_sub["tier_id"])
         )
@@ -273,7 +286,7 @@ class TierChangeCheckoutHandler(CheckoutHandler):
         (
             country,
             service_prices,
-            _ai_prices,
+            ai_prices,
             currency,
             vat_rate,
         ) = await self._svc._pricing_context(estate_id)
@@ -296,21 +309,22 @@ class TierChangeCheckoutHandler(CheckoutHandler):
                 )
             else:
                 entitlements = dict(tier.get("entitlements") or {})
-            included_keys = [
-                k
-                for k, v in entitlements.items()
-                if k != VAT_KEY
-                and (
-                    (isinstance(v, bool) and v)
-                    or (isinstance(v, int) and v > 0)
-                )
-            ]
+            included_keys = extract_included_keys(entitlements)
             result = compute_price_per_seat(service_prices, included_keys)
             return result["price_per_seat"]
+
+        def _ai_monthly_from_tier(tier: dict[str, Any]) -> Decimal:
+            ai_keys = list(tier.get("included_ai_features") or [])
+            if not ai_keys:
+                return Decimal("0")
+            result = compute_ai_monthly(ai_prices, ai_keys)
+            return Decimal(str(result["ai_price_per_month"]))
 
         try:
             old_pps = _seat_price_from_tier(current_tier)
             new_pps = _seat_price_from_tier(new_tier)
+            old_ai = _ai_monthly_from_tier(current_tier)
+            new_ai = _ai_monthly_from_tier(new_tier)
             proration = prorate_tier_change(
                 old_price_per_seat=old_pps,
                 new_price_per_seat=new_pps,
@@ -320,6 +334,8 @@ class TierChangeCheckoutHandler(CheckoutHandler):
                 period_end=period_end,
                 currency_code=currency,
                 country_code=country,
+                old_ai_monthly=old_ai,
+                new_ai_monthly=new_ai,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -334,6 +350,8 @@ class TierChangeCheckoutHandler(CheckoutHandler):
             "old_price_per_seat": float(proration["old_price_per_seat"]),
             "new_price_per_seat": float(proration["new_price_per_seat"]),
             "tier_diff_per_seat": float(proration["tier_diff_per_seat"]),
+            "old_ai_monthly": float(proration["old_ai_monthly"]),
+            "new_ai_monthly": float(proration["new_ai_monthly"]),
             "prorated_charge": float(proration["prorated_charge"]),
             "daily_seat_rate": float(proration["daily_seat_rate"]),
             "period_seat_price": float(proration["period_seat_price"]),
@@ -536,14 +554,7 @@ class CheckoutService:
 
         # Included product keys: enabled booleans / positive limits.
         # administrative_fee is in entitlements (True/False), not tier slug.
-        included_keys: list[str] = []
-        for key, value in entitlements.items():
-            if key == VAT_KEY:
-                continue
-            if isinstance(value, bool) and value:
-                included_keys.append(key)
-            elif isinstance(value, int) and value > 0:
-                included_keys.append(key)
+        included_keys = extract_included_keys(entitlements)
 
         try:
             breakdown = quote_pricing(
@@ -644,14 +655,7 @@ class CheckoutService:
         else:
             entitlements = dict(tier.get("entitlements") or {})
 
-        included_keys: list[str] = []
-        for key, value in entitlements.items():
-            if key == VAT_KEY:
-                continue
-            if isinstance(value, bool) and value:
-                included_keys.append(key)
-            elif isinstance(value, int) and value > 0:
-                included_keys.append(key)
+        included_keys = extract_included_keys(entitlements)
 
         # Infer period_months from the subscription window (~30-day months).
         period_days = (period_end.date() - period_start.date()).days + 1
