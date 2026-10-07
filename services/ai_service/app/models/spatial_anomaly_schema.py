@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.models.spatial_anomaly_resultpage import Severity
+
 # Re-exported for callers that historically imported these from this module.
 from app.models.code_validation import (  # noqa: F401
     AnalyzeRequest,
@@ -71,6 +73,13 @@ class SpatialAnalyzeResponse(BaseModel):
         description=(
             "True when ensemble final_score meets the configured anomaly "
             "threshold (same flag persisted on the focal feature-store row)."
+        ),
+    )
+    severity: Severity = Field(
+        ...,
+        description=(
+            "Band derived from final_score (low / medium / high), aligned "
+            "with result-page and db-service severity filters."
         ),
     )
     prediction_result_id: str | None = Field(
