@@ -427,14 +427,18 @@ class DbRevenueRepository:
     ) -> list[dict]:
         """Fetch cancelled/past_due non-free AI grants past their expires_at.
         Used for stale-status cleanup (#12)."""
-        return await self._paginate_all(
-            self.estate_ai_feature,
-            {
-                "statuses": ["cancelled", "past_due"],
-                "is_free": False,
-                "expires_at_before": expires_at_before,
-            },
-        )
+        results: list[dict] = []
+        for status in ("cancelled", "past_due"):
+            items = await self._paginate_all(
+                self.estate_ai_feature,
+                {
+                    "status": status,
+                    "is_free": False,
+                    "expires_at_before": expires_at_before,
+                },
+            )
+            results.extend(items)
+        return results
 
     # ------------------------------------------------------------------ #
     # Payment checkout session
@@ -514,6 +518,16 @@ class DbRevenueRepository:
     # ------------------------------------------------------------------ #
     # Payment transaction (audit ledger)
     # ------------------------------------------------------------------ #
+
+    async def get_transaction_by_provider_reference(
+        self, provider_reference: str
+    ) -> dict | None:
+        """Return a payment transaction by provider_reference, or None."""
+        items = await self._search(
+            self.payment_transaction,
+            {"provider_reference": provider_reference, "limit": 1},
+        )
+        return items[0] if items else None
 
     async def create_payment_transaction(self, payload: dict) -> dict:
         """POST a new payment_transaction row."""

@@ -55,10 +55,15 @@ class ExpiryService:
         )
 
         access_tier = await self.repo.get_tier_by_slug("access")
-        max_users = int(
-            ((access_tier or {}).get("entitlements") or {}).get(
-                "max_active_users", 0
+        if not access_tier:
+            logger.critical(
+                "Access tier not seeded — skipping subscription expiry "
+                "to avoid leaving estates with no active subscription. "
+                "Seed the access tier and re-run."
             )
+            return 0
+        max_users = int(
+            (access_tier.get("entitlements") or {}).get("max_active_users", 0)
         )
 
         # In-grace: warn only, do not expire
@@ -79,20 +84,36 @@ class ExpiryService:
                         sub_code,
                         sub.get("estate_id"),
                     )
-            await self._expire_one(sub, access_tier, max_users)
-            await _notify_subscription_expired(sub["estate_id"])
-            count += 1
+            try:
+                await self._expire_one(sub, access_tier, max_users)
+                await _notify_subscription_expired(sub["estate_id"])
+                count += 1
+            except Exception:
+                logger.exception(
+                    "Cron: failed to expire subscription "
+                    "sub_id=%s estate_id=%s — skipping",
+                    sub.get("id"),
+                    sub.get("estate_id"),
+                )
 
         # Immediate: expire + notify (Paystack already handled by webhook)
         for sub in immediate:
-            await self._expire_one(sub, access_tier, max_users)
-            await _notify_subscription_expired(sub["estate_id"])
-            count += 1
+            try:
+                await self._expire_one(sub, access_tier, max_users)
+                await _notify_subscription_expired(sub["estate_id"])
+                count += 1
+            except Exception:
+                logger.exception(
+                    "Cron: failed to expire subscription "
+                    "sub_id=%s estate_id=%s — skipping",
+                    sub.get("id"),
+                    sub.get("estate_id"),
+                )
 
         return count
 
     async def _expire_one(
-        self, sub: dict, access_tier: dict | None, max_users: int
+        self, sub: dict, access_tier: dict, max_users: int
     ) -> None:
         """Mark the paid subscription expired and create a new access row.
 
@@ -101,21 +122,23 @@ class ExpiryService:
         access-tier subscription is created so the estate always has an
         explicit row on record. over_cap_locked is set on the new row when
         active users exceed the access seat cap.
+
+        If the access row creation fails, the paid row is restored to its
+        prior status so the estate is not left with no active subscription.
         """
         sub_id = str(sub["id"])
         estate_id = str(sub["estate_id"])
+        prior_status = (sub.get("status") or "active").lower()
 
         # Preserve the original row as history — only flip the status.
         await self.repo.update_estate_subscription(
             sub_id, {"status": "expired"}
         )
 
-        if access_tier:
-            active_count = await self.repo.get_estate_active_user_count(
-                estate_id
-            )
-            over_cap = active_count > max_users
-            now = datetime.now(tz=timezone.utc)
+        active_count = await self.repo.get_estate_active_user_count(estate_id)
+        over_cap = active_count > max_users
+        now = datetime.now(tz=timezone.utc)
+        try:
             await self.repo.create_estate_subscription(
                 {
                     "estate_id": estate_id,
@@ -132,30 +155,31 @@ class ExpiryService:
                     "over_cap_locked": over_cap,
                 }
             )
-            logger.info(
-                "Created access subscription after expiry estate_id=%s "
-                "over_cap_locked=%s active_count=%s max_users=%s",
+        except Exception:
+            logger.exception(
+                "Failed to create access subscription after expiry "
+                "estate_id=%s — restoring prior status=%s to avoid "
+                "leaving estate with no active subscription",
                 estate_id,
-                over_cap,
-                active_count,
-                max_users,
+                prior_status,
             )
-        else:
-            # access tier not seeded — fall back to original behaviour
-            active_count = await self.repo.get_estate_active_user_count(
-                estate_id
+            await self.repo.update_estate_subscription(
+                sub_id, {"status": prior_status}
             )
-            if active_count > max_users:
-                await self.repo.update_estate_subscription(
-                    sub_id, {"over_cap_locked": True}
-                )
+            raise
+        logger.info(
+            "Created access subscription after expiry estate_id=%s "
+            "over_cap_locked=%s active_count=%s max_users=%s",
+            estate_id,
+            over_cap,
+            active_count,
+            max_users,
+        )
 
     async def _expire_ai_grants(self) -> int:
         now = datetime.now(tz=timezone.utc)
         grace_cutoff = now - timedelta(days=settings.RENEWAL_GRACE_PERIOD_DAYS)
         now_iso = now.isoformat()
-        grace_cutoff_iso = grace_cutoff.isoformat()
-
         # Pass A — active grants whose expires_at < now
         all_active_expired = await self.repo.search_ai_grants(
             status="active",
@@ -183,9 +207,10 @@ class ExpiryService:
             await _notify_ai_grant_expired(grant)
             count += 1
 
-        # Pass B — stale cleanup: cancelled/past_due past their expires_at
+        # Pass B — stale cleanup: cancelled/past_due past their expires_at.
+        # No grace for these statuses — expire as soon as expires_at passes.
         stale = await self.repo.search_stale_ai_grants(
-            expires_at_before=grace_cutoff_iso,
+            expires_at_before=now_iso,
         )
         for grant in stale:
             await self.repo.update_estate_ai_feature(

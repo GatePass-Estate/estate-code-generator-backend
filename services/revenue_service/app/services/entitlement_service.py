@@ -119,11 +119,7 @@ class EntitlementService:
         sub = ctx["subscription"]
         tier = ctx["tier"]
 
-        if (
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        ):
+        if sub is not None and bool(sub.get("over_cap_locked")):
             covered = sub.get("covered_users")
             pending = sub.get("pending_covered_users")
             effective = pending if pending is not None else covered
@@ -196,11 +192,7 @@ class EntitlementService:
         ctx = await self._load_context(estate_id)
         sub = ctx["subscription"]
         tier = ctx["tier"]
-        locked = bool(
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        )
+        locked = bool(sub is not None and bool(sub.get("over_cap_locked")))
         covered = (sub or {}).get("covered_users")
         pending = (sub or {}).get("pending_covered_users")
         effective = pending if pending is not None else covered

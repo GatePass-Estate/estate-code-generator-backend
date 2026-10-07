@@ -1404,6 +1404,11 @@ class SubscriptionService:
         Idempotent — returns the existing subscription unchanged if one
         already exists. Called by UPS after estate registration; also
         available as a standalone endpoint for backfilling existing estates.
+
+        A post-create re-check guards against the TOCTOU race where two
+        concurrent calls both pass the existence check and insert duplicate
+        active rows. If a duplicate is detected, the row we just created is
+        deleted and the earlier one is returned.
         """
         existing = await self.repo.get_active_subscription(estate_id)
         if existing and (existing.get("status") or "").lower() != "expired":
@@ -1435,6 +1440,28 @@ class SubscriptionService:
                 "pending_covered_users": None,
             }
         )
+        created_id = str(created["id"])
+
+        # Guard against TOCTOU race: if another call created a row
+        # between our check and insert, delete ours and return theirs.
+        all_subs = await self.repo.list_estate_subscriptions(estate_id)
+        active_rows = [
+            s
+            for s in all_subs
+            if (s.get("status") or "").lower() in ("active", "trialing")
+            and str(s["id"]) != created_id
+        ]
+        if active_rows:
+            logger.warning(
+                "provision_access: duplicate active row detected "
+                "estate_id=%s — deleting ours (%s) and keeping %s",
+                estate_id,
+                created_id,
+                active_rows[0]["id"],
+            )
+            await self.repo.delete_estate_subscription(created_id)
+            return active_rows[0]
+
         logger.info(
             "Provisioned access subscription estate_id=%s "
             "covered_users=%s tier_id=%s",

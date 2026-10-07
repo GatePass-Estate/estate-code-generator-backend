@@ -19,6 +19,7 @@ _GRANT_ROLLBACK_FIELDS = (
     "source",
     "status",
     "expires_at",
+    "auto_renew",
 )
 
 
@@ -431,6 +432,9 @@ async def extend_subscription_ai_grants(
             ):
                 continue
             if bool(grant.get("is_free")):
+                continue
+            status = (grant.get("status") or "").lower()
+            if status in ("cancelled", "expired"):
                 continue
             rollback.record_update(grant)
             await repo.update_estate_ai_feature(

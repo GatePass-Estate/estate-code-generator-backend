@@ -613,6 +613,18 @@ class WebhookService:
             )
             return
 
+        # Idempotency: skip if we already processed this reference.
+        existing_txn = await self.repo.get_transaction_by_provider_reference(
+            reference
+        )
+        if existing_txn:
+            logger.info(
+                "charge.success renewal reference=%s already processed "
+                "— skipping duplicate webhook",
+                reference,
+            )
+            return
+
         subscription = (
             await self.repo.get_subscription_by_paystack_subscription_code(
                 paystack_sub_code
@@ -650,9 +662,7 @@ class WebhookService:
             period_months = 1
 
         # Diagnostic: warn when the charged amount doesn't match what
-        # we'd compute from the current tier + seat count. Once plan
-        # amounts are kept in sync (Bugs 2 & 3 fixes), mismatches
-        # should stop for new renewals.
+        # we'd compute from the current tier + seat count.
         charged_kobo = int(data.get("amount") or 0)
         if charged_kobo > 0:
             try:
@@ -713,7 +723,7 @@ class WebhookService:
             {
                 "estate_id": estate_id,
                 "checkout_session_id": None,
-                "amount": str(data.get("amount", 0) / 100),
+                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
                 # Prefer currency from the event; fall back to sub row.
                 "currency_code": (
                     data.get("currency")
@@ -764,7 +774,7 @@ class WebhookService:
             {
                 "estate_id": estate_id,
                 "checkout_session_id": None,
-                "amount": str(data.get("amount", 0) / 100),
+                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
                 "currency_code": data.get("currency", "NGN"),
                 "status": "success",
                 "provider_reference": reference,
@@ -1049,7 +1059,9 @@ class WebhookService:
             {
                 "estate_id": str(session["estate_id"]),
                 "checkout_session_id": str(session["id"]),
-                "amount": str(amount / 100),  # kobo → major unit
+                "amount": str(
+                    Decimal(amount) / Decimal(100)
+                ),  # kobo → major unit
                 "currency_code": session["currency_code"],
                 "status": "refund",
                 "provider_reference": reference,

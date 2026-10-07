@@ -355,6 +355,7 @@ class TierChangeCheckoutHandler(CheckoutHandler):
             "prorated_charge": float(proration["prorated_charge"]),
             "daily_seat_rate": float(proration["daily_seat_rate"]),
             "period_seat_price": float(proration["period_seat_price"]),
+            "ai_prorated_charge": float(proration["ai_prorated_charge"]),
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
         }
