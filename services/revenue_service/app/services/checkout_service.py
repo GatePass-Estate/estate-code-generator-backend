@@ -554,14 +554,7 @@ class CheckoutService:
 
         # Included product keys: enabled booleans / positive limits.
         # administrative_fee is in entitlements (True/False), not tier slug.
-        included_keys: list[str] = []
-        for key, value in entitlements.items():
-            if key == VAT_KEY:
-                continue
-            if isinstance(value, bool) and value:
-                included_keys.append(key)
-            elif isinstance(value, int) and value > 0:
-                included_keys.append(key)
+        included_keys = extract_included_keys(entitlements)
 
         try:
             breakdown = quote_pricing(
@@ -662,14 +655,7 @@ class CheckoutService:
         else:
             entitlements = dict(tier.get("entitlements") or {})
 
-        included_keys: list[str] = []
-        for key, value in entitlements.items():
-            if key == VAT_KEY:
-                continue
-            if isinstance(value, bool) and value:
-                included_keys.append(key)
-            elif isinstance(value, int) and value > 0:
-                included_keys.append(key)
+        included_keys = extract_included_keys(entitlements)
 
         # Infer period_months from the subscription window (~30-day months).
         period_days = (period_end.date() - period_start.date()).days + 1

@@ -13,6 +13,7 @@ from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import setup_standalone_ai_subscription
 from app.services.entitlement_service import EntitlementService
+from app.services.pricing_service import apply_vat, round_charge
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -188,13 +189,18 @@ class WebhookService:
             #    price_per_seat is per seat per month; period_months is
             #    the subscription billing cadence inferred from the
             #    active subscription window at proration time.
+            #    VAT must be applied to the delta because old_amount_kobo
+            #    is already VAT-inclusive.
             price_per_seat = Decimal(
                 str(pricing_snapshot.get("price_per_seat") or 0)
             )
             period_months = int(pricing_snapshot.get("period_months") or 1)
-            delta_kobo = int(
-                price_per_seat * period_months * seats_added * 100
+            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
+            delta_subtotal = round_charge(
+                price_per_seat * period_months * seats_added
             )
+            delta_vat = round_charge(delta_subtotal * vat_rate / Decimal(100))
+            delta_kobo = int((delta_subtotal + delta_vat) * 100)
             new_amount_kobo = old_amount_kobo + delta_kobo
 
             # 3. Update the Paystack plan.
@@ -237,8 +243,8 @@ class WebhookService:
         Update the Paystack plan amount after an immediate tier upgrade so
         the next auto-renewal charges the full new-tier price.
 
-        Failures are logged but do not propagate — the tier change and AI
-        grants are already applied.
+        Failures are re-raised so the webhook replay guard can retry —
+        the session is marked paid only after this method succeeds.
         """
         try:
             sub_data = await self._paystack.get_subscription(
@@ -265,11 +271,12 @@ class WebhookService:
             covered_users = int(pricing_snapshot.get("covered_users") or 1)
             period_months = int(pricing_snapshot.get("period_months") or 1)
             vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
-            subtotal = (
-                new_price_per_seat * covered_users + new_ai_monthly
-            ) * period_months
-            vat_amount = subtotal * vat_rate / Decimal(100)
-            new_amount_kobo = int((subtotal + vat_amount) * 100)
+            subtotal = round_charge(
+                (new_price_per_seat * covered_users + new_ai_monthly)
+                * period_months
+            )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
             new_name = (
                 f"GatePass - {new_tier_slug} - "
                 f"{covered_users} seats - {interval}"
@@ -447,14 +454,30 @@ class WebhookService:
                 "paystack_subscription_code"
             )
             if sub_code:
-                await self._update_plan_for_seat_add(
-                    estate_id=estate_id,
-                    subscription_id=str(result["subscription"]["id"]),
-                    paystack_subscription_code=sub_code,
-                    seats_added=seats_added,
-                    new_covered_users=result["covered_users"],
-                    pricing_snapshot=(session.get("pricing_snapshot") or {}),
-                )
+                if result.get("pending_cleared"):
+                    # A pending seat reduction was cleared by this seat
+                    # add, so the Paystack plan was already at the lower
+                    # (pending) seat count. The delta approach would
+                    # undercount — do a full recalculation instead.
+                    await (
+                        self._sub_svc._update_paystack_plan_for_seat_reduction(
+                            estate_id=estate_id,
+                            active_sub=result["subscription"],
+                            new_seats=result["covered_users"],
+                            sub_code=sub_code,
+                        )
+                    )
+                else:
+                    await self._update_plan_for_seat_add(
+                        estate_id=estate_id,
+                        subscription_id=str(result["subscription"]["id"]),
+                        paystack_subscription_code=sub_code,
+                        seats_added=seats_added,
+                        new_covered_users=result["covered_users"],
+                        pricing_snapshot=(
+                            session.get("pricing_snapshot") or {}
+                        ),
+                    )
             else:
                 logger.warning(
                     "seat_add: no paystack_subscription_code on "
@@ -546,10 +569,16 @@ class WebhookService:
             active_sub = await self.repo.get_active_subscription(estate_id)
             sub_code = (active_sub or {}).get("paystack_subscription_code")
             if sub_code:
+                snapshot = dict(session.get("pricing_snapshot") or {})
+                # If a seat reduction is pending, the Paystack plan for the
+                # next renewal must use the effective (lower) seat count.
+                pending = (active_sub or {}).get("pending_covered_users")
+                if pending is not None:
+                    snapshot["covered_users"] = int(pending)
                 await self._update_plan_for_tier_upgrade(
                     estate_id=estate_id,
                     paystack_subscription_code=sub_code,
-                    pricing_snapshot=(session.get("pricing_snapshot") or {}),
+                    pricing_snapshot=snapshot,
                     new_tier_slug=tier_slug,
                 )
             else:
@@ -652,7 +681,12 @@ class WebhookService:
                         _aim = Decimal(
                             str(_cam(_ap, _ai_keys)["ai_price_per_month"])
                         )
-                    _covered = int(subscription.get("covered_users") or 1)
+                    _pending = subscription.get("pending_covered_users")
+                    _covered = int(
+                        _pending
+                        if _pending is not None
+                        else (subscription.get("covered_users") or 1)
+                    )
                     _subtotal = (_pps * _covered + _aim) * period_months
                     _vat = _av(_subtotal, _vr)
                     expected_kobo = int(
