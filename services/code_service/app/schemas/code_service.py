@@ -39,6 +39,14 @@ class Receiver(str, Enum):
     RESIDENT = "resident"
 
 
+class ScanSeverity(str, Enum):
+    """Spatial anomaly band returned after a successful gate scan analyze."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class Relation(str, Enum):
     """
     Enumeration of supported resident-guest relation: family, partner,
@@ -245,6 +253,13 @@ class GetResponseVisitor(VisitorData):
             "was skipped or failed."
         ),
     )
+    severity: ScanSeverity | None = Field(
+        default=None,
+        description=(
+            "Spatial anomaly severity band for this validation; null when "
+            "analysis was skipped or failed."
+        ),
+    )
 
     @field_serializer("prediction_result_id")
     def serialize_prediction_result_id(
@@ -284,6 +299,13 @@ class GetResponseResident(ResidentData):
         description=(
             "Spatial anomaly flag for this validation; null when analysis "
             "was skipped or failed."
+        ),
+    )
+    severity: ScanSeverity | None = Field(
+        default=None,
+        description=(
+            "Spatial anomaly severity band for this validation; null when "
+            "analysis was skipped or failed."
         ),
     )
 

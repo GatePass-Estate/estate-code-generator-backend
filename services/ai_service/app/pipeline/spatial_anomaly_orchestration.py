@@ -32,6 +32,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.ensemble_config import DETECTOR_WEIGHTS
+from app.core.severity_config import severity_from_final_score
 from app.core.feature_config import feature_label, scope_label
 from app.domain.anomaly_types import AnomalyType
 from app.domain.log_feature_store import (
@@ -289,6 +290,7 @@ class SpatialAnomalyOrchestrator:
         focal_is_anomalous = (
             final >= settings.ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD
         )
+        focal_severity = severity_from_final_score(final)
 
         explanation = explain(
             final,
@@ -319,6 +321,7 @@ class SpatialAnomalyOrchestrator:
                 "scopes_evaluated": [s.value for s in resolved],
                 "anomaly_type": anomaly_type.value,
                 "is_anomalous": focal_is_anomalous,
+                "severity": focal_severity.value,
                 "transparency": transparency.model_dump(),
             }
         )
