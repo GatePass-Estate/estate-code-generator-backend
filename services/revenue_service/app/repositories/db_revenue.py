@@ -342,7 +342,7 @@ class DbRevenueRepository:
         """Return count of active (non-deleted) users for an estate."""
         url = (
             f"{self.base}api/v1/userprofile/users/search"
-            f"?estate_id={estate_id}&limit=1&page=1"
+            f"?estate_id={estate_id}&status=true&limit=1&page=1"
         )
         response = await self.client.async_get(url)
         return (response or {}).get("total", 0)

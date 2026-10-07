@@ -17,6 +17,16 @@ def omit_vat(mapping: Mapping[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in dict(mapping or {}).items() if k != VAT_KEY}
 
 
+def extract_included_keys(entitlements: Mapping[str, Any]) -> list[str]:
+    """Extract service keys with truthy entitlements, excluding VAT."""
+    return [
+        k
+        for k, v in entitlements.items()
+        if k != VAT_KEY
+        and ((isinstance(v, bool) and v) or (isinstance(v, int) and v > 0))
+    ]
+
+
 def _to_decimal(value: Any) -> Decimal:
     """Coerce a numeric-like value to Decimal."""
     if isinstance(value, Decimal):

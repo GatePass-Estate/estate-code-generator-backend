@@ -26,7 +26,9 @@ from app.services.entitlement_resolver import (
 from app.services.pricing_service import (
     VAT_KEY,
     apply_vat,
+    compute_ai_monthly,
     compute_price_per_seat,
+    extract_included_keys,
     omit_vat,
     round_charge,
 )
@@ -760,9 +762,14 @@ class SubscriptionService:
                 ),
             )
         current = int(subscription.get("covered_users") or 0)
+        update_payload: dict[str, Any] = {
+            "covered_users": current + seats_added,
+        }
+        if subscription.get("pending_covered_users") is not None:
+            update_payload["pending_covered_users"] = None
         updated = await self.repo.update_estate_subscription(
             str(subscription["id"]),
-            {"covered_users": current + seats_added},
+            update_payload,
         )
         return {
             "estate_id": estate_id,
@@ -1118,7 +1125,9 @@ class SubscriptionService:
             )
         current_seats = int(sub.get("covered_users") or 1)
         active_users = await self.repo.get_estate_active_user_count(estate_id)
-        can_reduce = current_seats > active_users
+        can_reduce = (
+            bool(sub.get("auto_renew")) and current_seats > active_users
+        )
         return {
             "estate_id": estate_id,
             "can_reduce": can_reduce,
@@ -1278,9 +1287,9 @@ class SubscriptionService:
             (
                 _country,
                 service_prices,
-                _ai_prices,
+                ai_prices,
                 _currency,
-                _vat,
+                vat_rate,
             ) = await checkout_svc._pricing_context(estate_id)
 
             tier_id = str(active_sub.get("tier_id") or "")
@@ -1291,17 +1300,15 @@ class SubscriptionService:
                 return  # Custom tier has negotiated pricing; do not overwrite plan amount
 
             entitlements = dict(tier.get("entitlements") or {})
-            included_keys = [
-                k
-                for k, v in entitlements.items()
-                if k != VAT_KEY
-                and (
-                    (isinstance(v, bool) and v)
-                    or (isinstance(v, int) and v > 0)
-                )
-            ]
+            included_keys = extract_included_keys(entitlements)
             seat_result = compute_price_per_seat(service_prices, included_keys)
             price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+
+            ai_keys = list(tier.get("included_ai_features") or [])
+            ai_monthly = Decimal(0)
+            if ai_keys:
+                ai_result = compute_ai_monthly(ai_prices, ai_keys)
+                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
 
             period_end_raw = active_sub.get("period_end")
             period_start_raw = active_sub.get("period_start")
@@ -1319,9 +1326,12 @@ class SubscriptionService:
             else:
                 period_months = 1
 
-            new_amount_kobo = int(
-                price_per_seat * new_seats * period_months * 100
+            subtotal = round_charge(
+                (price_per_seat * new_seats + ai_monthly)
+                * Decimal(period_months)
             )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
 
             if not self._paystack:
                 return
