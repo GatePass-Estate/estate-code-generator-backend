@@ -35,8 +35,8 @@ async def trigger_spatial_anomaly_check(
     ``None`` (never raise).
 
     Returns:
-        ``{"prediction_result_id": str, "is_anomalous": bool}`` on success,
-        otherwise ``None``. Callers notify estate admins when
+        ``{"prediction_result_id": str, "is_anomalous": bool, "severity": str | None}``
+        on success, otherwise ``None``. Callers notify estate admins when
         ``is_anomalous`` is true.
     """
     estate_id = record.get("estate_id")
@@ -121,10 +121,14 @@ async def trigger_spatial_anomaly_check(
                     data,
                 )
                 return None
-            return {
+            out: dict[str, Any] = {
                 "prediction_result_id": str(prediction_result_id),
                 "is_anomalous": bool(is_anomalous),
             }
+            severity = data.get("severity")
+            if severity is not None:
+                out["severity"] = str(severity)
+            return out
     except Exception:
         logger.exception(
             "Spatial anomaly trigger failed estate_id=%s anomaly_type=%s",
