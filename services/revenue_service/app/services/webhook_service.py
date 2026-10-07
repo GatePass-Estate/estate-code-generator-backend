@@ -259,11 +259,17 @@ class WebhookService:
             new_price_per_seat = Decimal(
                 str(pricing_snapshot.get("new_price_per_seat") or 0)
             )
+            new_ai_monthly = Decimal(
+                str(pricing_snapshot.get("new_ai_monthly") or 0)
+            )
             covered_users = int(pricing_snapshot.get("covered_users") or 1)
             period_months = int(pricing_snapshot.get("period_months") or 1)
-            new_amount_kobo = int(
-                new_price_per_seat * covered_users * period_months * 100
-            )
+            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
+            subtotal = (
+                new_price_per_seat * covered_users + new_ai_monthly
+            ) * period_months
+            vat_amount = subtotal * vat_rate / Decimal(100)
+            new_amount_kobo = int((subtotal + vat_amount) * 100)
             new_name = (
                 f"GatePass - {new_tier_slug} - "
                 f"{covered_users} seats - {interval}"
@@ -290,6 +296,7 @@ class WebhookService:
                 paystack_subscription_code,
                 new_tier_slug,
             )
+            raise
 
     # ------------------------------------------------------------------ #
     # Handlers
@@ -534,12 +541,8 @@ class WebhookService:
                 tier_slug,
                 paid_at,
             )
-            await self.repo.update_checkout_session(
-                str(session["id"]),
-                {"status": "paid", "paid_at": paid_at.isoformat()},
-            )
-            # Best-effort: update Paystack plan so next auto-renewal
-            # charges the full new-tier price.
+            # Update Paystack plan BEFORE marking paid so the webhook
+            # replay guard doesn't prevent retry on plan-update failure.
             active_sub = await self.repo.get_active_subscription(estate_id)
             sub_code = (active_sub or {}).get("paystack_subscription_code")
             if sub_code:
@@ -556,6 +559,10 @@ class WebhookService:
                     "auto-renewal amount will remain unchanged",
                     estate_id,
                 )
+            await self.repo.update_checkout_session(
+                str(session["id"]),
+                {"status": "paid", "paid_at": paid_at.isoformat()},
+            )
 
     async def _handle_renewal_charge(self, data: dict[str, Any]) -> None:
         """
@@ -612,6 +619,61 @@ class WebhookService:
                 paystack_sub_code,
             )
             period_months = 1
+
+        # Diagnostic: warn when the charged amount doesn't match what
+        # we'd compute from the current tier + seat count. Once plan
+        # amounts are kept in sync (Bugs 2 & 3 fixes), mismatches
+        # should stop for new renewals.
+        charged_kobo = int(data.get("amount") or 0)
+        if charged_kobo > 0:
+            try:
+                from app.services.checkout_service import CheckoutService
+                from app.services.pricing_service import (
+                    apply_vat as _av,
+                    compute_ai_monthly as _cam,
+                    compute_price_per_seat as _cpps,
+                    extract_included_keys as _eik,
+                )
+
+                _checkout = CheckoutService(self.repo)
+                (_, _sp, _ap, _, _vr) = await _checkout._pricing_context(
+                    estate_id
+                )
+                _tier = await self.repo.get_tier_by_id(
+                    str(subscription["tier_id"])
+                )
+                if _tier:
+                    _ent = dict(_tier.get("entitlements") or {})
+                    _keys = _eik(_ent)
+                    _pps = Decimal(str(_cpps(_sp, _keys)["price_per_seat"]))
+                    _ai_keys = list(_tier.get("included_ai_features") or [])
+                    _aim = Decimal(0)
+                    if _ai_keys:
+                        _aim = Decimal(
+                            str(_cam(_ap, _ai_keys)["ai_price_per_month"])
+                        )
+                    _covered = int(subscription.get("covered_users") or 1)
+                    _subtotal = (_pps * _covered + _aim) * period_months
+                    _vat = _av(_subtotal, _vr)
+                    expected_kobo = int(
+                        Decimal(str(_vat["client_total"])) * 100
+                    )
+                    if charged_kobo != expected_kobo:
+                        logger.warning(
+                            "Auto-renewal amount mismatch estate_id=%s "
+                            "charged_kobo=%s expected_kobo=%s "
+                            "subscription_code=%s — proceeding",
+                            estate_id,
+                            charged_kobo,
+                            expected_kobo,
+                            paystack_sub_code,
+                        )
+            except Exception:
+                logger.debug(
+                    "Could not verify renewal amount estate_id=%s",
+                    estate_id,
+                    exc_info=True,
+                )
 
         await self.repo.create_payment_transaction(
             {
