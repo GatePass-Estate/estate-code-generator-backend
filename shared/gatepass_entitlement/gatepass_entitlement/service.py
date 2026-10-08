@@ -255,6 +255,15 @@ async def assert_seat_available(
         )
         return None
 
+    if result.get("locked"):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Estate is over its seat capacity and locked. "
+                "Add seats or deactivate users before registering more."
+            ),
+        )
+
     raw_limit = result.get("limit")
     if raw_limit is None and result.get("covered_users") is not None:
         raw_limit = result.get("covered_users")

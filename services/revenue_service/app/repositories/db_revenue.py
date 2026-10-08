@@ -193,21 +193,22 @@ class DbRevenueRepository:
         """
         Return the current subscription for entitlement / billing lookups.
 
-        Prefers healthy statuses, then cancelled/past_due (access may continue
-        until period_end), then expired (needed for over_cap_locked checks).
+        Prefers healthy statuses, then cancelled/past_due (access may
+        continue until period_end). Expired rows are excluded — after
+        the expiry cron runs, the active access-tier row carries the
+        ``over_cap_locked`` flag.
 
         Args:
             estate_id: Estate UUID string.
 
         Returns:
-            Subscription row, or None if none match.
+            Subscription row, or None if no non-expired subscription exists.
         """
         for status in (
             "active",
             "trialing",
             "past_due",
             "cancelled",
-            "expired",
         ):
             items = await self._search(
                 self.estate_subscription,

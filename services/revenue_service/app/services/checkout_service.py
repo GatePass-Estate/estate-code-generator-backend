@@ -892,6 +892,12 @@ class CheckoutService:
         country: str = quote_result["country_code"]
         snapshot: dict = quote_result["snapshot"]
 
+        if amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Checkout amount must be greater than zero",
+            )
+
         # 5. Build session_metadata
         session_metadata = handler.build_metadata(request, current_user_id)
 

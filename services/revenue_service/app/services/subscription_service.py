@@ -1411,7 +1411,7 @@ class SubscriptionService:
         deleted and the earlier one is returned.
         """
         existing = await self.repo.get_active_subscription(estate_id)
-        if existing and (existing.get("status") or "").lower() != "expired":
+        if existing:
             return existing
 
         access_tier = await self.repo.get_tier_by_slug("access")

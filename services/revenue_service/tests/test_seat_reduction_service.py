@@ -630,29 +630,32 @@ class TestGetEstateSubscriptionEffectiveCoveredUsers:
 
 class TestCombinedSeatReductionScenarios:
     @pytest.mark.asyncio
-    async def test_schedule_then_seat_add_then_renew_applies_pending(
-        self, noop_grants, monkeypatch
-    ):
-        """Seat add after scheduling a reduction does not change pending_covered_users.
-        At renewal, pending_covered_users wins regardless.
-        """
+    async def test_seat_add_clears_pending_covered_users(self):
+        """apply_seat_add clears pending_covered_users and bumps covered_users."""
         sub = _make_sub(covered_users=10, pending_covered_users=6)
-        # Simulate that a seat_add already bumped covered_users to 13
-        sub["covered_users"] = 13
         repo = FakeRepo(
             active_sub=sub,
             tiers_by_id={"tier-sentinel": SENTINEL},
         )
-        monkeypatch.setattr(
-            sub_mod,
-            "compute_period_end",
-            lambda **kw: kw["paid_at"]
-            + __import__("datetime").timedelta(days=30),
+        result = await _svc(repo).apply_seat_add("estate-1", 3)
+
+        assert result["covered_users"] == 13
+        assert result["pending_cleared"] is True
+        assert repo._active_sub["pending_covered_users"] is None
+        assert repo._active_sub["covered_users"] == 13
+
+    @pytest.mark.asyncio
+    async def test_seat_add_without_pending_does_not_set_flag(self):
+        """apply_seat_add with no pending_covered_users returns pending_cleared=False."""
+        sub = _make_sub(covered_users=10, pending_covered_users=None)
+        repo = FakeRepo(
+            active_sub=sub,
+            tiers_by_id={"tier-sentinel": SENTINEL},
         )
-        await _svc(repo).renew("estate-1")
-        seat_writes = [p for _, p in repo.update_calls if "covered_users" in p]
-        assert seat_writes
-        assert seat_writes[0]["covered_users"] == 6
+        result = await _svc(repo).apply_seat_add("estate-1", 2)
+
+        assert result["covered_users"] == 12
+        assert result["pending_cleared"] is False
 
     @pytest.mark.asyncio
     async def test_reschedule_overwrites_previous_pending(self):
