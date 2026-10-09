@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -11,7 +11,9 @@ from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
 from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
+from app.services.ai_grant_sync import setup_standalone_ai_subscription
 from app.services.entitlement_service import EntitlementService
+from app.services.pricing_service import apply_vat, round_charge
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -187,13 +189,18 @@ class WebhookService:
             #    price_per_seat is per seat per month; period_months is
             #    the subscription billing cadence inferred from the
             #    active subscription window at proration time.
+            #    VAT must be applied to the delta because old_amount_kobo
+            #    is already VAT-inclusive.
             price_per_seat = Decimal(
                 str(pricing_snapshot.get("price_per_seat") or 0)
             )
             period_months = int(pricing_snapshot.get("period_months") or 1)
-            delta_kobo = int(
-                price_per_seat * period_months * seats_added * 100
+            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
+            delta_subtotal = round_charge(
+                price_per_seat * period_months * seats_added
             )
+            delta_vat = round_charge(delta_subtotal * vat_rate / Decimal(100))
+            delta_kobo = int((delta_subtotal + delta_vat) * 100)
             new_amount_kobo = old_amount_kobo + delta_kobo
 
             # 3. Update the Paystack plan.
@@ -223,6 +230,80 @@ class WebhookService:
                 subscription_id,
                 paystack_subscription_code,
             )
+
+    async def _update_plan_for_tier_upgrade(
+        self,
+        *,
+        estate_id: str,
+        paystack_subscription_code: str,
+        pricing_snapshot: dict,
+        new_tier_slug: str,
+    ) -> None:
+        """
+        Update the Paystack plan amount after an immediate tier upgrade so
+        the next auto-renewal charges the full new-tier price.
+
+        Failures are re-raised so the webhook replay guard can retry —
+        the session is marked paid only after this method succeeds.
+        """
+        try:
+            sub_data = await self._paystack.get_subscription(
+                paystack_subscription_code
+            )
+            plan = sub_data.get("plan") or {}
+            plan_code: str = plan.get("plan_code", "")
+            if not plan_code:
+                logger.error(
+                    "tier_upgrade: Paystack subscription missing plan_code "
+                    "estate_id=%s subscription_code=%s",
+                    estate_id,
+                    paystack_subscription_code,
+                )
+                return
+
+            interval: str = plan.get("interval", "monthly")
+            new_price_per_seat = Decimal(
+                str(pricing_snapshot.get("new_price_per_seat") or 0)
+            )
+            new_ai_monthly = Decimal(
+                str(pricing_snapshot.get("new_ai_monthly") or 0)
+            )
+            covered_users = int(pricing_snapshot.get("covered_users") or 1)
+            period_months = int(pricing_snapshot.get("period_months") or 1)
+            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
+            subtotal = round_charge(
+                (new_price_per_seat * covered_users + new_ai_monthly)
+                * period_months
+            )
+            vat = apply_vat(subtotal, vat_rate)
+            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
+            new_name = (
+                f"GatePass - {new_tier_slug} - "
+                f"{covered_users} seats - {interval}"
+            )
+            await self._paystack.update_plan(
+                plan_code,
+                amount_kobo=new_amount_kobo,
+                name=new_name,
+            )
+            logger.info(
+                "tier_upgrade: updated Paystack plan estate_id=%s "
+                "plan_code=%s new_amount_kobo=%s new_tier_slug=%s",
+                estate_id,
+                plan_code,
+                new_amount_kobo,
+                new_tier_slug,
+            )
+        except Exception:
+            logger.exception(
+                "tier_upgrade: failed to update Paystack plan "
+                "estate_id=%s subscription_code=%s new_tier_slug=%s "
+                "— DB is updated but auto-renewal amount may be stale",
+                estate_id,
+                paystack_subscription_code,
+                new_tier_slug,
+            )
+            raise
 
     # ------------------------------------------------------------------ #
     # Handlers
@@ -373,14 +454,30 @@ class WebhookService:
                 "paystack_subscription_code"
             )
             if sub_code:
-                await self._update_plan_for_seat_add(
-                    estate_id=estate_id,
-                    subscription_id=str(result["subscription"]["id"]),
-                    paystack_subscription_code=sub_code,
-                    seats_added=seats_added,
-                    new_covered_users=result["covered_users"],
-                    pricing_snapshot=(session.get("pricing_snapshot") or {}),
-                )
+                if result.get("pending_cleared"):
+                    # A pending seat reduction was cleared by this seat
+                    # add, so the Paystack plan was already at the lower
+                    # (pending) seat count. The delta approach would
+                    # undercount — do a full recalculation instead.
+                    await (
+                        self._sub_svc._update_paystack_plan_for_seat_reduction(
+                            estate_id=estate_id,
+                            active_sub=result["subscription"],
+                            new_seats=result["covered_users"],
+                            sub_code=sub_code,
+                        )
+                    )
+                else:
+                    await self._update_plan_for_seat_add(
+                        estate_id=estate_id,
+                        subscription_id=str(result["subscription"]["id"]),
+                        paystack_subscription_code=sub_code,
+                        seats_added=seats_added,
+                        new_covered_users=result["covered_users"],
+                        pricing_snapshot=(
+                            session.get("pricing_snapshot") or {}
+                        ),
+                    )
             else:
                 logger.warning(
                     "seat_add: no paystack_subscription_code on "
@@ -390,7 +487,7 @@ class WebhookService:
                 )
 
         elif kind == "ai_only":
-            await self._ent_svc.activate_ai_features(
+            grants = await self._ent_svc.activate_ai_features(
                 {
                     "estate_id": estate_id,
                     "ai_feature_keys": (metadata.get("ai_feature_keys") or []),
@@ -398,6 +495,99 @@ class WebhookService:
                     "paid_at": paid_at.isoformat(),
                 }
             )
+            await self.repo.update_checkout_session(
+                str(session["id"]),
+                {"status": "paid", "paid_at": paid_at.isoformat()},
+            )
+
+            # Set up Paystack recurring subscription for card payments.
+            authorization_code = (data.get("authorization") or {}).get(
+                "authorization_code", ""
+            )
+            customer_email = (data.get("customer") or {}).get("email", "")
+            is_reusable = (data.get("authorization") or {}).get(
+                "reusable", False
+            )
+            features = (grants or {}).get("features") or []
+            if (
+                authorization_code
+                and customer_email
+                and is_reusable
+                and features
+            ):
+                catalog = await self.repo.get_ai_feature_map()
+                period_months = int(metadata.get("period_months", 1))
+                interval = _MONTHS_TO_INTERVAL.get(period_months, "monthly")
+                amount_kobo = int(Decimal(str(session["amount"])) * 100)
+                currency = session.get("currency_code", "NGN")
+                for item in features:
+                    feature_key = item.get("feature_key", "")
+                    ai_feature = catalog.get(feature_key)
+                    grant = item.get("grant")
+                    if not ai_feature or not grant:
+                        continue
+                    await setup_standalone_ai_subscription(
+                        self.repo,
+                        self._paystack,
+                        grant=grant,
+                        ai_feature=ai_feature,
+                        customer_email=customer_email,
+                        authorization_code=authorization_code,
+                        amount_kobo=amount_kobo,
+                        billing_interval=interval,
+                        currency=currency,
+                    )
+            elif (
+                authorization_code
+                and customer_email
+                and not is_reusable
+                and features
+            ):
+                logger.warning(
+                    "ai_only: authorization not reusable — skipping "
+                    "recurring billing, marking auto_renew=False "
+                    "estate_id=%s reference=%s",
+                    estate_id,
+                    reference,
+                )
+                for item in features:
+                    grant = item.get("grant")
+                    if grant:
+                        await self.repo.update_estate_ai_feature(
+                            str(grant["id"]), {"auto_renew": False}
+                        )
+
+        elif kind == "tier_upgrade_immediate":
+            tier_slug = metadata.get("tier_slug", "")
+            await self._sub_svc.change_tier_immediate(
+                estate_id,
+                tier_slug,
+                paid_at,
+            )
+            # Update Paystack plan BEFORE marking paid so the webhook
+            # replay guard doesn't prevent retry on plan-update failure.
+            active_sub = await self.repo.get_active_subscription(estate_id)
+            sub_code = (active_sub or {}).get("paystack_subscription_code")
+            if sub_code:
+                snapshot = dict(session.get("pricing_snapshot") or {})
+                # If a seat reduction is pending, the Paystack plan for the
+                # next renewal must use the effective (lower) seat count.
+                pending = (active_sub or {}).get("pending_covered_users")
+                if pending is not None:
+                    snapshot["covered_users"] = int(pending)
+                await self._update_plan_for_tier_upgrade(
+                    estate_id=estate_id,
+                    paystack_subscription_code=sub_code,
+                    pricing_snapshot=snapshot,
+                    new_tier_slug=tier_slug,
+                )
+            else:
+                logger.warning(
+                    "tier_upgrade: no paystack_subscription_code on "
+                    "estate_id=%s — Paystack plan not updated; "
+                    "auto-renewal amount will remain unchanged",
+                    estate_id,
+                )
             await self.repo.update_checkout_session(
                 str(session["id"]),
                 {"status": "paid", "paid_at": paid_at.isoformat()},
@@ -423,17 +613,38 @@ class WebhookService:
             )
             return
 
+        # Idempotency: skip if we already processed this reference.
+        existing_txn = await self.repo.get_transaction_by_provider_reference(
+            reference
+        )
+        if existing_txn:
+            logger.info(
+                "charge.success renewal reference=%s already processed "
+                "— skipping duplicate webhook",
+                reference,
+            )
+            return
+
         subscription = (
             await self.repo.get_subscription_by_paystack_subscription_code(
                 paystack_sub_code
             )
         )
         if not subscription:
-            logger.warning(
-                "charge.success auto-renewal: subscription_code=%s not "
-                "linked to any estate — skipping",
-                paystack_sub_code,
+            # Not an estate subscription — check standalone AI grant.
+            ai_grant = (
+                await self.repo.get_ai_grant_by_paystack_subscription_code(
+                    paystack_sub_code
+                )
             )
+            if ai_grant:
+                await self._handle_ai_grant_renewal(data, ai_grant)
+            else:
+                logger.warning(
+                    "charge.success auto-renewal: subscription_code=%s not "
+                    "linked to any estate or AI grant — skipping",
+                    paystack_sub_code,
+                )
             return
 
         estate_id = str(subscription["estate_id"])
@@ -450,12 +661,70 @@ class WebhookService:
             )
             period_months = 1
 
+        # Diagnostic: warn when the charged amount doesn't match what
+        # we'd compute from the current tier + seat count.
+        charged_kobo = int(data.get("amount") or 0)
+        if charged_kobo > 0:
+            try:
+                from app.services.checkout_service import CheckoutService
+                from app.services.pricing_service import (
+                    apply_vat as _av,
+                    compute_ai_monthly as _cam,
+                    compute_price_per_seat as _cpps,
+                    extract_included_keys as _eik,
+                )
+
+                _checkout = CheckoutService(self.repo)
+                (_, _sp, _ap, _, _vr) = await _checkout._pricing_context(
+                    estate_id
+                )
+                _tier = await self.repo.get_tier_by_id(
+                    str(subscription["tier_id"])
+                )
+                if _tier:
+                    _ent = dict(_tier.get("entitlements") or {})
+                    _keys = _eik(_ent)
+                    _pps = Decimal(str(_cpps(_sp, _keys)["price_per_seat"]))
+                    _ai_keys = list(_tier.get("included_ai_features") or [])
+                    _aim = Decimal(0)
+                    if _ai_keys:
+                        _aim = Decimal(
+                            str(_cam(_ap, _ai_keys)["ai_price_per_month"])
+                        )
+                    _pending = subscription.get("pending_covered_users")
+                    _covered = int(
+                        _pending
+                        if _pending is not None
+                        else (subscription.get("covered_users") or 1)
+                    )
+                    _subtotal = (_pps * _covered + _aim) * period_months
+                    _vat = _av(_subtotal, _vr)
+                    expected_kobo = int(
+                        Decimal(str(_vat["client_total"])) * 100
+                    )
+                    if charged_kobo != expected_kobo:
+                        logger.warning(
+                            "Auto-renewal amount mismatch estate_id=%s "
+                            "charged_kobo=%s expected_kobo=%s "
+                            "subscription_code=%s — proceeding",
+                            estate_id,
+                            charged_kobo,
+                            expected_kobo,
+                            paystack_sub_code,
+                        )
+            except Exception:
+                logger.debug(
+                    "Could not verify renewal amount estate_id=%s",
+                    estate_id,
+                    exc_info=True,
+                )
+
         await self.repo.create_payment_transaction(
             {
                 "estate_id": estate_id,
                 "checkout_session_id": None,
-                "amount": str(data.get("amount", 0) / 100),
-                # Prefer currency from the event; fall back to subscription row.
+                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
+                # Prefer currency from the event; fall back to sub row.
                 "currency_code": (
                     data.get("currency")
                     or subscription.get("currency_code", "NGN")
@@ -477,6 +746,57 @@ class WebhookService:
             estate_id,
             reference,
             period_months,
+        )
+
+    async def _handle_ai_grant_renewal(
+        self, data: dict[str, Any], ai_grant: dict[str, Any]
+    ) -> None:
+        """
+        Extend an AI grant's expires_at after a successful auto-renewal charge.
+        """
+        reference = data.get("reference", "")
+        interval = (data.get("plan") or {}).get("interval", "monthly")
+        period_months = _INTERVAL_TO_MONTHS.get(interval, 1)
+        paid_at_raw = data.get("paid_at") or data.get("created_at", "")
+        try:
+            paid_at = datetime.fromisoformat(
+                str(paid_at_raw).replace("Z", "+00:00")
+            )
+            if paid_at.tzinfo is None:
+                paid_at = paid_at.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            paid_at = datetime.now(tz=timezone.utc)
+
+        new_expires_at = paid_at + timedelta(days=30 * period_months)
+        estate_id = str(ai_grant["estate_id"])
+
+        await self.repo.create_payment_transaction(
+            {
+                "estate_id": estate_id,
+                "checkout_session_id": None,
+                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
+                "currency_code": data.get("currency", "NGN"),
+                "status": "success",
+                "provider_reference": reference,
+                "raw": data,
+            }
+        )
+        await self.repo.update_estate_ai_feature(
+            str(ai_grant["id"]),
+            {
+                "status": "active",
+                "is_installed": True,
+                "expires_at": new_expires_at.isoformat(),
+                "pre_expiry_notified": False,
+            },
+        )
+        logger.info(
+            "AI grant auto-renewal processed grant_id=%s estate_id=%s "
+            "reference=%s new_expires_at=%s",
+            ai_grant["id"],
+            estate_id,
+            reference,
+            new_expires_at.isoformat(),
         )
 
     async def _handle_subscription_create(self, data: dict[str, Any]) -> None:
@@ -514,6 +834,54 @@ class WebhookService:
                     subscription_code,
                 )
 
+    async def _handle_ai_grant_invoice_failed(
+        self, ai_grant: dict[str, Any]
+    ) -> None:
+        """Mark a standalone AI grant past_due when mid-cycle payment fails."""
+        now = datetime.now(tz=timezone.utc)
+        expires_at_raw = ai_grant.get("expires_at")
+        if expires_at_raw:
+            expires_at = datetime.fromisoformat(
+                str(expires_at_raw).replace("Z", "+00:00")
+            )
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at:
+                logger.info(
+                    "invoice.payment_failed in grace window for AI grant "
+                    "grant_id=%s — no status change",
+                    ai_grant["id"],
+                )
+                return
+
+        estate_id = str(ai_grant["estate_id"])
+        await self.repo.update_estate_ai_feature(
+            str(ai_grant["id"]), {"status": "past_due"}
+        )
+        logger.info(
+            "invoice.payment_failed mid-cycle: set AI grant past_due "
+            "grant_id=%s estate_id=%s",
+            ai_grant["id"],
+            estate_id,
+        )
+        await fire_notify(
+            {
+                "type": "AI_GRANT_PAYMENT_FAILED",
+                "title": "AI feature payment failed",
+                "body": (
+                    "Your automatic renewal payment for an AI feature "
+                    "failed. Your access continues until the current "
+                    "period ends — please update your payment method "
+                    "to avoid losing access."
+                ),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["primary_admin"],
+                },
+                "metadata": {"estate_id": estate_id},
+            }
+        )
+
     async def _handle_subscription_disable(self, data: dict[str, Any]) -> None:
         """
         Paystack subscription was disabled — mark auto_renew=false on our
@@ -532,11 +900,28 @@ class WebhookService:
             )
         )
         if not subscription:
-            logger.warning(
-                "subscription.disable subscription_code=%s not linked "
-                "to any estate — skipping",
-                subscription_code,
+            # Not an estate subscription — check standalone AI grant.
+            ai_grant = (
+                await self.repo.get_ai_grant_by_paystack_subscription_code(
+                    subscription_code
+                )
             )
+            if ai_grant:
+                await self.repo.update_estate_ai_feature(
+                    str(ai_grant["id"]), {"auto_renew": False}
+                )
+                logger.info(
+                    "subscription.disable: set auto_renew=False on AI "
+                    "grant grant_id=%s subscription_code=%s",
+                    ai_grant["id"],
+                    subscription_code,
+                )
+            else:
+                logger.warning(
+                    "subscription.disable subscription_code=%s not linked "
+                    "to any estate or AI grant — skipping",
+                    subscription_code,
+                )
             return
 
         estate_id = str(subscription["estate_id"])
@@ -572,11 +957,20 @@ class WebhookService:
                 )
             )
             if not subscription:
-                logger.warning(
-                    "invoice.payment_failed subscription_code=%s not "
-                    "linked to any estate — skipping",
-                    paystack_sub_code,
+                # Not an estate subscription — check standalone AI grant.
+                ai_grant = (
+                    await self.repo.get_ai_grant_by_paystack_subscription_code(
+                        paystack_sub_code
+                    )
                 )
+                if ai_grant:
+                    await self._handle_ai_grant_invoice_failed(ai_grant)
+                else:
+                    logger.warning(
+                        "invoice.payment_failed subscription_code=%s not "
+                        "linked to any estate or AI grant — skipping",
+                        paystack_sub_code,
+                    )
                 return
             estate_id = str(subscription["estate_id"])
         else:
@@ -627,9 +1021,10 @@ class WebhookService:
                     "type": "SUBSCRIPTION_PAYMENT_FAILED",
                     "title": "Subscription payment failed",
                     "body": (
-                        "Your automatic subscription renewal payment failed. "
-                        "Your access continues until your current period ends — "
-                        "please update your payment method to avoid any interruption."
+                        "Your automatic subscription renewal payment "
+                        "failed. Your access continues until your current "
+                        "period ends — please update your payment method "
+                        "to avoid any interruption."
                     ),
                     "fan_out": {
                         "estate_id": estate_id,
@@ -664,7 +1059,9 @@ class WebhookService:
             {
                 "estate_id": str(session["estate_id"]),
                 "checkout_session_id": str(session["id"]),
-                "amount": str(amount / 100),  # kobo → major unit
+                "amount": str(
+                    Decimal(amount) / Decimal(100)
+                ),  # kobo → major unit
                 "currency_code": session["currency_code"],
                 "status": "refund",
                 "provider_reference": reference,

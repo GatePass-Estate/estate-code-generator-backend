@@ -91,9 +91,9 @@ class EntitlementService:
         ``max_active_users`` uses ``covered_users`` on the subscription as the
         seat cap when present.
 
-        When the estate has fallen back to Access and the subscription has
-        ``over_cap_locked`` (set by the expiry sweep), returns a locked denial
-        so UPS can block non-primary-admin logins.
+        When the active subscription has ``over_cap_locked`` (set by the
+        expiry sweep after a paid sub expires over the Access seat cap),
+        returns a locked denial so UPS can block non-primary-admin logins.
 
         Args:
             estate_id: Estate UUID string.
@@ -119,11 +119,10 @@ class EntitlementService:
         sub = ctx["subscription"]
         tier = ctx["tier"]
 
-        if (
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        ):
+        if sub is not None and bool(sub.get("over_cap_locked")):
+            covered = sub.get("covered_users")
+            pending = sub.get("pending_covered_users")
+            effective = pending if pending is not None else covered
             return {
                 "estate_id": estate_id,
                 "service_key": service_key,
@@ -132,15 +131,20 @@ class EntitlementService:
                 "reason": "over_cap",
                 "limit": None,
                 "limit_type": limit_type,
-                "covered_users": sub.get("covered_users"),
+                "covered_users": covered,
+                "effective_covered_users": effective,
                 "subscription_status": sub.get("status"),
-                "tier_slug": (ctx.get("access_tier") or {}).get("slug"),
+                "tier_slug": (tier or ctx.get("access_tier") or {}).get(
+                    "slug"
+                ),
             }
 
         if service_key == MAX_ACTIVE_USERS_KEY and sub is not None:
             covered = sub.get("covered_users")
-            if covered is not None:
-                limit = int(covered)
+            pending = sub.get("pending_covered_users")
+            effective = pending if pending is not None else covered
+            if effective is not None:
+                limit = int(effective)
                 result = {
                     "allowed": limit > 0,
                     "limit": limit,
@@ -155,13 +159,17 @@ class EntitlementService:
                 ctx["entitlements"], service_key, limit_type
             )
 
+        covered = (sub or {}).get("covered_users")
+        pending = (sub or {}).get("pending_covered_users")
+        effective = pending if pending is not None else covered
         return {
             "estate_id": estate_id,
             "service_key": service_key,
             **result,
             "locked": False,
             "reason": None,
-            "covered_users": (sub or {}).get("covered_users"),
+            "covered_users": covered,
+            "effective_covered_users": effective,
             "subscription_status": (sub or {}).get("status"),
             "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),
         }
@@ -170,8 +178,8 @@ class EntitlementService:
         """
         Return the full effective entitlements map for an estate.
 
-        Omits ``vat`` (a tax rate, not a product). When the estate has
-        fallen back to Access and ``over_cap_locked`` is set, includes
+        Omits ``vat`` (a tax rate, not a product). When the active
+        subscription has ``over_cap_locked`` set, includes
         ``locked=true`` / ``reason=over_cap`` (same signal as
         ``/entitlements/check``) so callers can detect lock without a key.
 
@@ -184,17 +192,17 @@ class EntitlementService:
         ctx = await self._load_context(estate_id)
         sub = ctx["subscription"]
         tier = ctx["tier"]
-        locked = bool(
-            ctx.get("uses_access_fallback")
-            and sub is not None
-            and bool(sub.get("over_cap_locked"))
-        )
+        locked = bool(sub is not None and bool(sub.get("over_cap_locked")))
+        covered = (sub or {}).get("covered_users")
+        pending = (sub or {}).get("pending_covered_users")
+        effective = pending if pending is not None else covered
         return {
             "estate_id": estate_id,
             "entitlements": omit_vat(ctx["entitlements"]),
             "locked": locked,
             "reason": "over_cap" if locked else None,
-            "covered_users": (sub or {}).get("covered_users"),
+            "covered_users": covered,
+            "effective_covered_users": effective,
             "subscription_status": (sub or {}).get("status"),
             "tier_slug": (tier or ctx.get("access_tier") or {}).get("slug"),
         }

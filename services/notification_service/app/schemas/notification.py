@@ -48,6 +48,13 @@ class NotificationType(str, Enum):
     SUBSCRIPTION_GRACE_PERIOD = "SUBSCRIPTION_GRACE_PERIOD"
     SUBSCRIPTION_GRACE_PERIOD_ADMIN = "SUBSCRIPTION_GRACE_PERIOD_ADMIN"
     SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED"
+    SUBSCRIPTION_RENEWAL_REMINDER = "SUBSCRIPTION_RENEWAL_REMINDER"
+    # Standalone AI grant lifecycle
+    AI_GRANT_RENEWAL_REMINDER = "AI_GRANT_RENEWAL_REMINDER"
+    AI_GRANT_GRACE_PERIOD = "AI_GRANT_GRACE_PERIOD"
+    AI_GRANT_GRACE_PERIOD_ADMIN = "AI_GRANT_GRACE_PERIOD_ADMIN"
+    AI_GRANT_EXPIRED = "AI_GRANT_EXPIRED"
+    AI_GRANT_PAYMENT_FAILED = "AI_GRANT_PAYMENT_FAILED"
 
 
 # Types for which user preferences are ignored — always delivered
@@ -79,6 +86,12 @@ MANDATORY_TYPES: set[NotificationType] = {
     NotificationType.SUBSCRIPTION_GRACE_PERIOD,
     NotificationType.SUBSCRIPTION_GRACE_PERIOD_ADMIN,
     NotificationType.SUBSCRIPTION_EXPIRED,
+    NotificationType.SUBSCRIPTION_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_GRACE_PERIOD,
+    NotificationType.AI_GRANT_GRACE_PERIOD_ADMIN,
+    NotificationType.AI_GRANT_EXPIRED,
+    NotificationType.AI_GRANT_PAYMENT_FAILED,
 }
 
 # Types that do NOT create an in-app notification row.
@@ -122,6 +135,11 @@ EMAIL_TYPES: set[NotificationType] = {
     NotificationType.ESTATE_REACTIVATED,
     NotificationType.SUBSCRIPTION_GRACE_PERIOD,
     NotificationType.SUBSCRIPTION_EXPIRED,
+    NotificationType.SUBSCRIPTION_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_GRACE_PERIOD,
+    NotificationType.AI_GRANT_EXPIRED,
+    NotificationType.AI_GRANT_PAYMENT_FAILED,
 }
 
 # Types that send push by default
@@ -146,6 +164,12 @@ PUSH_TYPES: set[NotificationType] = {
     NotificationType.SUBSCRIPTION_GRACE_PERIOD,
     NotificationType.SUBSCRIPTION_GRACE_PERIOD_ADMIN,
     NotificationType.SUBSCRIPTION_EXPIRED,
+    NotificationType.SUBSCRIPTION_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_RENEWAL_REMINDER,
+    NotificationType.AI_GRANT_GRACE_PERIOD,
+    NotificationType.AI_GRANT_GRACE_PERIOD_ADMIN,
+    NotificationType.AI_GRANT_EXPIRED,
+    NotificationType.AI_GRANT_PAYMENT_FAILED,
 }
 
 

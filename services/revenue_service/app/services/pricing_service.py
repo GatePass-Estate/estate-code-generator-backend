@@ -17,6 +17,16 @@ def omit_vat(mapping: Mapping[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in dict(mapping or {}).items() if k != VAT_KEY}
 
 
+def extract_included_keys(entitlements: Mapping[str, Any]) -> list[str]:
+    """Extract service keys with truthy entitlements, excluding VAT."""
+    return [
+        k
+        for k, v in entitlements.items()
+        if k != VAT_KEY
+        and ((isinstance(v, bool) and v) or (isinstance(v, int) and v > 0))
+    ]
+
+
 def _to_decimal(value: Any) -> Decimal:
     """Coerce a numeric-like value to Decimal."""
     if isinstance(value, Decimal):
@@ -220,4 +230,85 @@ def compute_seat_proration(
         "remaining_days": remaining_days,
         "daily_seat_rate": daily_seat_rate,
         "prorated_charge": prorated_charge,
+    }
+
+
+def prorate_tier_change(
+    *,
+    old_price_per_seat: Any,
+    new_price_per_seat: Any,
+    covered_users: int,
+    period_months: int,
+    period_start: datetime,
+    period_end: datetime,
+    currency_code: str,
+    country_code: str,
+    old_ai_monthly: Any = 0,
+    new_ai_monthly: Any = 0,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """
+    Compute the prorated charge for an immediate mid-period tier upgrade.
+
+    Compares total monthly cost (seat cost + AI flat) between old and new
+    tiers. Raises ValueError when the new tier's total monthly cost does
+    not exceed the old tier's (use schedule-tier-change for downgrades).
+
+    Seat-based and AI-based differences are prorated separately so that
+    seat rounding behaviour is preserved from the original per-seat logic.
+    """
+    old_pps = round_charge(old_price_per_seat)
+    new_pps = round_charge(new_price_per_seat)
+    old_ai = round_charge(old_ai_monthly)
+    new_ai = round_charge(new_ai_monthly)
+
+    old_monthly = round_charge(old_pps * Decimal(covered_users) + old_ai)
+    new_monthly = round_charge(new_pps * Decimal(covered_users) + new_ai)
+
+    if new_monthly <= old_monthly:
+        raise ValueError(
+            "New tier total monthly cost must exceed the old tier's for an "
+            "upgrade; use schedule-tier-change for downgrades"
+        )
+
+    # Prorate seat difference (per-seat × covered_users)
+    diff_per_seat = round_charge(new_pps - old_pps)
+    period_seat_price = round_charge(diff_per_seat * Decimal(period_months))
+
+    seat_proration = compute_seat_proration(
+        period_seat_price=period_seat_price,
+        seats_added=covered_users,
+        period_start=period_start,
+        period_end=period_end,
+        as_of=as_of,
+    )
+
+    # Prorate AI difference (flat monthly, not per-seat)
+    ai_diff = round_charge(new_ai - old_ai)
+    ai_prorated = Decimal(0)
+    if ai_diff > 0:
+        ai_period_price = round_charge(ai_diff * Decimal(period_months))
+        ai_proration = compute_seat_proration(
+            period_seat_price=ai_period_price,
+            seats_added=1,
+            period_start=period_start,
+            period_end=period_end,
+            as_of=as_of,
+        )
+        ai_prorated = ai_proration["prorated_charge"]
+
+    subtotal = round_charge(seat_proration["prorated_charge"] + ai_prorated)
+    return {
+        **seat_proration,
+        "old_price_per_seat": old_pps,
+        "new_price_per_seat": new_pps,
+        "old_ai_monthly": old_ai,
+        "new_ai_monthly": new_ai,
+        "ai_prorated_charge": ai_prorated,
+        "tier_diff_per_seat": diff_per_seat,
+        "covered_users": covered_users,
+        "period_months": period_months,
+        "currency_code": currency_code,
+        "country_code": country_code,
+        "subtotal": subtotal,
     }
