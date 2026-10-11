@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 
+PurchaseStatus = Literal["purchased", "not_purchased"]
+PaymentMode = Literal["subscription", "standalone"]
+
 
 class RatingSample(BaseModel):
     """One bounded sample from the rating summary (up to 5 per score)."""
@@ -72,6 +75,14 @@ class MarketplaceTier(BaseModel):
     currency_code: str | None = None
     status: str
     is_installed: bool = False
+    payment_mode: PaymentMode | None = Field(
+        None,
+        description=(
+            "How this estate holds the tier: subscription when it came "
+            "with the estate plan, standalone when it was subscribed on "
+            "its own. Null when the tier has no paid grant."
+        ),
+    )
     benefits: list[str] = Field(default_factory=list)
 
 
@@ -140,6 +151,3 @@ class SubscribeResponse(BaseModel):
     feature_key: str
     quote: dict[str, Any] | None = None
     activation: dict[str, Any]
-
-
-PurchaseStatus = Literal["purchased", "not_purchased"]
