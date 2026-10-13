@@ -13,6 +13,7 @@ WORKDIR /src/service
 COPY shared/gatepass_auth /shared/gatepass_auth/
 COPY shared/gatepass_entitlement /shared/gatepass_entitlement/
 COPY shared/gatepass_rbac /shared/gatepass_rbac/
+COPY shared/gatepass_llm /shared/gatepass_llm/
 
 COPY services/ai_service/pyproject.toml services/ai_service/poetry.lock services/ai_service/README.md /src/service/
 

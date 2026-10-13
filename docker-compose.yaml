@@ -197,6 +197,8 @@ services:
       - ./shared/gatepass_auth:/shared/gatepass_auth
       - ./shared/gatepass_entitlement:/shared/gatepass_entitlement
       - ./shared/gatepass_rbac:/shared/gatepass_rbac
+      - ./shared/gatepass_llm:/shared/gatepass_llm
+      - ./services/ai_service/secrets:/var/secrets/llm:ro
     env_file:
       - ./.env.secrets
       - ./services/ai_service/.env.secrets
