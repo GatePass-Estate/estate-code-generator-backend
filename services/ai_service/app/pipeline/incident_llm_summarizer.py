@@ -16,7 +16,7 @@ import httpx
 from gatepass_llm import (
     complete_json_chat,
     extract_json_object,
-    is_llm_configured,
+    log_llm_configuration,
     resolved_model_label,
 )
 
@@ -75,7 +75,7 @@ async def summarize_incidents_with_llm(
         ``True`` only when the remote chat API returned parseable JSON.
     """
     model_label = resolved_model_label()
-    if not is_llm_configured():
+    if not log_llm_configuration():
         fb = _fallback_summary(eda, record_count=len(records))
         return fb, None, False
 
@@ -133,7 +133,10 @@ async def summarize_incidents_with_llm(
         IndexError,
         RuntimeError,
     ) as exc:
-        logger.warning("LLM summarization failed, using fallback: %s", exc)
+        logger.warning(
+            "Incident summary using heuristic fallback; LLM call failed: %s",
+            exc,
+        )
         fb = _fallback_summary(eda, record_count=len(records))
         fb["data_limitations"] = (
             str(fb.get("data_limitations") or "")

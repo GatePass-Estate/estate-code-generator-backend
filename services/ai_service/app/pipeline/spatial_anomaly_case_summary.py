@@ -14,7 +14,7 @@ from app.models.spatial_anomaly_resultpage import InhouseSummary, LlmSummary
 from gatepass_llm import (
     complete_json_chat,
     extract_json_object,
-    is_llm_configured,
+    log_llm_configuration,
 )
 from app.pipeline.spatial_anomaly_resultpage import (
     _describe_feature,
@@ -125,7 +125,7 @@ async def summarize_case_with_llm(
     Returns ``(summary, llm_used)``. ``llm_used`` is True only when the
     remote API returned parseable JSON.
     """
-    if not is_llm_configured():
+    if not log_llm_configuration():
         return _fallback_llm_summary(inhouse), False
 
     compact = _unwrap(payload)
@@ -192,5 +192,8 @@ async def summarize_case_with_llm(
         IndexError,
         RuntimeError,
     ) as exc:
-        logger.warning("Case LLM summarization failed: %s", exc)
+        logger.warning(
+            "Case summary using in-house fallback; LLM call failed: %s",
+            exc,
+        )
         return _fallback_llm_summary(inhouse), False

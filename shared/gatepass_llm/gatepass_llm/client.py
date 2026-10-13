@@ -15,16 +15,29 @@ logger = logging.getLogger(__name__)
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
-def is_llm_configured(cfg: LlmSettings | None = None) -> bool:
+def _not_configured_reason(cfg: LlmSettings) -> str | None:
+    if cfg.uses_vertex():
+        if not (cfg.GCP_PROJECT_ID and cfg.GCP_PROJECT_ID.strip()):
+            return "ENV=prod requires GCP_PROJECT_ID for Vertex"
+        return None
+    if not cfg.OPENAI_API_KEY:
+        return "non-prod requires OPENAI_API_KEY for OpenAI"
+    return None
+
+
+def log_llm_configuration(cfg: LlmSettings | None = None) -> bool:
     """
-    Return whether the active stream (prod vs non-prod) can call an LLM.
+    Log LLM readiness and return whether a chat call can proceed.
 
     Prod requires ``GCP_PROJECT_ID``; non-prod requires ``OPENAI_API_KEY``.
     """
     cfg = cfg or settings
-    if cfg.uses_vertex():
-        return bool(cfg.GCP_PROJECT_ID and cfg.GCP_PROJECT_ID.strip())
-    return bool(cfg.OPENAI_API_KEY)
+    reason = _not_configured_reason(cfg)
+    if reason:
+        logger.info("LLM not configured: %s", reason)
+        return False
+    logger.info("LLM configured, using model %s", resolved_model_label(cfg))
+    return True
 
 
 def resolved_model_label(cfg: LlmSettings | None = None) -> str:
@@ -90,14 +103,14 @@ async def complete_json_chat(
         ValueError: Response shape missing assistant content.
     """
     cfg = cfg or settings
-    if not is_llm_configured(cfg):
-        stream = "Vertex (prod)" if cfg.uses_vertex() else "OpenAI (non-prod)"
-        raise RuntimeError(f"LLM not configured for {stream}")
+    reason = _not_configured_reason(cfg)
+    if reason:
+        raise RuntimeError(f"LLM not configured: {reason}")
 
     if cfg.uses_vertex():
         url = _vertex_chat_completions_url(cfg)
-        token = await _gcp_bearer_token()
         model = cfg.GCP_LLM_CHAT_MODEL
+        token = await _gcp_bearer_token()
     else:
         url = _openai_chat_completions_url(cfg)
         token = cfg.OPENAI_API_KEY or ""
@@ -117,14 +130,27 @@ async def complete_json_chat(
         "Content-Type": "application/json",
     }
 
-    resp = await client.post(
-        url, headers=headers, json=payload, timeout=timeout
-    )
-    resp.raise_for_status()
+    try:
+        resp = await client.post(
+            url, headers=headers, json=payload, timeout=timeout
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "LLM chat HTTP %s: %s",
+            exc.response.status_code,
+            (exc.response.text or "")[:300],
+        )
+        raise
+    except httpx.HTTPError as exc:
+        logger.warning("LLM chat request failed: %s", exc)
+        raise
+
     body = resp.json()
     content = (
         body.get("choices", [{}])[0].get("message", {}).get("content", "")
     )
     if not content:
+        logger.warning("LLM chat returned empty assistant content")
         raise ValueError("Chat completion returned empty assistant content")
     return content, model
