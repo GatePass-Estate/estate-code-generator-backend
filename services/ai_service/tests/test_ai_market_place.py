@@ -66,6 +66,32 @@ def test_grant_is_entitled_false_for_missing_grant():
     assert grant_is_entitled(None) is False
 
 
+def test_payment_mode_maps_grant_source():
+    from app.services.ai_market_place import _grant_map, _payment_mode
+
+    assert _payment_mode(None) is None
+    assert _payment_mode({}) is None
+    assert _payment_mode({"source": "subscription_tier"}) == "subscription"
+    assert _payment_mode({"source": "standalone_purchase"}) == "standalone"
+    assert _payment_mode({"source": "free_install"}) is None
+
+    grants = _grant_map(
+        [
+            {
+                "ai_feature_id": _FID,
+                "source": "standalone_purchase",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "ai_feature_id": _FID,
+                "source": "subscription_tier",
+                "created_at": "2026-06-01T00:00:00Z",
+            },
+        ]
+    )
+    assert _payment_mode(grants[_FID]) == "subscription"
+
+
 def test_rating_request_rejects_oversized_comment():
     pytest.importorskip("pydantic")
     pytest.importorskip("pydantic_settings")

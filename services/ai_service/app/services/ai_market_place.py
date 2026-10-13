@@ -104,10 +104,23 @@ def _price_map(prices: list[dict]) -> tuple[dict[str, float], str | None]:
 
 
 def _grant_map(grants: list[dict]) -> dict[str, dict]:
-    """Index estate AI grants by ``ai_feature_id``."""
-    return {
-        str(g["ai_feature_id"]): g for g in grants if g.get("ai_feature_id")
-    }
+    """Index estate AI grants by ``ai_feature_id``, keeping the newest row.
+
+    A standalone purchase can be superseded by a later subscription grant
+    for the same feature. The current row is the one that decides status
+    and payment mode.
+    """
+    ordered = sorted(
+        (grant for grant in grants if grant.get("ai_feature_id")),
+        key=lambda grant: str(grant.get("created_at") or ""),
+        reverse=True,
+    )
+    mapped: dict[str, dict] = {}
+    for grant in ordered:
+        feature_id = str(grant["ai_feature_id"])
+        if feature_id not in mapped:
+            mapped[feature_id] = grant
+    return mapped
 
 
 def _tier_status(grant: dict | None) -> str:
@@ -120,6 +133,19 @@ def _tier_status(grant: dict | None) -> str:
     if status == "active":
         return "subscribed"
     return status or "subscribed"
+
+
+_PAYMENT_MODE_BY_SOURCE = {
+    "subscription_tier": "subscription",
+    "standalone_purchase": "standalone",
+}
+
+
+def _payment_mode(grant: dict | None) -> str | None:
+    """Return how the estate paid for this tier, or None without a paid grant."""
+    if not grant:
+        return None
+    return _PAYMENT_MODE_BY_SOURCE.get(str(grant.get("source") or ""))
 
 
 def _min_price(
@@ -330,6 +356,7 @@ class AiMarketPlaceService:
                     currency_code=currency if fid in prices else None,
                     status=_tier_status(grant),
                     is_installed=bool(grant and grant.get("is_installed")),
+                    payment_mode=_payment_mode(grant),
                     benefits=(
                         catalog_benefits
                         or _benefits_for_tier(tier_benefits, tier_name)
