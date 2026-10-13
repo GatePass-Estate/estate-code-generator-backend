@@ -2,49 +2,27 @@
 Paid-tier narrative synthesis over incident cohorts.
 
 Combines exploratory statistics (EDA) with truncated row snippets and requests a
-structured JSON summary from an OpenAI-compatible chat API. Falls back to
-category-frequency heuristics when ``OPENAI_API_KEY`` is unset or the call fails.
-Does not alter TF-IDF/NMF topic assignments.
+structured JSON summary via :mod:`gatepass_llm`. Falls back to category-frequency
+heuristics when LLM is unset or the call fails. Does not alter TF-IDF/NMF topics.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 import httpx
+from gatepass_llm import (
+    complete_json_chat,
+    extract_json_object,
+    is_llm_configured,
+    resolved_model_label,
+)
 
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
-
-_JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
-
-
-def _extract_json_object(text: str) -> dict[str, Any]:
-    """Best-effort parse of model output into a dict."""
-    stripped = text.strip()
-    m = _JSON_FENCE.search(stripped)
-    if m:
-        stripped = m.group(1).strip()
-    try:
-        out = json.loads(stripped)
-        if isinstance(out, dict):
-            return out
-    except json.JSONDecodeError:
-        pass
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            out = json.loads(stripped[start : end + 1])
-            if isinstance(out, dict):
-                return out
-        except json.JSONDecodeError:
-            pass
-    raise ValueError("Model output was not valid JSON object")
 
 
 def _fallback_summary(
@@ -58,7 +36,7 @@ def _fallback_summary(
         "executive_summary": (
             f"Draft heuristic summary over {record_count} incident row(s). "
             f"Most frequent category labels (token counts): {top_items}. "
-            "Configure OPENAI_API_KEY for narrative synthesis."
+            "Configure third-party LLM credentials for narrative synthesis."
         ),
         "key_patterns": [
             f"Category label frequencies: {top_items}",
@@ -96,8 +74,8 @@ async def summarize_incidents_with_llm(
         Tuple of ``(summary_dict, model_name_or_none, llm_used)``. ``llm_used`` is
         ``True`` only when the remote chat API returned parseable JSON.
     """
-    api_key = settings.OPENAI_API_KEY
-    if not api_key:
+    model_label = resolved_model_label()
+    if not is_llm_configured():
         fb = _fallback_summary(eda, record_count=len(records))
         return fb, None, False
 
@@ -123,54 +101,42 @@ async def summarize_incidents_with_llm(
         "Representative incident rows (truncated):\n" + "\n".join(snippets)
     )
 
-    payload = {
-        "model": settings.OPENAI_CHAT_MODEL,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You summarise operational incident reports for estate "
-                    "security and facilities teams. Each row has optional title, "
-                    "enum category array, optional custom_category, and narrative. "
-                    "Reply with ONLY a JSON "
-                    "object with keys: executive_summary (string), "
-                    "key_patterns (array of short strings), "
-                    "severity_assessment (string; qualitative overall concern "
-                    "from narratives/categories, not a stored severity field), "
-                    "recommended_actions (array of short strings), "
-                    "data_limitations (string). "
-                    "Do not invent specific names or dates not present in the "
-                    "input; mark uncertainty in data_limitations."
-                ),
-            },
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    url = f"{settings.OPENAI_BASE_URL.rstrip('/')}/v1/chat/completions"
+    system_content = (
+        "You summarise operational incident reports for estate "
+        "security and facilities teams. Each row has optional title, "
+        "enum category array, optional custom_category, and narrative. "
+        "Reply with ONLY a JSON "
+        "object with keys: executive_summary (string), "
+        "key_patterns (array of short strings), "
+        "severity_assessment (string; qualitative overall concern "
+        "from narratives/categories, not a stored severity field), "
+        "recommended_actions (array of short strings), "
+        "data_limitations (string). "
+        "Do not invent specific names or dates not present in the "
+        "input; mark uncertainty in data_limitations."
+    )
 
     try:
-        resp = await client.post(
-            url, headers=headers, json=payload, timeout=60.0
+        content, model = await complete_json_chat(
+            client=client,
+            system=system_content,
+            user=user_prompt,
+            temperature=0.2,
+            timeout=60.0,
         )
-        resp.raise_for_status()
-        body = resp.json()
-        content = (
-            body.get("choices", [{}])[0].get("message", {}).get("content", "")
-        )
-        parsed = _extract_json_object(content)
-        return parsed, settings.OPENAI_CHAT_MODEL, True
-    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+        parsed = extract_json_object(content)
+        return parsed, model, True
+    except (
+        httpx.HTTPError,
+        ValueError,
+        KeyError,
+        IndexError,
+        RuntimeError,
+    ) as exc:
         logger.warning("LLM summarization failed, using fallback: %s", exc)
         fb = _fallback_summary(eda, record_count=len(records))
         fb["data_limitations"] = (
             str(fb.get("data_limitations") or "")
             + " LLM step failed; see logs."
         )
-        return fb, settings.OPENAI_CHAT_MODEL, False
+        return fb, model_label, False

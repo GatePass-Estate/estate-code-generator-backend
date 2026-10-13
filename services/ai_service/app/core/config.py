@@ -103,7 +103,17 @@ class Settings(BaseSettings):
     #: History must span at least this many subsequence windows or a 422 is returned.
     TEMPORAL_MIN_HISTORY_WINDOW_MULTIPLE: int = 3
 
-    #: Optional OpenAI-compatible chat API for incident summarisation.
+    #: Vertex ADC (prod ``gatepass_llm`` stream); path set in ``.env.secrets``.
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    )
+    GCP_PROJECT_ID: str | None = os.getenv("GCP_PROJECT_ID")
+    GCP_VERTEX_LOCATION: str = os.getenv("GCP_VERTEX_LOCATION", "global")
+    GCP_LLM_CHAT_MODEL: str = os.getenv(
+        "GCP_LLM_CHAT_MODEL", "google/gemini-2.5-flash"
+    )
+
+    #: Non-prod ``gatepass_llm`` stream (OpenAI-compatible).
     OPENAI_API_KEY: str | None = os.getenv("OPENAI_API_KEY")
     OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     OPENAI_BASE_URL: str = os.getenv(

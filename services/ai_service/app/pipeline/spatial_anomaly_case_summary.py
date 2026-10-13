@@ -11,7 +11,11 @@ import httpx
 from app.core.config import Settings
 from app.core.severity_config import severity_label_from_final_score
 from app.models.spatial_anomaly_resultpage import InhouseSummary, LlmSummary
-from app.pipeline.incident_llm_summarizer import _extract_json_object
+from gatepass_llm import (
+    complete_json_chat,
+    extract_json_object,
+    is_llm_configured,
+)
 from app.pipeline.spatial_anomaly_resultpage import (
     _describe_feature,
     _describe_scope,
@@ -100,7 +104,7 @@ def _fallback_llm_summary(inhouse: InhouseSummary) -> LlmSummary:
         ],
         recommended_actions=[
             "Review the in-house detailed insight for this case.",
-            "Enable OPENAI_API_KEY for a deeper third-party summary.",
+            "Configure third-party LLM credentials for a deeper summary.",
         ],
         data_limitations=(
             "Heuristic fallback used (no LLM or the chat call failed)."
@@ -121,12 +125,9 @@ async def summarize_case_with_llm(
     Returns ``(summary, llm_used)``. ``llm_used`` is True only when the
     remote API returned parseable JSON.
     """
-    api_key = settings.OPENAI_API_KEY
-    if not api_key:
+    if not is_llm_configured():
         return _fallback_llm_summary(inhouse), False
 
-    # Compact payload + in-house report; same chat path as incident
-    # summaries. Parse JSON or fall back.
     compact = _unwrap(payload)
     user_prompt = (
         "In-house (tier-1) report:\n"
@@ -150,30 +151,15 @@ async def summarize_case_with_llm(
         "data_limitations (string). "
         "Go beyond restating feature names; explain operational meaning."
     )
-    body = {
-        "model": settings.OPENAI_CHAT_MODEL,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    url = f"{settings.OPENAI_BASE_URL.rstrip('/')}/v1/chat/completions"
     try:
-        resp = await client.post(url, headers=headers, json=body, timeout=60.0)
-        resp.raise_for_status()
-        content = (
-            resp.json()
-            .get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
+        content, _model = await complete_json_chat(
+            client=client,
+            system=system,
+            user=user_prompt,
+            temperature=0.2,
+            timeout=60.0,
         )
-        parsed = _extract_json_object(content)
+        parsed = extract_json_object(content)
         drivers = parsed.get("risk_drivers") or []
         actions = parsed.get("recommended_actions") or []
         if not isinstance(drivers, list):
@@ -199,6 +185,12 @@ async def summarize_case_with_llm(
             ),
             True,
         )
-    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+    except (
+        httpx.HTTPError,
+        ValueError,
+        KeyError,
+        IndexError,
+        RuntimeError,
+    ) as exc:
         logger.warning("Case LLM summarization failed: %s", exc)
         return _fallback_llm_summary(inhouse), False

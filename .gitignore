@@ -168,6 +168,7 @@ garbage/
 .vscode/
 gatepass-461616-332b2d1bd5c1.json
 secrets/
+services/ai_service/secrets/
 
 **data**
 
