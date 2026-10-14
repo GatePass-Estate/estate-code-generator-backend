@@ -11,6 +11,8 @@ from app.schemas.base import (
 )
 
 __all__ = [
+    "AiFeatureAvailabilityGroup",
+    "AiFeatureLabel",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -19,7 +21,39 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+    "ServiceFeatureAvailabilityGroup",
+    "ServiceFeatureLabel",
 ]
+
+
+class ServiceFeatureLabel(BaseModel):
+    service_key: str = Field(..., description="service_catalog or GPF key")
+    label: str = Field(..., description="Display label for the client")
+
+    model_config = model_config
+
+
+class AiFeatureLabel(BaseModel):
+    feature_key: str = Field(..., description="ai_feature.feature_key")
+    label: str = Field(..., description="Display label for the client")
+
+    model_config = model_config
+
+
+class ServiceFeatureAvailabilityGroup(BaseModel):
+    """Features available or not on a single subscription tier."""
+
+    available: List[ServiceFeatureLabel] = Field(default_factory=list)
+    unavailable: List[ServiceFeatureLabel] = Field(default_factory=list)
+
+    model_config = model_config
+
+
+class AiFeatureAvailabilityGroup(BaseModel):
+    available: List[AiFeatureLabel] = Field(default_factory=list)
+    unavailable: List[AiFeatureLabel] = Field(default_factory=list)
+
+    model_config = model_config
 
 
 class SubscriptionTierBase(BaseModel):
@@ -112,6 +146,19 @@ class DeleteResponse(BaseModel):
 
 class GetResponse(SharedModel, SubscriptionTierBase):
     """Response model to GET a record by id."""
+
+    free_features: ServiceFeatureAvailabilityGroup = Field(
+        default_factory=ServiceFeatureAvailabilityGroup,
+        description="Free platform features for this tier",
+    )
+    paid_non_ai_features: ServiceFeatureAvailabilityGroup = Field(
+        default_factory=ServiceFeatureAvailabilityGroup,
+        description="Paid non-AI catalog features for this tier",
+    )
+    paid_ai_features: AiFeatureAvailabilityGroup = Field(
+        default_factory=AiFeatureAvailabilityGroup,
+        description="Paid AI features for this tier",
+    )
 
 
 class SearchRequest(BaseSearchRequest):

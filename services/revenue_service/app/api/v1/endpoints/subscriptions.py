@@ -21,6 +21,10 @@ from app.schemas.checkout import (
     ActivateSubscriptionRequest,
     RenewSubscriptionRequest,
 )
+from app.schemas.subscription_tiers import (
+    SubscriptionTierCatalogItem,
+    SubscriptionTierListResponse,
+)
 from app.schemas.subscriptions import (
     ActivateSubscriptionResponse,
     BillingCycleResponse,
@@ -33,6 +37,9 @@ from app.schemas.subscriptions import (
     SeatReductionEligibilityResponse,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.subscription_tier_catalog_service import (
+    SubscriptionTierCatalogService,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +57,91 @@ def get_service(
             secret_key=settings.PAYSTACK_SECRET_KEY
         ),
     )
+
+
+def get_tier_catalog_service(
+    http: AsyncHttpHandler = Depends(get_http_handler),
+) -> SubscriptionTierCatalogService:
+    return SubscriptionTierCatalogService(DbRevenueRepository(http))
+
+
+@router.get("/tiers", response_model=SubscriptionTierListResponse)
+async def list_subscription_tiers(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionTierCatalogService = Depends(
+        get_tier_catalog_service
+    ),
+    page: int = 1,
+    limit: int = 20,
+    is_active: bool | None = True,
+):
+    """
+    List subscription tiers with feature availability (free, paid, AI).
+
+    Proxies db-service tier catalog for pricing and tier-comparison UI.
+    """
+    require_admin(current_user["role"])
+    try:
+        return await service.list_tiers(
+            page=page, limit=limit, is_active=is_active
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("list_subscription_tiers failed")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/tiers/by-slug/{slug}",
+    response_model=SubscriptionTierCatalogItem,
+)
+async def get_subscription_tier_by_slug(
+    slug: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionTierCatalogService = Depends(
+        get_tier_catalog_service
+    ),
+):
+    """Return one tier by slug, including feature availability."""
+    require_admin(current_user["role"])
+    try:
+        return await service.get_tier_by_slug(slug)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_subscription_tier_by_slug failed slug=%s", slug)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/tiers/{tier_id}",
+    response_model=SubscriptionTierCatalogItem,
+)
+async def get_subscription_tier_by_id(
+    tier_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionTierCatalogService = Depends(
+        get_tier_catalog_service
+    ),
+):
+    """Return one tier by id, including feature availability."""
+    require_admin(current_user["role"])
+    try:
+        return await service.get_tier_by_id(tier_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "get_subscription_tier_by_id failed tier_id=%s", tier_id
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/estate/{estate_id}", response_model=EstateSubscriptionResponse)
