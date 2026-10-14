@@ -200,6 +200,7 @@ class ExpiryService:
 
         count = 0
         for grant in past_grace:
+            await self._disable_grant_paystack(grant)
             await self.repo.update_estate_ai_feature(
                 str(grant["id"]),
                 {"status": "expired", "is_installed": False},
@@ -213,6 +214,7 @@ class ExpiryService:
             expires_at_before=now_iso,
         )
         for grant in stale:
+            await self._disable_grant_paystack(grant)
             await self.repo.update_estate_ai_feature(
                 str(grant["id"]),
                 {"status": "expired", "is_installed": False},
@@ -220,6 +222,28 @@ class ExpiryService:
             count += 1
 
         return count
+
+    async def _disable_grant_paystack(self, grant: dict) -> None:
+        """Best-effort disable of a standalone AI grant's Paystack sub."""
+        sub_code = grant.get("paystack_subscription_code")
+        if not sub_code:
+            return
+        try:
+            await self._paystack.disable_subscription(sub_code)
+            logger.info(
+                "Disabled Paystack AI subscription on expiry "
+                "grant_id=%s subscription_code=%s",
+                grant["id"],
+                sub_code,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to disable Paystack AI subscription "
+                "grant_id=%s subscription_code=%s "
+                "— grant will still be expired in DB",
+                grant["id"],
+                sub_code,
+            )
 
     async def _pre_expiry_warnings(self) -> None:
         now = datetime.now(tz=timezone.utc)
