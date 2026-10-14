@@ -158,6 +158,60 @@ class DbRevenueRepository:
         )
         return {i["feature_key"]: i for i in items}
 
+    async def list_subscription_tiers(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        List subscription tiers from db-service (includes feature availability).
+
+        Proxies ``GET /api/v1/revenue/subscriptiontier``.
+        """
+        url = f"{self.subscription_tier}?page={page}&limit={limit}"
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=502,
+                detail="db-service subscription tier list failed",
+            )
+        return response
+
+    async def search_subscription_tiers(
+        self,
+        *,
+        slug: str | None = None,
+        is_active: bool | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Search subscription tiers (includes feature availability fields).
+
+        Proxies ``GET /api/v1/revenue/subscriptiontier/search``.
+        """
+        params: dict[str, Any] = {"page": page, "limit": limit}
+        if slug is not None:
+            params["slug"] = slug
+        if is_active is not None:
+            params["is_active"] = is_active
+        clean = {k: v for k, v in params.items() if v is not None}
+        encoded = {
+            k: ("true" if v is True else "false" if v is False else v)
+            for k, v in clean.items()
+        }
+        url = (
+            f"{self.subscription_tier}/search?{urlencode(encoded, doseq=True)}"
+        )
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=502,
+                detail="db-service subscription tier search failed",
+            )
+        return response
+
     async def get_tier_by_slug(self, slug: str) -> dict | None:
         """
         Look up a subscription tier by slug.
