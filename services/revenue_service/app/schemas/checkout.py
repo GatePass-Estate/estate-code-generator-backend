@@ -194,6 +194,7 @@ class CheckoutInitializeRequest(BaseModel):
                 "covered_users",
                 "seats_added",
                 "ai_feature_keys",
+                "period_months",
             },
         }
         forbidden = [

@@ -1,4 +1,4 @@
-"""AI feature check, list, install, uninstall, and activate endpoints."""
+"""AI feature check, list, install, uninstall, cancel, and activate."""
 
 import logging
 from typing import Annotated
@@ -12,6 +12,8 @@ from gatepass_rbac import (
 )
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+from app.integrations.paystack_client import PaystackClient
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.internal_auth import require_internal_key
 from app.repositories.db_revenue import DbRevenueRepository
@@ -30,7 +32,7 @@ _SECURITY_CHECK_ROLES = ("admin", "primary_admin", "security", "root")
 
 
 class AiFeatureKeyRequest(BaseModel):
-    """Body for install / uninstall."""
+    """Body for install / uninstall / cancel."""
 
     feature_key: str = Field(..., min_length=1)
 
@@ -39,7 +41,10 @@ def get_service(
     http: AsyncHttpHandler = Depends(get_http_handler),
 ) -> EntitlementService:
     """Build an EntitlementService for request handling."""
-    return EntitlementService(DbRevenueRepository(http))
+    return EntitlementService(
+        DbRevenueRepository(http),
+        paystack=PaystackClient(secret_key=settings.PAYSTACK_SECRET_KEY),
+    )
 
 
 @router.get("/check", response_model=AiFeatureCheckResponse)
@@ -144,6 +149,31 @@ async def uninstall_ai_feature(
     except Exception as e:
         logger.exception(
             "AI uninstall failed estate_id=%s feature_key=%s",
+            estate_id,
+            request.feature_key,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post("/estate/{estate_id}/cancel")
+async def cancel_ai_feature(
+    estate_id: str,
+    request: AiFeatureKeyRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: EntitlementService = Depends(get_service),
+):
+    """Cancel a standalone AI feature subscription (stops auto-renew)."""
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.cancel_ai_feature(estate_id, request.feature_key)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "AI cancel failed estate_id=%s feature_key=%s",
             estate_id,
             request.feature_key,
         )

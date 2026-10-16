@@ -13,6 +13,7 @@ from app.libs.period_dating import (
     compute_period_end,
     paid_feature_access_valid,
 )
+from app.integrations.paystack_client import PaystackClient
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import provision_standalone_ai_grant
 from app.services.entitlement_resolver import (
@@ -30,14 +31,13 @@ MAX_ACTIVE_USERS_KEY = "max_active_users"
 class EntitlementService:
     """Business logic for estate entitlements and AI feature grants."""
 
-    def __init__(self, repo: DbRevenueRepository):
-        """
-        Bind the db-service revenue repository.
-
-        Args:
-            repo: Repository used for catalog and subscription lookups.
-        """
+    def __init__(
+        self,
+        repo: DbRevenueRepository,
+        paystack: PaystackClient | None = None,
+    ):
         self.repo = repo
+        self._paystack = paystack
 
     async def _load_context(self, estate_id: str) -> dict[str, Any]:
         """
@@ -412,6 +412,87 @@ class EntitlementService:
             "estate_id": estate_id,
             "feature_key": feature_key,
             "is_installed": False,
+            "grant": updated,
+        }
+
+    async def cancel_ai_feature(
+        self, estate_id: str, feature_key: str
+    ) -> dict[str, Any]:
+        """
+        Cancel a standalone AI feature subscription.
+
+        Disables the Paystack recurring subscription (if any) and sets
+        ``auto_renew=False``. The grant remains active until ``expires_at``.
+        """
+        catalog = await self.repo.get_ai_feature_map()
+        feature = catalog.get(feature_key)
+        if not feature:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown feature_key '{feature_key}'"
+            )
+        feature_id = str(feature["id"])
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant = next(
+            (
+                g
+                for g in grants
+                if str(g.get("ai_feature_id")) == feature_id
+                and (g.get("source") or "").lower() == "standalone_purchase"
+                and (g.get("status") or "").lower() in ("active", "past_due")
+            ),
+            None,
+        )
+        if not grant:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No active standalone AI grant for "
+                    f"feature_key '{feature_key}'"
+                ),
+            )
+
+        sub_code = grant.get("paystack_subscription_code")
+        if sub_code and self._paystack:
+            try:
+                await self._paystack.disable_subscription(sub_code)
+                logger.info(
+                    "Disabled Paystack AI subscription "
+                    "estate_id=%s grant_id=%s subscription_code=%s",
+                    estate_id,
+                    grant["id"],
+                    sub_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to disable Paystack AI subscription "
+                    "estate_id=%s grant_id=%s subscription_code=%s "
+                    "— proceeding with DB cancellation",
+                    estate_id,
+                    grant["id"],
+                    sub_code,
+                )
+        elif sub_code and not self._paystack:
+            logger.warning(
+                "cancel_ai_feature: no Paystack client — cannot "
+                "disable subscription_code=%s for grant_id=%s",
+                sub_code,
+                grant["id"],
+            )
+
+        updated = await self.repo.update_estate_ai_feature(
+            str(grant["id"]),
+            {"auto_renew": False, "status": "cancelled"},
+        )
+        logger.info(
+            "Cancelled standalone AI grant estate_id=%s "
+            "feature_key=%s grant_id=%s",
+            estate_id,
+            feature_key,
+            grant["id"],
+        )
+        return {
+            "estate_id": estate_id,
+            "feature_key": feature_key,
             "grant": updated,
         }
 
