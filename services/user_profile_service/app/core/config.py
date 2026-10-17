@@ -61,16 +61,6 @@ class Settings(BaseSettings):
         "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
     )
 
-    # Email / SMTP configuration
-    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
-    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
-    MAIL_FROM: str = os.getenv("MAIL_FROM", "")
-    MAIL_FROM_NAME: str = os.getenv("MAIL_FROM_NAME", "GatePass")
-    MAIL_SERVER: str = os.getenv("MAIL_SERVER", "")
-    MAIL_PORT: int = int(os.getenv("MAIL_PORT", 587))
-    MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
-    MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
-
     # GCS user documents (profile picture, ID card)
     GCS_PROFILE_PICTURE_MAX_BYTES: int = int(
         os.getenv("GCS_PROFILE_PICTURE_MAX_BYTES", str(5 * 1024 * 1024))
