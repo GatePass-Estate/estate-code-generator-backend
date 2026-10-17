@@ -1,0 +1,322 @@
+steps:
+  # ── Pull env files from Secret Manager ──
+  - id: fetch-secrets
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        mkdir -p infra/cloudrun-env
+        for svc in db-service cache-service code-service user-profile-service revenue-service ai-service notification-service; do
+          gcloud secrets versions access latest --secret="$${svc}-env" --project=${_PROJECT_ID} > infra/cloudrun-env/$${svc}.yaml
+          echo "Fetched $${svc}-env"
+        done
+
+  # ── Pre-flight: validate env vars ──
+  - id: check-env
+    name: bash
+    args: [bash, infra/check-env.sh]
+    waitFor: [fetch-secrets]
+
+  # ── Build all service images in parallel ──
+  - id: build-db-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/db-service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/db-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-cache-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/cache_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/cache-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-code-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/code_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/code-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-user-profile-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/user_profile_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/user-profile-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-revenue-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/revenue_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/revenue-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-ai-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/ai_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/ai-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  - id: build-notification-service
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/notification_service/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/notification-service:${SHORT_SHA}
+      - .
+    waitFor: [check-env]
+
+  # ── Push all images in parallel ──
+  - id: push-db-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/db-service:${SHORT_SHA}']
+    waitFor: [build-db-service]
+
+  - id: push-cache-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/cache-service:${SHORT_SHA}']
+    waitFor: [build-cache-service]
+
+  - id: push-code-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/code-service:${SHORT_SHA}']
+    waitFor: [build-code-service]
+
+  - id: push-user-profile-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/user-profile-service:${SHORT_SHA}']
+    waitFor: [build-user-profile-service]
+
+  - id: push-revenue-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/revenue-service:${SHORT_SHA}']
+    waitFor: [build-revenue-service]
+
+  - id: push-ai-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/ai-service:${SHORT_SHA}']
+    waitFor: [build-ai-service]
+
+  - id: push-notification-service
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/notification-service:${SHORT_SHA}']
+    waitFor: [build-notification-service]
+
+  # ── Run database migrations (before deploying) ──
+  - id: migrate-db
+    name: '${_REGISTRY}/db-service:${SHORT_SHA}'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # Download and start Cloud SQL Auth Proxy
+        curl -so /tmp/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.3/cloud-sql-proxy.linux.amd64
+        chmod +x /tmp/cloud-sql-proxy
+        /tmp/cloud-sql-proxy ${_PROJECT_ID}:${_REGION}:gatepass-db --port=5432 &
+        PROXY_PID=$$!
+        sleep 3
+
+        # Parse DB credentials from fetched env file
+        export POSTGRES_USER=$(grep '^POSTGRES_USER:' /workspace/infra/cloudrun-env/db-service.yaml | sed 's/^POSTGRES_USER: *"//;s/"$$//')
+        export POSTGRES_PASSWORD=$(grep '^POSTGRES_PASSWORD:' /workspace/infra/cloudrun-env/db-service.yaml | sed 's/^POSTGRES_PASSWORD: *"//;s/"$$//')
+        export POSTGRES_DB=$(grep '^POSTGRES_DB:' /workspace/infra/cloudrun-env/db-service.yaml | sed 's/^POSTGRES_DB: *"//;s/"$$//')
+        export DB_HOST=127.0.0.1
+        export DB_PORT=5432
+
+        # Run migrations from the image's working directory
+        cd /src/service
+        alembic upgrade head
+
+        # Cleanup
+        kill $$PROXY_PID
+    waitFor: [push-db-service, fetch-secrets]
+
+  # ── Deploy internal services (ingress=internal) ──
+  - id: deploy-db-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - db-service
+      - --image=${_REGISTRY}/db-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/db-service.yaml
+      - --min-instances=1
+      - --max-instances=5
+      - --memory=512Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal
+      - --allow-unauthenticated
+      - --add-cloudsql-instances=${_PROJECT_ID}:${_REGION}:gatepass-db
+      - --quiet
+    waitFor: [migrate-db]
+
+  - id: deploy-cache-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - cache-service
+      - --image=${_REGISTRY}/cache-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/cache-service.yaml
+      - --min-instances=1
+      - --max-instances=3
+      - --memory=256Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-cache-service]
+
+  - id: deploy-notification-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - notification-service
+      - --image=${_REGISTRY}/notification-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/notification-service.yaml
+      - --min-instances=0
+      - --max-instances=3
+      - --memory=256Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-notification-service]
+
+  # ── Deploy public services (ingress=internal-and-cloud-load-balancing) ──
+  - id: deploy-code-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - code-service
+      - --image=${_REGISTRY}/code-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/code-service.yaml
+      - --min-instances=1
+      - --max-instances=10
+      - --memory=512Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal-and-cloud-load-balancing
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-code-service]
+
+  - id: deploy-user-profile-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - user-profile-service
+      - --image=${_REGISTRY}/user-profile-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/user-profile-service.yaml
+      - --min-instances=1
+      - --max-instances=10
+      - --memory=512Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal-and-cloud-load-balancing
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-user-profile-service]
+
+  - id: deploy-revenue-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - revenue-service
+      - --image=${_REGISTRY}/revenue-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/revenue-service.yaml
+      - --min-instances=0
+      - --max-instances=5
+      - --memory=512Mi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal-and-cloud-load-balancing
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-revenue-service]
+
+  - id: deploy-ai-service
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - ai-service
+      - --image=${_REGISTRY}/ai-service:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/ai-service.yaml
+      - --min-instances=0
+      - --max-instances=5
+      - --memory=1Gi
+      - --cpu=1
+      - --port=8080
+      - --ingress=internal-and-cloud-load-balancing
+      - --allow-unauthenticated
+      - --quiet
+    waitFor: [push-ai-service]
+
+substitutions:
+  _REGION: europe-west1
+  _PROJECT_ID: gatepass-6d009
+  _REGISTRY: europe-west1-docker.pkg.dev/gatepass-6d009/gatepass-repo
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

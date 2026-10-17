@@ -34,7 +34,7 @@ COPY services/db-service/alembic /src/service/alembic
 # App stage (CHANGE ME TO A MORE COMPLEX ENTRYPOINT)
 FROM base AS app
 EXPOSE 9032
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9032"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9032}"]
 
 # App is the default stage
 FROM app
