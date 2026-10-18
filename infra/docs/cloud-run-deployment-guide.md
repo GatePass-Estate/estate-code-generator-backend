@@ -40,6 +40,7 @@ gcloud services enable \
   secretmanager.googleapis.com \
   artifactregistry.googleapis.com \
   compute.googleapis.com \
+  aiplatform.googleapis.com \
   --project=gatepass-6d009
 ```
 
@@ -105,14 +106,48 @@ This goes into the `REDIS_URL` env var for cache-service.
 Create a storage bucket for user-uploaded documents:
 
 ```bash
-gcloud storage buckets create gs://gatepass-user-documents \
+gcloud storage buckets create gs://gatepass-6d009-user-documents \
   --location=europe-west1 \
   --project=gatepass-6d009
 ```
 
+Create a dedicated service account for db-service so only it can access the bucket:
+
+```bash
+gcloud iam service-accounts create db-service-sa \
+  --display-name="db-service Cloud Run SA" \
+  --project=gatepass-6d009
+
+gcloud storage buckets add-iam-policy-binding gs://gatepass-6d009-user-documents \
+  --member="serviceAccount:db-service-sa@gatepass-6d009.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+
+gcloud projects add-iam-policy-binding gatepass-6d009 \
+  --member="serviceAccount:db-service-sa@gatepass-6d009.iam.gserviceaccount.com" \
+  --role="roles/cloudsql.client"
+```
+
+The db-service deploy step uses `--service-account=db-service-sa@gatepass-6d009.iam.gserviceaccount.com` to run under this SA. No other service can access the bucket.
+
 ---
 
-## 6. Artifact Registry
+## 6. Vertex AI (LLM Access for ai-service)
+
+The ai-service uses Vertex AI (Gemini) for LLM features in production. The Cloud Run default service account needs permission to call the API:
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe gatepass-6d009 --format='value(projectNumber)')
+
+gcloud projects add-iam-policy-binding gatepass-6d009 \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/aiplatform.user"
+```
+
+No API key or credentials file is needed. Cloud Run uses Application Default Credentials (ADC) automatically.
+
+---
+
+## 7. Artifact Registry
 
 Create a Docker repository for container images:
 
@@ -132,7 +167,7 @@ gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 
 ---
 
-## 7. Environment Variable Files
+## 8. Environment Variable Files
 
 Each service needs a YAML env file at `infra/cloudrun-env/<service>.yaml`. These files are gitignored because they contain secrets.
 
@@ -158,7 +193,7 @@ POSTGRES_PASSWORD: "<YOUR_DB_PASSWORD>"
 POSTGRES_DB: "estate_code_db"
 DB_HOST: "/cloudsql/gatepass-6d009:europe-west1:gatepass-db"
 DB_PORT: "5432"
-GCS_DOCUMENTS_BUCKET: "gatepass-user-documents"
+GCS_DOCUMENTS_BUCKET: "gatepass-6d009-user-documents"
 GCS_SIGNED_URL_EXPIRY_SECONDS: "300"
 GCS_PROFILE_PICTURE_MAX_BYTES: "5242880"
 GCS_ID_CARD_MAX_BYTES: "10485760"
@@ -324,7 +359,7 @@ NOTIFICATION_PURGE_MIN_AGE_DAYS: "90"
 
 ---
 
-## 8. Secret Manager
+## 9. Secret Manager
 
 Upload each env file as a secret so Cloud Build can access them during deployment.
 
@@ -350,9 +385,9 @@ gcloud secrets versions add <service>-env \
 
 ---
 
-## 9. First Deploy (Manual)
+## 10. First Deploy (Manual)
 
-### 9a. Build and push images
+### 10a. Build and push images
 
 Build all images from the repo root:
 
@@ -381,7 +416,7 @@ docker push $REGISTRY/ai-service:$TIMESTAMP
 docker push $REGISTRY/notification-service:$TIMESTAMP
 ```
 
-### 9b. Deploy each service
+### 10b. Deploy each service
 
 ```bash
 gcloud run deploy db-service \
@@ -434,8 +469,8 @@ gcloud run deploy ai-service \
   --image=$REGISTRY/ai-service:$TIMESTAMP \
   --region=europe-west1 \
   --env-vars-file=infra/cloudrun-env/ai-service.yaml \
-  --min-instances=0 --max-instances=5 \
-  --memory=1Gi --cpu=1 --port=8080 \
+  --min-instances=1 --max-instances=5 \
+  --memory=512Mi --cpu=1 --port=8080 \
   --allow-unauthenticated \
   --project=gatepass-6d009
 
@@ -453,9 +488,9 @@ After the first deploy, note each service's URL (printed in the output). You wil
 
 ---
 
-## 10. Load Balancer Setup
+## 11. Load Balancer Setup
 
-### 10a. Reserve a static IP
+### 11a. Reserve a static IP
 
 ```bash
 gcloud compute addresses create gatepass-lb-ip --global --project=gatepass-6d009
@@ -463,7 +498,7 @@ gcloud compute addresses create gatepass-lb-ip --global --project=gatepass-6d009
 
 Note the IP address from the output. You will need it for DNS.
 
-### 10b. Create serverless NEGs (one per public service)
+### 11b. Create serverless NEGs (one per public service)
 
 ```bash
 gcloud compute network-endpoint-groups create code-service-neg \
@@ -491,7 +526,7 @@ gcloud compute network-endpoint-groups create revenue-service-neg \
   --project=gatepass-6d009
 ```
 
-### 10c. Create backend services and attach NEGs
+### 11c. Create backend services and attach NEGs
 
 ```bash
 for svc in code-service user-profile-service ai-service revenue-service; do
@@ -509,7 +544,7 @@ for svc in code-service user-profile-service ai-service revenue-service; do
 done
 ```
 
-### 10d. Create URL map (path-based routing)
+### 11d. Create URL map (path-based routing)
 
 ```bash
 gcloud compute url-maps create gatepass-api-urlmap \
@@ -523,7 +558,7 @@ gcloud compute url-maps add-path-matcher gatepass-api-urlmap \
   --project=gatepass-6d009
 ```
 
-### 10e. Create SSL certificate
+### 11e. Create SSL certificate
 
 ```bash
 gcloud compute ssl-certificates create gatepass-api-cert \
@@ -532,7 +567,7 @@ gcloud compute ssl-certificates create gatepass-api-cert \
   --project=gatepass-6d009
 ```
 
-### 10f. Create HTTPS proxy and forwarding rule
+### 11f. Create HTTPS proxy and forwarding rule
 
 ```bash
 gcloud compute target-https-proxies create gatepass-api-https-proxy \
@@ -548,7 +583,7 @@ gcloud compute forwarding-rules create gatepass-api-fw-rule \
   --project=gatepass-6d009
 ```
 
-### 10g. DNS
+### 11g. DNS
 
 Add an A record in your DNS provider:
 
@@ -566,7 +601,7 @@ gcloud compute ssl-certificates describe gatepass-api-cert \
 
 ---
 
-## 11. Ingress Lockdown
+## 12. Ingress Lockdown
 
 Lock down public services so they are only reachable through the load balancer:
 
@@ -587,22 +622,22 @@ gcloud run services update notification-service --ingress=internal --region=euro
 
 ---
 
-## 12. Cloud Build (CI/CD)
+## 13. Cloud Build (CI/CD)
 
-### 12a. Enable the API
+### 13a. Enable the API
 
 ```bash
 gcloud services enable cloudbuild.googleapis.com --project=gatepass-6d009
 ```
 
-### 12b. Connect GitHub repo
+### 13b. Connect GitHub repo
 
 1. Go to: https://console.cloud.google.com/cloud-build/triggers?project=gatepass-6d009
 2. Click "Connect Repository"
 3. Select "GitHub (Cloud Build GitHub App)"
 4. Authenticate and select the repo
 
-### 12c. Grant Cloud Build permissions
+### 13c. Grant Cloud Build permissions
 
 ```bash
 PROJECT_NUMBER=$(gcloud projects describe gatepass-6d009 --format='value(projectNumber)')
@@ -620,7 +655,7 @@ gcloud projects add-iam-policy-binding gatepass-6d009 \
   --role="roles/secretmanager.secretAccessor"
 ```
 
-### 12d. Create the trigger
+### 13d. Create the trigger
 
 Create a trigger via the console:
 
@@ -633,7 +668,7 @@ Create a trigger via the console:
 7. Configuration: Cloud Build configuration file, path: `cloudbuild.yaml`
 8. Click "Create"
 
-### 12e. How it works
+### 13e. How it works
 
 The `cloudbuild.yaml` in the repo root runs the following pipeline on every push to main:
 
@@ -645,7 +680,7 @@ The `cloudbuild.yaml` in the repo root runs the following pipeline on every push
 
 ---
 
-## 13. Cloud Armor (Pending)
+## 14. Cloud Armor (Pending)
 
 Cloud Armor requires a quota increase for `SECURITY_POLICIES` (new accounts start at 0). Once approved:
 
@@ -701,7 +736,7 @@ done
 
 ---
 
-## 14. Updating Environment Variables
+## 15. Updating Environment Variables
 
 1. Edit the local YAML file:
 
@@ -721,7 +756,7 @@ gcloud secrets versions add code-service-env \
 
 ---
 
-## 15. Env Checker Script
+## 16. Env Checker Script
 
 Run locally before pushing to validate env files:
 
@@ -741,7 +776,7 @@ The env checker also runs automatically as the first step in every Cloud Build d
 
 ---
 
-## 16. Useful Commands
+## 17. Useful Commands
 
 Check service status:
 

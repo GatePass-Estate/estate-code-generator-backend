@@ -18,7 +18,7 @@ class LlmSettings(BaseSettings):
     GCP_LLM_CHAT_MODEL: str = "google/gemini-2.5-flash"
 
     def uses_vertex(self) -> bool:
-        return self.ENV.strip().lower() == "prod"
+        return self.ENV.strip().lower() == "production"
 
 
 settings = LlmSettings()

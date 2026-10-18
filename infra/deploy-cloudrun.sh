@@ -38,7 +38,7 @@ declare -A SVC_MIN_INSTANCES=(
   ["code-service"]="1"
   ["user-profile-service"]="1"
   ["revenue-service"]="0"
-  ["ai-service"]="0"
+  ["ai-service"]="1"
   ["notification-service"]="0"
 )
 
@@ -60,7 +60,7 @@ declare -A SVC_MEMORY=(
   ["code-service"]="512Mi"
   ["user-profile-service"]="512Mi"
   ["revenue-service"]="512Mi"
-  ["ai-service"]="1Gi"
+  ["ai-service"]="512Mi"
   ["notification-service"]="256Mi"
 )
 
@@ -78,6 +78,11 @@ declare -A SVC_CPU=(
 # Services that need Cloud SQL proxy sidecar
 CLOUD_SQL_SERVICES=("db-service")
 CLOUD_SQL_INSTANCE="${PROJECT_ID}:${REGION}:gatepass-db"
+
+# Custom service accounts per service (empty = use default)
+declare -A SVC_SERVICE_ACCOUNT=(
+  ["db-service"]="db-service-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+)
 
 # Ingress settings per service
 declare -A SVC_INGRESS=(
@@ -218,6 +223,11 @@ for svc in "${SERVICES_TO_DEPLOY[@]}"; do
   # Add Cloud SQL sidecar if needed
   if needs_cloud_sql "$svc"; then
     DEPLOY_CMD+=(--add-cloudsql-instances="$CLOUD_SQL_INSTANCE")
+  fi
+
+  # Add custom service account if configured
+  if [[ -n "${SVC_SERVICE_ACCOUNT[$svc]+x}" ]]; then
+    DEPLOY_CMD+=(--service-account="${SVC_SERVICE_ACCOUNT[$svc]}")
   fi
 
   if ! "${DEPLOY_CMD[@]}"; then

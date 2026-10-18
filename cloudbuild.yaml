@@ -193,6 +193,7 @@ steps:
       - --ingress=internal
       - --allow-unauthenticated
       - --add-cloudsql-instances=${_PROJECT_ID}:${_REGION}:gatepass-db
+      - --service-account=db-service-sa@${_PROJECT_ID}.iam.gserviceaccount.com
       - --quiet
     waitFor: [migrate-db]
 
@@ -301,9 +302,9 @@ steps:
       - --image=${_REGISTRY}/ai-service:${SHORT_SHA}
       - --region=${_REGION}
       - --env-vars-file=infra/cloudrun-env/ai-service.yaml
-      - --min-instances=0
+      - --min-instances=1
       - --max-instances=5
-      - --memory=1Gi
+      - --memory=512Mi
       - --cpu=1
       - --port=8080
       - --ingress=internal-and-cloud-load-balancing

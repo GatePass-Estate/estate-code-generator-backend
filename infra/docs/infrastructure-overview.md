@@ -4,7 +4,7 @@
 
 All 7 microservices run on **Google Cloud Run** in the `europe-west1` (Belgium) region. Belgium was chosen as the closest Google Cloud region to Nigeria, providing the lowest latency for our primary user base.
 
-Cloud Run automatically scales each service up or down based on traffic. Four core services (db, cache, code, user-profile) always keep at least one instance running. Three supporting services (revenue, AI, notifications) can scale to zero when not in use to save costs.
+Cloud Run automatically scales each service up or down based on traffic. Five core services (db, cache, code, user-profile, AI) always keep at least one instance running. Two supporting services (revenue, notifications) can scale to zero when not in use to save costs.
 
 ## Database
 
@@ -30,6 +30,10 @@ All external traffic goes through a **Google Cloud External Load Balancer** at `
 Only these four services are internet-facing. The other three (db, cache, notification) are internal only.
 
 **Cloud Armor** (WAF + rate limiting) will be added once the account quota is approved.
+
+## AI / LLM
+
+The ai-service uses **Google Vertex AI** (Gemini) in production for LLM features. Authentication is handled automatically through Cloud Run's default service account (no API key or credentials file needed). The service account has the `roles/aiplatform.user` IAM role.
 
 ## Secrets Management
 
