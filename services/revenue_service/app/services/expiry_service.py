@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
 from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
+from app.services.ai_grant_sync import sync_tier_ai_grants
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ class ExpiryService:
         over_cap = active_count > max_users
         now = datetime.now(tz=timezone.utc)
         try:
-            await self.repo.create_estate_subscription(
+            new_sub = await self.repo.create_estate_subscription(
                 {
                     "estate_id": estate_id,
                     "tier_id": access_tier["id"],
@@ -155,6 +156,23 @@ class ExpiryService:
                     "over_cap_locked": over_cap,
                 }
             )
+            # Cancel tier-included AI grants from the expired tier.
+            # Access tier has no included AI features, so sync will
+            # cancel all existing subscription_tier grants.
+            try:
+                await sync_tier_ai_grants(
+                    self.repo,
+                    estate_id=estate_id,
+                    subscription_id=str(new_sub["id"]),
+                    tier=access_tier,
+                    period_end=None,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to sync AI grants after expiry "
+                    "estate_id=%s — grants may remain active",
+                    estate_id,
+                )
         except Exception:
             logger.exception(
                 "Failed to create access subscription after expiry "
