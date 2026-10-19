@@ -349,20 +349,35 @@ class UserService:
 
     async def set_password_and_activate(
         self, request: SetPasswordRequest
-    ) -> SetPasswordResponse:
+    ) -> tuple[SetPasswordResponse, str]:
         """
         Sets user password (for new accounts after email verification).
 
+        The caller supplies the email-verification JWT that was sent to
+        the user.  The server decodes it to obtain the ``user_id``
+        rather than trusting client-supplied values.
+
         Args:
-            request: The password set request.
+            request: Contains the email-verification JWT and the new
+                password.
 
         Returns:
-            SetPasswordResponse: Operation result.
+            Tuple of (SetPasswordResponse, user_id_str) so the caller
+            can fire notifications without needing ``payload.user_id``.
 
         Raises:
-            HTTPException: If user not found or already activated.
+            HTTPException: If token is invalid/expired, user not found,
+            or already activated.
         """
-        user = await self.repository.get_user_by_id(str(request.user_id))
+        try:
+            user_id = decode_email_token(request.token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired verification token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
 
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
@@ -375,7 +390,7 @@ class UserService:
         # Hash password and activate account
         hashed_password = hash_password(request.new_password)
 
-        response = await self.validate_user(str(request.user_id))
+        response = await self.validate_user(str(user_id))
 
         if not response:
             raise HTTPException(
@@ -383,7 +398,7 @@ class UserService:
             )
 
         # Update password and activate user
-        url = f"{self.repository.users_endpoint}/{request.user_id}"
+        url = f"{self.repository.users_endpoint}/{user_id}"
         response = await self.repository.client.async_patch(
             url,
             json_data={
@@ -397,9 +412,12 @@ class UserService:
                 status_code=500, detail="Password update failed"
             )
 
-        return SetPasswordResponse(
-            success=True,
-            message="Password set and account activated successfully",
+        return (
+            SetPasswordResponse(
+                success=True,
+                message="Password set and account activated successfully",
+            ),
+            str(user_id),
         )
 
     async def update_password(
@@ -909,7 +927,7 @@ class UserService:
             or user not found/inactive.
         """
         try:
-            user_id = decode_password_reset_token(token)
+            user_id, _iat = decode_password_reset_token(token)
         except Exception:
             raise HTTPException(
                 status_code=400,
@@ -935,21 +953,33 @@ class UserService:
 
     async def reset_password(
         self, request: SetPasswordRequest
-    ) -> SetPasswordResponse:
+    ) -> tuple[SetPasswordResponse, str]:
         """
-        Resets the password for an activated user
-        (no current password required).
+        Resets the password for an activated user using a password-reset
+        token.  The token is single-use: once the password is changed the
+        user's ``updated_at`` advances past the token's ``iat``, which
+        invalidates the token for any subsequent request.
 
         Args:
-            request: Contains user_id and the new password.
+            request: Contains the password-reset JWT and the new password.
 
         Returns:
-            SetPasswordResponse: Operation result.
+            Tuple of (SetPasswordResponse, user_id_str) so the caller can
+            fire notifications without needing ``payload.user_id``.
 
         Raises:
-            HTTPException: If user not found or account not activated.
+            HTTPException: If token is invalid/expired/reused, user not
+            found, or account not activated.
         """
-        user = await self.repository.get_user_by_id(str(request.user_id))
+        try:
+            user_id, iat = decode_password_reset_token(request.token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired password reset token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
 
         if not user or user.is_deleted:
             raise HTTPException(status_code=404, detail="User not found.")
@@ -959,8 +989,16 @@ class UserService:
                 status_code=400, detail="Account is not activated."
             )
 
+        # Single-use check: if the user record was updated after the
+        # token was issued, the token has already been consumed.
+        if user.updated_at and user.updated_at > iat:
+            raise HTTPException(
+                status_code=400,
+                detail="This reset link has already been used.",
+            )
+
         hashed_password = hash_password(request.new_password)
-        url = f"{self.repository.users_endpoint}/{request.user_id}"
+        url = f"{self.repository.users_endpoint}/{user_id}"
         response = await self.repository.client.async_patch(
             url,
             json_data={"password": hashed_password},
@@ -971,8 +1009,12 @@ class UserService:
                 status_code=500, detail="Password reset failed."
             )
 
-        return SetPasswordResponse(
-            success=True, message="Password has been reset successfully."
+        return (
+            SetPasswordResponse(
+                success=True,
+                message="Password has been reset successfully.",
+            ),
+            str(user_id),
         )
 
     async def accept_tos(self, tos_token: str) -> dict:
