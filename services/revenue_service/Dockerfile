@@ -32,7 +32,7 @@ COPY services/revenue_service/app /src/service/app
 # App stage
 FROM base AS app
 EXPOSE 9037
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9037"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9037}"]
 
 # App is the default stage
 FROM app

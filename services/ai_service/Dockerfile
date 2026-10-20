@@ -27,6 +27,6 @@ COPY services/ai_service/app /src/service/app
 
 FROM base AS app
 EXPOSE 9036
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9036"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9036}"]
 
 FROM app
