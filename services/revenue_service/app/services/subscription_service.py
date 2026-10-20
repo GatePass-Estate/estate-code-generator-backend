@@ -20,8 +20,8 @@ from app.services.ai_grant_sync import (
     sync_tier_ai_grants,
 )
 from app.services.entitlement_resolver import (
-    PAID_ACCESS_STATUSES,
     resolve_entitlements,
+    uses_access_fallback,
 )
 from app.services.pricing_service import (
     apply_vat,
@@ -156,10 +156,7 @@ class SubscriptionService:
         if subscription:
             tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
 
-        status = ((subscription or {}).get("status") or "").lower()
-        needs_access_fallback = (
-            not subscription or status not in PAID_ACCESS_STATUSES or not tier
-        )
+        needs_access_fallback = uses_access_fallback(subscription, tier)
 
         access_tier = None
         if needs_access_fallback:

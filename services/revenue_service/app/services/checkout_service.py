@@ -83,6 +83,12 @@ class SubscriptionCheckoutHandler(CheckoutHandler):
             "active",
             "trialing",
         ):
+            # Allow purchasing when the estate is on the free access tier.
+            tier_id = str(active_sub.get("tier_id") or "")
+            if tier_id:
+                tier = await self._repo.get_tier_by_id(tier_id)
+                if tier and tier.get("slug") == "access":
+                    return
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -217,17 +223,26 @@ class TierChangeCheckoutHandler(CheckoutHandler):
                 detail="No active subscription to upgrade",
             )
         period_end_raw = active_sub.get("period_end")
-        if period_end_raw:
-            period_end_dt = datetime.fromisoformat(
-                str(period_end_raw).replace("Z", "+00:00")
+        if not period_end_raw:
+            # Access (free) tier has no billing period — use
+            # checkout_kind='tier' for the initial purchase instead.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Free-tier subscriptions cannot be upgraded. "
+                    "Use checkout_kind='tier' to purchase a plan."
+                ),
             )
-            if period_end_dt < datetime.now(tz=timezone.utc):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Billing period has expired; " "renew before upgrading"
-                    ),
-                )
+        period_end_dt = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+        if period_end_dt < datetime.now(tz=timezone.utc):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Billing period has expired; " "renew before upgrading"
+                ),
+            )
         current_tier = await self._repo.get_tier_by_id(
             str(active_sub["tier_id"])
         )

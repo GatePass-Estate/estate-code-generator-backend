@@ -228,7 +228,7 @@ async def sync_tier_ai_grants(
     estate_id: str,
     subscription_id: str,
     tier: dict[str, Any],
-    period_end: datetime,
+    period_end: datetime | None,
     extra_feature_keys: list[str] | None = None,
     paystack: PaystackClient | None = None,
 ) -> None:
@@ -256,7 +256,7 @@ async def sync_tier_ai_grants(
             keys.append(key)
 
     now = datetime.now(tz=timezone.utc)
-    period_end_iso = period_end.isoformat()
+    period_end_iso = period_end.isoformat() if period_end else None
     tier_id = str(tier.get("id") or "")
     rollback = GrantSyncRollback(
         estate_id=estate_id,

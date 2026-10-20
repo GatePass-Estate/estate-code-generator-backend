@@ -164,12 +164,15 @@ class CheckoutInitializeRequest(BaseModel):
                 "tier_slug is required for checkout_kind='tier_upgrade_immediate'"
             )
 
-        # seat_add has no billing period — reject if explicitly provided.
-        # period_months has a default (1) so we use model_fields_set to
-        # distinguish an explicit value from the default.
-        if kind == "seat_add" and "period_months" in self.model_fields_set:
+        # seat_add and tier_upgrade_immediate have no billing period —
+        # reject if explicitly provided.  period_months has a default (1)
+        # so we use model_fields_set to distinguish an explicit value
+        # from the default.
+        if kind in ("seat_add", "tier_upgrade_immediate") and (
+            "period_months" in self.model_fields_set
+        ):
             raise ValueError(
-                "period_months is not allowed for checkout_kind='seat_add'"
+                f"period_months is not allowed for checkout_kind={kind!r}"
             )
 
         # Reject fields that don't belong to this kind.
@@ -194,7 +197,6 @@ class CheckoutInitializeRequest(BaseModel):
                 "covered_users",
                 "seats_added",
                 "ai_feature_keys",
-                "period_months",
             },
         }
         forbidden = [
