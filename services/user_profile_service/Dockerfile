@@ -34,7 +34,7 @@ COPY services/user_profile_service/app /src/service/app
 # App stage (CHANGE ME TO A MORE COMPLEX ENTRYPOINT)
 FROM base AS app
 EXPOSE 9034
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9034"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9034}"]
 
 # App is the default stage
 FROM app
