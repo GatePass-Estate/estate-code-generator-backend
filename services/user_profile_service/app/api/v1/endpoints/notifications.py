@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from gatepass_auth import get_current_user
+from gatepass_auth import get_current_user_unverified as get_current_user
 
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler

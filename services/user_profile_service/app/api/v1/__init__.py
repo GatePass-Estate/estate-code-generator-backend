@@ -17,6 +17,7 @@ from app.api.v1.endpoints.incident_report import (
 )
 from app.api.v1.endpoints.internal import router as internal_router
 from app.api.v1.endpoints.request import router as request_router
+from app.api.v1.endpoints.root import router as root_router
 from app.api.v1.endpoints.user import router as user_router
 from app.api.v1.endpoints.user_documents import (
     router as user_documents_router,
@@ -69,3 +70,4 @@ api_router.include_router(
 api_router.include_router(
     maintenance_router, prefix="/maintenance", tags=["Maintenance"]
 )
+api_router.include_router(root_router, prefix="/root", tags=["Root"])

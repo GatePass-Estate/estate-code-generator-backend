@@ -497,18 +497,12 @@ class SetPasswordRequest(BaseModel):
     """
     Request model for setting a new password.
 
-    Attributes:
-
-        user_id (UUID4): User ID.
-        new_password (str): New password.
+    Requires the verification token so the server can extract and
+    validate the user_id from it rather than trusting client input.
     """
 
-    user_id: UUID4 = Field(..., description="User ID")
+    token: str = Field(..., description="Verification token (email or reset)")
     new_password: str = Field(..., min_length=8, description="New password")
-
-    @field_serializer("user_id")
-    def serialize_user_id(self, user_id: UUID4) -> str:
-        return str(user_id)
 
     model_config = model_config
 

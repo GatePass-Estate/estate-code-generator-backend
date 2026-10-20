@@ -59,18 +59,18 @@ def generate_password_reset_token(user_id: UUID) -> str:
     Returns:
         str: JWT token as a string.
     """
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=TOKEN_EXPIRY_MINUTES
-    )
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
     payload = {
         "sub": str(user_id),
         "exp": expire,
+        "iat": now,
         "scope": "password_reset",
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_password_reset_token(token: str) -> UUID:
+def decode_password_reset_token(token: str) -> tuple[UUID, datetime]:
     """
     Decodes and validates a JWT token for password reset.
 
@@ -78,7 +78,7 @@ def decode_password_reset_token(token: str) -> UUID:
         token (str): Encoded JWT token.
 
     Returns:
-        UUID: Extracted user ID from the token.
+        Tuple of (user_id, issued_at) extracted from the token.
 
     Raises:
         jwt.PyJWTError: If decoding fails or token is expired.
@@ -86,7 +86,8 @@ def decode_password_reset_token(token: str) -> UUID:
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     if payload.get("scope") != "password_reset":
         raise jwt.InvalidTokenError("Invalid token scope.")
-    return UUID(payload["sub"])
+    iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+    return UUID(payload["sub"]), iat
 
 
 def generate_tos_pending_token(user_id: UUID) -> str:

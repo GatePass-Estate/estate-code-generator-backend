@@ -8,6 +8,7 @@ from app.repositories.user import UserRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.household import HouseholdRepository
 from app.repositories.admin_management import AdminRepository
+from app.repositories.user_documents import UserDocumentsRepository
 from app.services.user import UserService
 from app.services.admin_management import AdminManagementService
 from app.services.auth import get_current_user
@@ -100,6 +101,18 @@ async def promote_user_to_admin(
         str(user_to_promote.estate_id),
         detail="You can only promote users from your own estate.",
     )
+
+    # User must have an approved ID card before promotion
+    docs_repo = UserDocumentsRepository(ahttp_client)
+    active_id = await docs_repo.get_active_by_user_and_type(user_id, "id_card")
+    if not active_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "User must have an approved ID card "
+                "before being promoted to admin."
+            ),
+        )
 
     # Update user role to admin
 

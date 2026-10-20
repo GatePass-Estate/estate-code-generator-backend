@@ -26,7 +26,7 @@ from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
 from app.repositories.user_documents import UserDocumentsRepository
 from app.services.request import RequestService
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, get_current_user_unverified
 
 router = APIRouter()
 
@@ -59,8 +59,8 @@ async def create_edit_request(
 
     result = await service.create_edit_request(request, user_id)
 
-    # Notify estate admins when a resident files a pending request
-    if user_role == "resident":
+    # Notify estate admins when a non-admin files a pending request
+    if user_role not in ("admin", "primary_admin", "root"):
         estate_id = current_user.get("estate_id")
         if estate_id:
             background_tasks.add_task(
@@ -68,7 +68,7 @@ async def create_edit_request(
                 {
                     "type": "EDIT_REQUEST_PENDING",
                     "title": "New edit request",
-                    "body": "A resident has submitted a profile edit request.",
+                    "body": "A user has submitted a profile edit request.",
                     "fan_out": {
                         "estate_id": estate_id,
                         "roles": ["admin", "primary_admin"],
@@ -92,7 +92,7 @@ async def get_my_requests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: RequestService = Depends(get_request_service),
 ):
     """
@@ -106,7 +106,7 @@ async def get_my_requests(
 @router.get("/edit/{request_id}", response_model=GetEditRequestResponse)
 async def get_request(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: RequestService = Depends(get_request_service),
 ):
     """
@@ -222,7 +222,7 @@ async def check_pending_request(
 async def update_pending_request(
     request_id: str,
     request: UpdatePendingRequestRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: RequestService = Depends(get_request_service),
 ):
     """
@@ -257,7 +257,7 @@ async def delete_pending_request(
 async def remind_admins(
     request_id: str,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: RequestService = Depends(get_request_service),
 ):
     """
@@ -276,7 +276,7 @@ async def remind_admins(
                 "type": "EDIT_REQUEST_PENDING",
                 "title": "Edit request reminder",
                 "body": (
-                    "A resident is following up on a pending "
+                    "A user is following up on a pending "
                     "profile edit request."
                 ),
                 "fan_out": {

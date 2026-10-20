@@ -417,14 +417,14 @@ async def reset_password(
 ):
     """Resets the password for an active account
     (no current password required)."""
-    result = await service.reset_password(payload)
+    result, user_id = await service.reset_password(payload)
     background_tasks.add_task(
         fire_notify,
         {
             "type": "PASSWORD_RESET_CONFIRMED",
             "title": "Password reset successfully",
             "body": "Your GatePass password has been reset.",
-            "recipient_user_ids": [str(payload.user_id)],
+            "recipient_user_ids": [user_id],
         },
     )
     background_tasks.add_task(
@@ -433,7 +433,7 @@ async def reset_password(
             "type": "PASSWORD_CHANGED",
             "title": "Password changed",
             "body": "Your account password has been changed.",
-            "recipient_user_ids": [str(payload.user_id)],
+            "recipient_user_ids": [user_id],
         },
     )
     return result
@@ -445,14 +445,14 @@ async def set_password(
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_user_service),
 ):
-    result = await service.set_password_and_activate(payload)
+    result, user_id = await service.set_password_and_activate(payload)
     background_tasks.add_task(
         fire_notify,
         {
             "type": "WELCOME",
             "title": "Welcome to GatePass",
             "body": "Your account has been activated. Welcome to GatePass!",
-            "recipient_user_ids": [str(payload.user_id)],
+            "recipient_user_ids": [user_id],
         },
     )
     return result
