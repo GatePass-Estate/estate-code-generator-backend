@@ -20,7 +20,7 @@ def test_non_prod_requires_openai_key():
 
 def test_prod_requires_gcp_project():
     cfg = LlmSettings(
-        ENV="prod",
+        ENV="production",
         OPENAI_API_KEY="sk-test",
         GCP_PROJECT_ID=None,
     )
@@ -33,5 +33,5 @@ def test_prod_requires_gcp_project():
 
 
 def test_env_prod_is_case_insensitive():
-    cfg = LlmSettings(ENV="PROD", GCP_PROJECT_ID="p")
+    cfg = LlmSettings(ENV="PRODUCTION", GCP_PROJECT_ID="p")
     assert cfg.uses_vertex() is True
