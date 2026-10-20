@@ -30,7 +30,7 @@ COPY services/notification_service/app /src/service/app
 # App stage
 FROM base AS app
 EXPOSE 9035
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9035"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9035}"]
 
 # App is the default stage
 FROM app

@@ -30,7 +30,7 @@ COPY services/cache_service/app /src/service/app
 # App stage (CHANGE ME TO A MORE COMPLEX ENTRYPOINT)
 FROM base AS app
 EXPOSE 9031
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9031"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9031}"]
 
 # App is the default stage
 FROM app

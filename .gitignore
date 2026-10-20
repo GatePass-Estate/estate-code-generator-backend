@@ -191,7 +191,9 @@ Note.txt
 infra/DB_Note.txt
 k8s-services-snapshot.csv
 gcs_create.txt
+cloud-sql-proxy
+infra/cloudrun-env/
 
-# docs
-docs/
+# docs (root only)
+/docs/
 .cursor/
