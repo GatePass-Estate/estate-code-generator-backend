@@ -2,6 +2,7 @@ import asyncio
 import logging
 import secrets
 from typing import List, Optional
+from urllib.parse import urlencode
 
 import httpx
 import pyotp
@@ -510,6 +511,8 @@ class UserService:
                         estate_id=str(user.estate_id), estate_data=payload
                     )
             return True
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -694,55 +697,42 @@ class UserService:
         to_date=None,
     ) -> dict:
         """
-        Gets role counts for users in a specific estate.
+        Gets role counts for users in a specific estate via a
+        dedicated db-service GROUP BY endpoint.
 
         Args:
             estate_id: The estate ID.
-            status: Optional status filter.
+            status: Optional status filter ("true", "false", or "all").
             from_date: Optional creation date filter (from).
             to_date: Optional creation date filter (to).
 
         Returns:
             dict: Dictionary with role as key and count as value.
         """
-        # Fetch all users with same filters
-        if status == "all":
-            request = SearchUserRequest(
-                estate_id=estate_id,
-                page=1,
-                limit=10000000,  # Very large limit to ensure all users
-                from_date=from_date,
-                to_date=to_date,
+        params: dict = {"estate_id": estate_id}
+        if status and status != "all":
+            params["status"] = status
+        if from_date:
+            params["from_date"] = (
+                from_date.isoformat()
+                if hasattr(from_date, "isoformat")
+                else str(from_date)
             )
-        else:
-            request = SearchUserRequest(
-                estate_id=estate_id,
-                status=status == "true",
-                page=1,
-                limit=10000000,  # Very large limit to ensure all users
-                from_date=from_date,
-                to_date=to_date,
+        if to_date:
+            params["to_date"] = (
+                to_date.isoformat()
+                if hasattr(to_date, "isoformat")
+                else str(to_date)
             )
 
-        all_users_response = await self.repository.search_users(request)
+        query_string = urlencode(params)
+        url = f"{self.repository.users_endpoint}/role-counts?{query_string}"
+        response = await self.repository.client.async_get(url)
 
-        # Count users by role
-        from collections import Counter
+        if not response or "items" not in response:
+            return {}
 
-        # Extract role as string (in case it's an enum or object)
-        roles = []
-        for user in all_users_response.items:
-            role = user.role
-            # Convert to string if it's an enum or has a value attribute
-            if hasattr(role, "value"):
-                role = role.value
-            elif not isinstance(role, str):
-                role = str(role)
-            roles.append(role)
-
-        role_counts = Counter(roles)
-
-        return dict(role_counts)
+        return {item["role"]: item["count"] for item in response["items"]}
 
     async def get_estate_id_by_user_id(self, user_id: str) -> str:
         """
@@ -1383,7 +1373,6 @@ class UserService:
                 hh_service = HouseholdService(
                     household_repo=self.household_repository,
                     user_repo=self.repository,
-                    admin_repo=self.admin_repository,
                 )
                 household = (
                     await self.household_repository.get_household_by_id(

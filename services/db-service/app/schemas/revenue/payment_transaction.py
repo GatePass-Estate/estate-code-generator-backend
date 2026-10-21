@@ -1,7 +1,5 @@
 from datetime import datetime
 from typing import List, Optional
-from decimal import Decimal
-
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
 from app.schemas.base import (
@@ -30,7 +28,7 @@ class PaymentTransactionBase(BaseModel):
     checkout_session_id: UUID4 | None = Field(
         None, description="Checkout session FK"
     )
-    amount: Decimal = Field(..., description="Transaction amount")
+    amount: int = Field(..., description="Transaction amount in kobo")
     currency_code: str = Field(..., description="Currency code")
     status: str = Field(..., description="Transaction status")
     provider_reference: str | None = Field(
@@ -73,8 +71,8 @@ class UpdateRequest(BaseModel):
     checkout_session_id: UUID4 | None = Field(
         default=None, description="Checkout session FK"
     )
-    amount: Decimal | None = Field(
-        default=None, description="Transaction amount"
+    amount: int | None = Field(
+        default=None, description="Transaction amount in kobo"
     )
     currency_code: str | None = Field(
         default=None, description="Currency code"

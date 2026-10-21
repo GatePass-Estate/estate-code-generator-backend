@@ -43,12 +43,9 @@ class NotificationService:
         user_ids: List[str] = []
 
         for role in spec.roles:
-            result = await self.user_repo.search(
+            items = await self.user_repo.search_all(
                 estate_id=estate_id, role=role
             )
-            if not result:
-                continue
-            items = result.get("items") or result.get("data") or []
             for user in items:
                 uid = user.get("id") or user.get("user_id")
                 if uid and uid not in user_ids:
@@ -197,6 +194,13 @@ class NotificationService:
                 for uid in user_ids
             ]
             created = await self.notification_repo.create_bulk(rows)
+            if not created:
+                logger.warning(
+                    "create_bulk returned None for type=%s — "
+                    "in-app notifications dropped for %d user(s)",
+                    request.type.value,
+                    len(user_ids),
+                )
             if created:
                 for row in created:
                     uid = row.get("user_id")

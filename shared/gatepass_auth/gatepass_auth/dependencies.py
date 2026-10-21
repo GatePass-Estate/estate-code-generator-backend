@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Annotated
 
+import httpx
 import jwt
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -123,6 +124,11 @@ async def get_current_user_unverified(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
         )
 
 

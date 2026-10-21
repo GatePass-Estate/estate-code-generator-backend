@@ -22,6 +22,8 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+    "RoleCountItem",
+    "RoleCountsResponse",
 ]
 
 
@@ -373,3 +375,18 @@ class ListResponse(BaseListResponse):
     """
 
     items: List[GetResponse] = Field(..., description="List of user records")
+
+
+class RoleCountItem(BaseModel):
+    role: str = Field(..., description="User role value")
+    count: int = Field(..., description="Number of users with this role")
+
+    model_config = model_config
+
+
+class RoleCountsResponse(BaseModel):
+    items: List[RoleCountItem] = Field(
+        ..., description="Role counts for the estate"
+    )
+
+    model_config = model_config

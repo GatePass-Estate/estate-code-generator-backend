@@ -1,8 +1,6 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
-from decimal import Decimal
-
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
 from app.schemas.base import (
@@ -57,7 +55,7 @@ class PaymentCheckoutSessionBase(BaseModel):
         default=CheckoutStatus.PENDING, description="Checkout status"
     )
     pricing_snapshot: dict = Field(..., description="Pricing snapshot JSON")
-    amount: Decimal = Field(..., description="Charge amount")
+    amount: int = Field(..., description="Charge amount in kobo")
     currency_code: str = Field(..., description="Currency code")
     country_code: str = Field(..., description="Country code")
     checkout_kind: CheckoutKind = Field(..., description="Checkout kind")
@@ -106,7 +104,9 @@ class UpdateRequest(BaseModel):
     pricing_snapshot: dict | None = Field(
         default=None, description="Pricing snapshot JSON"
     )
-    amount: Decimal | None = Field(default=None, description="Charge amount")
+    amount: int | None = Field(
+        default=None, description="Charge amount in kobo"
+    )
     currency_code: str | None = Field(
         default=None, description="Currency code"
     )

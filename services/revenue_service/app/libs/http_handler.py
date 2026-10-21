@@ -19,9 +19,19 @@ class AsyncHttpHandler:
     "missing" with "unavailable".
     """
 
-    def __init__(self):
-        """Initialize an empty handler (clients are created per request)."""
-        pass
+    def __init__(self, client: httpx.AsyncClient | None = None):
+        self._client = client
+
+    def set_client(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError(
+                "httpx.AsyncClient not initialised — "
+                "ensure the app lifespan has started"
+            )
+        return self._client
 
     @staticmethod
     def _handle_request_error(
@@ -118,18 +128,16 @@ class AsyncHttpHandler:
             HTTPException: 503 on network/malformed failures; 502 on other
                 upstream HTTP errors.
         """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    url, params=params, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                if self._handle_request_error(
-                    method="GET", url=url, exc=e, params=params
-                ):
-                    return None
+        client = self._get_client()
+        try:
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if self._handle_request_error(
+                method="GET", url=url, exc=e, params=params
+            ):
+                return None
 
     async def async_post(
         self,
@@ -138,38 +146,22 @@ class AsyncHttpHandler:
         json_data: dict = None,
         headers: dict = None,
     ) -> Any | None:
-        """
-        Perform an async POST and return parsed JSON.
-
-        Args:
-            url: Absolute request URL.
-            data: Optional form body.
-            json_data: Optional JSON body.
-            headers: Optional HTTP headers.
-
-        Returns:
-            Parsed JSON body, or None if the upstream returned 404.
-
-        Raises:
-            HTTPException: 503 on network/malformed failures; 502 on other
-                upstream HTTP errors.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url, data=data, json=json_data, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                if self._handle_request_error(
-                    method="POST",
-                    url=url,
-                    exc=e,
-                    json_data=json_data,
-                    data=data,
-                ):
-                    return None
+        client = self._get_client()
+        try:
+            response = await client.post(
+                url, data=data, json=json_data, headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if self._handle_request_error(
+                method="POST",
+                url=url,
+                exc=e,
+                json_data=json_data,
+                data=data,
+            ):
+                return None
 
     async def async_patch(
         self,
@@ -178,38 +170,22 @@ class AsyncHttpHandler:
         json_data: dict = None,
         headers: dict = None,
     ) -> Any | None:
-        """
-        Perform an async PATCH and return parsed JSON.
-
-        Args:
-            url: Absolute request URL.
-            data: Optional form body.
-            json_data: Optional JSON body.
-            headers: Optional HTTP headers.
-
-        Returns:
-            Parsed JSON body, or None if the upstream returned 404.
-
-        Raises:
-            HTTPException: 503 on network/malformed failures; 502 on other
-                upstream HTTP errors.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.patch(
-                    url, data=data, json=json_data, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                if self._handle_request_error(
-                    method="PATCH",
-                    url=url,
-                    exc=e,
-                    json_data=json_data,
-                    data=data,
-                ):
-                    return None
+        client = self._get_client()
+        try:
+            response = await client.patch(
+                url, data=data, json=json_data, headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if self._handle_request_error(
+                method="PATCH",
+                url=url,
+                exc=e,
+                json_data=json_data,
+                data=data,
+            ):
+                return None
 
     async def async_delete(
         self,
@@ -217,33 +193,18 @@ class AsyncHttpHandler:
         json_data: dict = None,
         headers: dict = None,
     ) -> Any | None:
-        """
-        Perform an async DELETE and return parsed JSON.
-
-        Args:
-            url: Absolute request URL.
-            json_data: Optional JSON body.
-            headers: Optional HTTP headers.
-
-        Returns:
-            Parsed JSON body, or None if the upstream returned 404.
-
-        Raises:
-            HTTPException: 503 on network/malformed failures; 502 on other
-                upstream HTTP errors.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.request(
-                    "DELETE", url, json=json_data, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                if self._handle_request_error(
-                    method="DELETE", url=url, exc=e, json_data=json_data
-                ):
-                    return None
+        client = self._get_client()
+        try:
+            response = await client.request(
+                "DELETE", url, json=json_data, headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if self._handle_request_error(
+                method="DELETE", url=url, exc=e, json_data=json_data
+            ):
+                return None
 
 
 handler = AsyncHttpHandler()

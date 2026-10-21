@@ -6,6 +6,11 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+
+def _url(base: str, suffix: str) -> str:
+    return f"{base.rstrip('/')}/{suffix}"
+
+
 _NOTIFY_SUFFIX = "api/v1/internal/notify"
 _FEEDBACK_SUFFIX = "api/v1/internal/feedback"
 _DEACTIVATE_BY_SESSION_SUFFIX = (
@@ -29,7 +34,7 @@ async def fire_notify(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(
-                f"{notification_service_url}{_NOTIFY_SUFFIX}",
+                _url(notification_service_url, _NOTIFY_SUFFIX),
                 json=payload,
                 headers={"X-Internal-Key": internal_api_key},
             )
@@ -59,7 +64,7 @@ async def fire_notify_critical(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
-                f"{notification_service_url}{_NOTIFY_SUFFIX}",
+                _url(notification_service_url, _NOTIFY_SUFFIX),
                 json=payload,
                 headers={"X-Internal-Key": internal_api_key},
             )
@@ -93,8 +98,10 @@ async def fire_deactivate_device_token_by_session(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.patch(
-                f"{notification_service_url}"
-                f"{_DEACTIVATE_BY_SESSION_SUFFIX}/{session_id}",
+                _url(
+                    notification_service_url,
+                    f"{_DEACTIVATE_BY_SESSION_SUFFIX}/{session_id}",
+                ),
                 headers={"X-Internal-Key": internal_api_key},
             )
     except Exception as exc:
@@ -117,7 +124,10 @@ async def fire_remove_device_token_by_session(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.delete(
-                f"{notification_service_url}{_BY_SESSION_SUFFIX}/{session_id}",
+                _url(
+                    notification_service_url,
+                    f"{_BY_SESSION_SUFFIX}/{session_id}",
+                ),
                 headers={"X-Internal-Key": internal_api_key},
             )
     except Exception as exc:
@@ -140,7 +150,10 @@ async def fire_remove_device_token_by_user(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.delete(
-                f"{notification_service_url}{_BY_USER_SUFFIX}/{user_id}",
+                _url(
+                    notification_service_url,
+                    f"{_BY_USER_SUFFIX}/{user_id}",
+                ),
                 headers={"X-Internal-Key": internal_api_key},
             )
     except Exception as exc:
@@ -163,7 +176,7 @@ async def fire_feedback(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(
-                f"{notification_service_url}{_FEEDBACK_SUFFIX}",
+                _url(notification_service_url, _FEEDBACK_SUFFIX),
                 json=payload,
                 headers={"X-Internal-Key": internal_api_key},
             )

@@ -88,11 +88,11 @@ class RequestService:
         estate_id = str(user.estate_id)
 
         # Check if admin or primary_admin
-        is_admin = user.role in ("admin", "primary_admin")
+        user_is_admin = user.role in ("admin", "primary_admin")
 
         # For non-admin users, check if there's already a pending request
         # for this field type
-        if not is_admin:
+        if not user_is_admin:
             existing_pending = (
                 await self.repository.get_pending_request_by_type(
                     resident_id=user_id, request_type=request_type_value
@@ -114,7 +114,7 @@ class RequestService:
                     },
                 )
 
-        if is_admin:
+        if user_is_admin:
             # Auto-approve and apply change immediately
             status = RequestStatus.APPROVED
             reviewed_by = user_id

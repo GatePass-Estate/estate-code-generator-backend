@@ -112,7 +112,7 @@ class VisitorLogRepository:
         end = period.get("end") or record.get("valid_until")
         if not end:
             return False
-        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S.%f%z")
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
         return datetime.now(timezone.utc) > end_dt
 
     async def is_code_inactive(self, hashed_code: str) -> bool:

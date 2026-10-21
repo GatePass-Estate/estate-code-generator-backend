@@ -1,7 +1,7 @@
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,7 +182,7 @@ async def search(
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
-    limit: int = 10,
+    limit: int = Query(default=10, le=100),
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
@@ -271,7 +271,7 @@ async def get(
 )
 async def list_all(
     page: int | None = 1,
-    limit: int | None = 20,
+    limit: int | None = Query(default=20, le=100),
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """

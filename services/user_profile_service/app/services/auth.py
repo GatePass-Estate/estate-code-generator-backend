@@ -107,6 +107,8 @@ class AuthService:
                     detail="This estate has been deactivated.",
                 )
 
+        from app.schemas.auth import LoginResponse
+
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)
             familiar_cutoff = now - timedelta(
@@ -130,21 +132,14 @@ class AuthService:
 
             if not familiar.get("items") or reauth_needed:
                 two_fa_token = generate_2fa_pending_token(user["id"])
-                from app.schemas.auth import LoginResponse
-
                 return LoginResponse(
                     success=True,
                     requires_2fa=True,
                     two_fa_token=two_fa_token,
                 )
 
-            session = await self.session_repo.create_session(
-                user_id=str(user["id"]),
-                ip_address=ip,
-                device_name=device,
-                expires_at=session_expires_at(),
-                is_2fa_verified=True,
-            )
+            is_2fa_verified = True
+            is_new_device = False
         else:
             # Check whether this IP has been seen before for non-2FA users
             familiar_cutoff = datetime.now(timezone.utc) - timedelta(
@@ -156,37 +151,9 @@ class AuthService:
                 last_active_after=familiar_cutoff,
             )
             is_new_device = not familiar.get("items")
+            is_2fa_verified = False
 
-            session = await self.session_repo.create_session(
-                user_id=str(user["id"]),
-                ip_address=ip,
-                device_name=device,
-                expires_at=session_expires_at(),
-                is_2fa_verified=False,
-            )
-
-            if is_new_device:
-                asyncio.create_task(
-                    fire_notify(
-                        {
-                            "type": "LOGIN_NEW_DEVICE",
-                            "title": "New device login",
-                            "body": (
-                                "Your account was accessed from a "
-                                "new device or location."
-                            ),
-                            "recipient_user_ids": [str(user["id"])],
-                            "metadata": {
-                                "ip_address": ip or "",
-                                "device_name": device,
-                                "session_id": session.get("id", ""),
-                            },
-                        }
-                    )
-                )
-
-        from app.schemas.auth import LoginResponse
-
+        # Check TOS BEFORE creating a session to avoid orphaned sessions.
         if user.get("tos_accepted_version") != settings.TOS_VERSION:
             tos_token = generate_tos_pending_token(user["id"])
             return LoginResponse(
@@ -194,6 +161,34 @@ class AuthService:
                 role=user["role"],
                 access_token=tos_token,
                 requires_tos_acceptance=True,
+            )
+
+        session = await self.session_repo.create_session(
+            user_id=str(user["id"]),
+            ip_address=ip,
+            device_name=device,
+            expires_at=session_expires_at(),
+            is_2fa_verified=is_2fa_verified,
+        )
+
+        if is_new_device:
+            asyncio.create_task(
+                fire_notify(
+                    {
+                        "type": "LOGIN_NEW_DEVICE",
+                        "title": "New device login",
+                        "body": (
+                            "Your account was accessed from a "
+                            "new device or location."
+                        ),
+                        "recipient_user_ids": [str(user["id"])],
+                        "metadata": {
+                            "ip_address": ip or "",
+                            "device_name": device,
+                            "session_id": session.get("id", ""),
+                        },
+                    }
+                )
             )
 
         token = generate_access_token(user, session["id"])

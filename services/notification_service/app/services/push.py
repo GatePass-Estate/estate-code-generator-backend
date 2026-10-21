@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Dict, List, Optional
@@ -62,7 +63,9 @@ async def send_push(
     )
     stale_tokens: List[str] = []
     try:
-        response = messaging.send_each_for_multicast(message, app=app)
+        response = await asyncio.to_thread(
+            messaging.send_each_for_multicast, message, app=app
+        )
         logger.info(
             "FCM multicast: %d success, %d failure",
             response.success_count,

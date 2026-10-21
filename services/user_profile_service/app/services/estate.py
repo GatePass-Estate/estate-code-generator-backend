@@ -60,14 +60,14 @@ class EstateService:
             admin = await self.user_repository.get_user_by_id(
                 str(request.primary_admin_id)
             )
-            if not admin or not admin.get("status"):
+            if not admin or not admin.status:
                 raise HTTPException(
                     status_code=404,
                     detail="Primary admin not found or not active",
                 )
 
             # Verify user has admin role
-            if admin.get("role") not in ("admin", "primary_admin"):
+            if admin.role not in ("admin", "primary_admin"):
                 raise HTTPException(
                     status_code=400,
                     detail="User must have admin role to be primary admin",
@@ -299,9 +299,9 @@ class EstateService:
             HTTPException: If user not found.
         """
         user = await self.user_repository.get_user_by_id(user_id)
-        if not user or not user.get("status"):
+        if not user or not user.status:
             raise HTTPException(status_code=404, detail="User not found")
-        return user["estate_id"]
+        return str(user.estate_id)
 
     async def validate_admin_access(
         self, admin_id: str, estate_id: str
@@ -327,7 +327,7 @@ class EstateService:
             )
 
         # Check if admin has admin role
-        if admin.role not in ("primary_admin"):
+        if admin.role not in ("primary_admin",):
             return False
 
         # Check if estate exists
