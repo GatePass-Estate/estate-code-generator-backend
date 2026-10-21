@@ -62,14 +62,18 @@ def is_owner(actor: Any, owner: Any) -> bool:
 def same_estate(left: Any, right: Any) -> bool:
     """Return whether two values refer to the same estate.
 
-    ``None`` equals ``None`` so two users without an estate compare equal,
-    matching existing document and profile checks.
+    Returns ``False`` when either side has no estate ID so that
+    unaffiliated users never pass an estate-scoping check.
 
     Args:
         left: User mapping/object or raw estate ID.
         right: User mapping/object or raw estate ID.
 
     Returns:
-        ``True`` when the normalized estate IDs are equal.
+        ``True`` when the normalized estate IDs are equal and non-None.
     """
-    return estate_id(left) == estate_id(right)
+    left_id = estate_id(left)
+    right_id = estate_id(right)
+    if left_id is None or right_id is None:
+        return False
+    return left_id == right_id

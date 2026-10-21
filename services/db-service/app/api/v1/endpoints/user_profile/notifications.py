@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,7 +108,7 @@ async def list_notifications(
     is_read: bool | None = None,
     max_age_days: int = 90,
     page: int = 1,
-    limit: int = 20,
+    limit: int = Query(default=20, le=100),
     service: Service = Depends(get_service),
 ) -> ListNotificationsResponse:
     try:
@@ -515,7 +515,7 @@ async def remove_device_tokens_by_user(
     description="Hard-delete all notification rows older than the given days",
 )
 async def purge_old_notifications(
-    older_than_days: int,
+    older_than_days: int = Query(ge=1),
     service: Service = Depends(get_service),
 ) -> dict:
     try:

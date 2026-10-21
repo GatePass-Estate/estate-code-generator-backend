@@ -331,6 +331,25 @@ async def get_all_codes_by_user(
             detail="You are not authorized to get all codes for this user.",
         )
 
+    # Ownership / estate-scoping check: users can only view their own
+    # codes unless they are an admin or security guard in the same estate.
+    if str(user_id) != str(current_user["id"]):
+        if requester_role not in ("admin", "primary_admin", "security"):
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view your own codes.",
+            )
+        target_user = await get_user_details(
+            service.ahttp_client, str(user_id)
+        )
+        if not target_user or target_user.get("estate_id") != user_details.get(
+            "estate_id"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot view codes from another estate.",
+            )
+
     try:
         return await service.get_items_by_user(
             user_id=user_id,

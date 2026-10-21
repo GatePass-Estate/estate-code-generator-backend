@@ -79,8 +79,7 @@ class CodeServiceRepository:
         self.ahttp_client: AsyncHttpHandler = ahttp_client
 
     def _format_datetime(self, dt: datetime) -> str:
-        ms = int(dt.microsecond / 1000)
-        return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
+        return dt.isoformat()
 
     def _is_upcoming_visitor_code(self, item: dict, now: datetime) -> bool:
         """Return True when the code's validity period has not started yet."""
@@ -88,7 +87,7 @@ class CodeServiceRepository:
         start = period.get("start")
         if not start:
             return False
-        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S.%f%z")
+        start_dt = datetime.fromisoformat(start)
         return now < start_dt
 
     def _is_visitor_code_expired(
@@ -101,7 +100,7 @@ class CodeServiceRepository:
         end = period.get("end") or record.get("valid_until")
         if not end:
             return False
-        end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S.%f%z")
+        end_dt = datetime.fromisoformat(end)
         return now > end_dt
 
     async def _resolve_resident_full_name(self, user_id: str | None) -> str:
@@ -176,45 +175,59 @@ class CodeServiceRepository:
         search_url = (
             f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/search"
         )
-        params = {
-            "user_id": user_id,
-            "estate_id": estate_id,
-            "page": 1,
-            "limit": 50,
-        }
-        try:
-            existing = await ahttp_client.async_get(search_url, params=params)
-        except NotFoundError:
-            return
-        except Exception as exc:
-            logger.warning(
-                "Could not search prior access codes for soft delete "
-                "user_id=%s estate_id=%s: %s",
-                user_id,
-                estate_id,
-                exc,
-            )
-            return
-
-        for item in existing.get("items") or []:
-            old_id = item.get("id")
-            if not old_id or str(old_id) == str(keep_id):
-                continue
-            delete_url = (
-                f"{settings.DB_SERVICE_URL}"
-                f"api/v1/codeservice/accesscode/{old_id}"
-            )
+        page = 1
+        limit = 50
+        while True:
+            params = {
+                "user_id": user_id,
+                "estate_id": estate_id,
+                "page": page,
+                "limit": limit,
+            }
             try:
-                await ahttp_client.async_delete(delete_url)
-                logger.info(
-                    "Soft-deleted prior resident access code id=%s", old_id
+                existing = await ahttp_client.async_get(
+                    search_url, params=params
                 )
+            except NotFoundError:
+                return
             except Exception as exc:
                 logger.warning(
-                    "Failed to soft-delete prior access code id=%s: %s",
-                    old_id,
+                    "Could not search prior access codes for soft delete "
+                    "user_id=%s estate_id=%s: %s",
+                    user_id,
+                    estate_id,
                     exc,
                 )
+                return
+
+            items = existing.get("items") or []
+            if not items:
+                break
+
+            for item in items:
+                old_id = item.get("id")
+                if not old_id or str(old_id) == str(keep_id):
+                    continue
+                delete_url = (
+                    f"{settings.DB_SERVICE_URL}"
+                    f"api/v1/codeservice/accesscode/{old_id}"
+                )
+                try:
+                    await ahttp_client.async_delete(delete_url)
+                    logger.info(
+                        "Soft-deleted prior resident access code id=%s",
+                        old_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to soft-delete prior access code " "id=%s: %s",
+                        old_id,
+                        exc,
+                    )
+
+            if len(items) < limit:
+                break
+            page += 1
 
     async def _getitem(
         self,
@@ -287,9 +300,11 @@ class CodeServiceRepository:
             resident_data["is_valid"] = True
             resident_data["receiver"] = Receiver.RESIDENT
             return resident_data
+        except (NotFoundError, HTTPException):
+            raise
         except Exception as e:
             logger.error(e)
-            raise Exception(e) from e
+            raise NotFoundError("Code validation failed") from e
 
     async def _get_items_by_user(
         self, **kwargs
@@ -436,18 +451,7 @@ class CodeServiceRepository:
                         service_key=ADVANCED_CODE_MANAGEMENT_KEY,
                         auth_token=auth_token,
                     )
-                now = datetime.now(timezone.utc)
-                code = generate_unique_code(
-                    user_id=visit_data.get("user_id"),
-                    estate_id=visit_data.get("estate_id"),
-                    now=now,
-                    visitor_fullname=visit_data.get("visitor_fullname"),
-                    relationship_with_resident=visit_data.get(
-                        "relationship_with_resident"
-                    ),
-                    receiver=receiver,
-                    validity_period=visit_data.get("validity_period"),
-                )
+                code = generate_unique_code()
                 visit_data["hashed_code"] = code
                 data = {"hashed_code": code, "visit_data": visit_data}
                 response = await ahttp_client.async_post(
@@ -460,13 +464,7 @@ class CodeServiceRepository:
                 )
 
                 resident_data = request.model_dump(mode="json")
-                now = datetime.now(timezone.utc)
-                code = generate_unique_code(
-                    user_id=resident_data.get("user_id"),
-                    estate_id=resident_data.get("estate_id"),
-                    now=now,
-                    receiver=receiver,
-                )
+                code = generate_unique_code()
                 resident_data["hashed_code"] = code
                 valid_until = datetime.now(timezone.utc) + timedelta(
                     days=settings.RESIDENT_CODE_EXPIRY_DAYS
@@ -617,13 +615,7 @@ class CodeServiceRepository:
                 raise NotFoundError(f"No code found for resident {user_id}!")
 
             # Generate new code
-            now = datetime.now(timezone.utc)
-            new_code = generate_unique_code(
-                user_id=user_id,
-                estate_id=user_details.get("estate_id"),
-                now=now,
-                receiver=Receiver.RESIDENT,
-            )
+            new_code = generate_unique_code()
 
             # Calculate new expiry date
             valid_until = datetime.now(timezone.utc) + timedelta(
@@ -694,11 +686,14 @@ class CodeServiceRepository:
         if not same_estate(request, user_details) or not is_owner(
             user_details, request.user_id
         ):
-            message = (
-                "User is not authorized to generate code for this estate/user!"
+            logger.warning(
+                "User is not authorized to generate code "
+                "for this estate/user!"
             )
-            logger.exception(message)
-            raise Exception("Invalid estate or user!")
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid estate or user",
+            )
 
         try:
             # Create the record in the database
@@ -719,35 +714,6 @@ class CodeServiceRepository:
             logger.exception(message)
             raise DatabaseError(message) from e
 
-    async def _estate_admin_ids(self, estate_id: str) -> list[str]:
-        """
-        Return active admin and primary-admin user IDs for an estate.
-
-        Uses db-service ``userprofile/users/search``. Failures return an
-        empty list so validation is never blocked.
-        """
-        url = f"{settings.DB_SERVICE_URL}api/v1/userprofile/users/search"
-        try:
-            result = await self.ahttp_client.async_get(
-                url,
-                params={
-                    "estate_id": estate_id,
-                    "roles": ["admin", "primary_admin"],
-                    "status": True,
-                    "limit": 1000,
-                },
-            )
-        except Exception:
-            logger.exception(
-                "Failed to list estate admins estate_id=%s", estate_id
-            )
-            return []
-        return [
-            str(user["id"])
-            for user in (result or {}).get("items") or []
-            if user.get("id")
-        ]
-
     async def _notify_admins_of_anomaly(
         self,
         *,
@@ -759,17 +725,10 @@ class CodeServiceRepository:
         """
         Notify estate admins that a validation was flagged as anomalous.
 
-        Best-effort: missing admins or notify failures are logged only.
+        Uses fan_out so the notification service resolves admin recipients.
+        Best-effort: notify failures are logged only.
         """
         if not estate_id:
-            return
-        admin_ids = await self._estate_admin_ids(estate_id)
-        if not admin_ids:
-            logger.warning(
-                "No estate admins to notify estate_id=%s anomaly_type=%s",
-                estate_id,
-                anomaly_type,
-            )
             return
         await fire_notify(
             {
@@ -778,7 +737,10 @@ class CodeServiceRepository:
                 "body": (
                     f"A {anomaly_type} access event was flagged as anomalous."
                 ),
-                "recipient_user_ids": admin_ids,
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
                 "metadata": {
                     "prediction_result_id": prediction_result_id,
                     "anomaly_type": anomaly_type,
@@ -1127,7 +1089,7 @@ class CodeServiceRepository:
                 "User is not authorized to update code for this resident!"
             )
             logger.exception(message)
-            raise Exception("Invalid user!")
+            raise HTTPException(status_code=403, detail="Invalid user!")
 
         try:
             # Update the resident's code

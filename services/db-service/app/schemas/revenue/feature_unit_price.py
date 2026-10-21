@@ -1,8 +1,6 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
-from decimal import Decimal
-
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
 from app.schemas.base import (
@@ -42,7 +40,7 @@ class FeatureUnitPriceBase(BaseModel):
         None, description="FK service_catalog"
     )
     ai_feature_id: UUID4 | None = Field(None, description="FK ai_feature")
-    feature_unit_price: Decimal = Field(..., description="Unit price amount")
+    feature_unit_price: int = Field(..., description="Unit price in kobo")
     is_active: bool = Field(
         default=True, description="Whether price row is active"
     )
@@ -93,8 +91,8 @@ class UpdateRequest(BaseModel):
     ai_feature_id: UUID4 | None = Field(
         default=None, description="FK ai_feature"
     )
-    feature_unit_price: Decimal | None = Field(
-        default=None, description="Unit price amount"
+    feature_unit_price: int | None = Field(
+        default=None, description="Unit price in kobo"
     )
     is_active: bool | None = Field(
         default=None, description="Whether price row is active"

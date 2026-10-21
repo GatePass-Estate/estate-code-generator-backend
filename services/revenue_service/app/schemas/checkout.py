@@ -31,17 +31,17 @@ class QuoteResponse(BaseModel):
     estate_id: str
     country_code: str
     currency_code: str
-    price_per_seat: Any
+    price_per_seat: int
     seats: int
-    ai_price_per_month: Any
-    monthly_subtotal: Any
+    ai_price_per_month: int
+    monthly_subtotal: int
     period_months: int
-    subtotal: Any
-    vat_rate: Any
-    vat_amount: Any
-    client_total: Any
-    administrative_fee: Any
-    sum_of_included_features: Any
+    subtotal: int
+    vat_rate: float
+    vat_amount: int
+    client_total: int
+    administrative_fee: int
+    sum_of_included_features: int
     line_items: list[dict[str, Any]] = Field(default_factory=list)
     tier_slug: str | None = None
 
@@ -62,16 +62,16 @@ class SeatProrateResponse(BaseModel):
     seats_added: int
     country_code: str
     currency_code: str
-    price_per_seat: Any
+    price_per_seat: int
     period_months: int
-    period_seat_price: Any
+    period_seat_price: int
     period_days: int
     remaining_days: int
-    daily_seat_rate: Any
-    subtotal: Any
-    vat_rate: Any
-    vat_amount: Any
-    prorated_charge: Any
+    daily_seat_rate: int
+    subtotal: int
+    vat_rate: float
+    vat_amount: int
+    prorated_charge: int
     period_start: str
     period_end: str
 
@@ -93,11 +93,11 @@ class AiQuoteResponse(BaseModel):
     currency_code: str
     ai_feature_keys: list[str]
     period_months: int
-    ai_price_per_month: Any
-    subtotal: Any
-    vat_rate: Any
-    vat_amount: Any
-    client_total: Any
+    ai_price_per_month: int
+    subtotal: int
+    vat_rate: float
+    vat_amount: int
+    client_total: int
     line_items: list[dict[str, Any]] = Field(default_factory=list)
 
 

@@ -9,6 +9,20 @@ from fastapi import HTTPException
 class AsyncHttpHandler:
     """Thin httpx wrapper. Returns JSON, or None on 404."""
 
+    def __init__(self, client: httpx.AsyncClient | None = None):
+        self._client = client
+
+    def set_client(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError(
+                "httpx.AsyncClient not initialised — "
+                "ensure the app lifespan has started"
+            )
+        return self._client
+
     async def _request(
         self,
         method: str,
@@ -27,26 +41,26 @@ class AsyncHttpHandler:
             kwargs["json"] = json_data
         if data is not None:
             kwargs["data"] = data
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.request(method, url, **kwargs)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    return None
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"Upstream returned HTTP {exc.response.status_code} "
-                        f"for {method} {url}"
-                    ),
-                ) from exc
-            except httpx.RequestError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Upstream service unavailable for {method} {url}",
-                ) from exc
+        client = self._get_client()
+        try:
+            response = await client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Upstream returned HTTP {exc.response.status_code} "
+                    f"for {method} {url}"
+                ),
+            ) from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Upstream service unavailable for {method} {url}",
+            ) from exc
 
     async def async_get(
         self, url: str, params: dict = None, headers: dict = None

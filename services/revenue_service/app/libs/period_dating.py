@@ -23,6 +23,19 @@ def _parse_utc_datetime(raw: Any) -> datetime | None:
     return _as_utc(parsed)
 
 
+def infer_period_months(subscription: dict[str, Any]) -> int:
+    """Derive billing cadence (months) from a subscription's period window.
+
+    Falls back to 1 if either date is missing or unparseable.
+    """
+    start = _parse_utc_datetime(subscription.get("period_start"))
+    end = _parse_utc_datetime(subscription.get("period_end"))
+    if start and end:
+        period_days = (end.date() - start.date()).days + 1
+        return max(1, round(period_days / 30))
+    return 1
+
+
 def paid_feature_access_valid(
     *,
     status: str,

@@ -11,6 +11,7 @@ Two aggregation layers:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from app.core.config import settings
@@ -105,9 +106,13 @@ async def ensemble_score(per_scope_scores: list[float]) -> float:
 
     Prefer :func:`weighted_ensemble_score` for production orchestration.
     """
-    if not per_scope_scores:
-        return 0.0
-    return sum(per_scope_scores) / len(per_scope_scores)
+
+    def _compute():
+        if not per_scope_scores:
+            return 0.0
+        return sum(per_scope_scores) / len(per_scope_scores)
+
+    return await asyncio.to_thread(_compute)
 
 
 def weighted_ensemble_score(contexts: list[ScopeEnsembleContext]) -> float:
@@ -148,18 +153,22 @@ async def run_models(
         Dict with ``kmeans``, ``dbscan``, ``lof``, and
         ``historical_reference_count``.
     """
-    k_block = _kmeans_model.process(focal_features, historical_features)
-    d_block = _dbscan_model.process(focal_features, historical_features)
-    l_block = _lof_model.process(focal_features, historical_features)
-    k_score = _kmeans_model.predict(k_block)
-    d_score = _dbscan_model.predict(d_block)
-    l_score = _lof_model.predict(l_block)
-    return {
-        "kmeans": float(k_score),
-        "dbscan": float(d_score),
-        "lof": float(l_score),
-        "historical_reference_count": float(len(historical_features)),
-    }
+
+    def _compute():
+        k_block = _kmeans_model.process(focal_features, historical_features)
+        d_block = _dbscan_model.process(focal_features, historical_features)
+        l_block = _lof_model.process(focal_features, historical_features)
+        k_score = _kmeans_model.predict(k_block)
+        d_score = _dbscan_model.predict(d_block)
+        l_score = _lof_model.predict(l_block)
+        return {
+            "kmeans": float(k_score),
+            "dbscan": float(d_score),
+            "lof": float(l_score),
+            "historical_reference_count": float(len(historical_features)),
+        }
+
+    return await asyncio.to_thread(_compute)
 
 
 def score_from_model_outputs(model_outputs: dict[str, float]) -> float:

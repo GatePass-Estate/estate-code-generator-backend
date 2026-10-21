@@ -328,7 +328,9 @@ class EstateRepository:
             Dict containing estate list with pagination info
             or None if not found.
         """
-        return await self.search_estates(page=page, limit=limit)
+        return await self.search_estates(
+            SearchEstateRequest(page=page, limit=limit)
+        )
 
     async def get_estates_by_admin(
         self, admin_id: str
@@ -342,9 +344,11 @@ class EstateRepository:
         Returns:
             List of estate dictionaries or None if not found.
         """
-        response = await self.search_estates(primary_admin_id=admin_id)
-        if response and "items" in response:
-            return response["items"]
+        response = await self.search_estates(
+            SearchEstateRequest(primary_admin_id=admin_id)
+        )
+        if response and response.items:
+            return response.items
         return []
 
     async def check_estate_exists(self, estate_id: str) -> bool:
@@ -358,6 +362,6 @@ class EstateRepository:
             True if estate exists and is not deleted, False otherwise.
         """
         estate = await self.get_estate_by_id(estate_id)
-        if estate and not estate.get("is_deleted", False):
+        if estate and not estate.is_deleted:
             return True
         return False

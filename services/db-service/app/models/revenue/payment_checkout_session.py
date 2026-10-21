@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, DateTime, ForeignKey, Numeric, String, text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.models.base import BaseModelDB
@@ -25,7 +25,7 @@ class PaymentCheckoutSession(BaseModelDB):
     pricing_snapshot = Column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    amount = Column(Numeric(18, 2), nullable=False)
+    amount = Column(BigInteger, nullable=False)
     currency_code = Column(String, nullable=False)
     country_code = Column(String, nullable=False)
     checkout_kind = Column(String, nullable=False)

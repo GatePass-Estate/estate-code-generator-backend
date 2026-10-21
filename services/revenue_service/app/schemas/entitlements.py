@@ -16,6 +16,7 @@ class EntitlementCheckResponse(BaseModel):
     locked: bool = False
     reason: str | None = None
     covered_users: int | None = None
+    effective_covered_users: int | None = None
     subscription_status: str | None = None
     tier_slug: str | None = None
 
@@ -28,6 +29,7 @@ class EstateEntitlementsResponse(BaseModel):
     locked: bool = False
     reason: str | None = None
     covered_users: int | None = None
+    effective_covered_users: int | None = None
     subscription_status: str | None = None
     tier_slug: str | None = None
 

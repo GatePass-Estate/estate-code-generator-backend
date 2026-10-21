@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -20,10 +21,12 @@ from app.libs.entitlement_validation import (
     ensure_admin_fee_entitlement,
     validate_entitlements,
 )
+from app.libs.period_dating import infer_period_months
 from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.estate import EstateTypeMultiplier
 from app.services.pricing_service import (
     VAT_KEY,
+    to_int,
     apply_vat,
     compute_ai_monthly,
     compute_price_per_seat,
@@ -31,7 +34,6 @@ from app.services.pricing_service import (
     extract_included_keys,
     prorate_tier_change,
     quote_pricing,
-    round_charge,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,7 +141,17 @@ class SeatAddCheckoutHandler(CheckoutHandler):
     """Handles 'seat_add' checkout kind."""
 
     async def guard(self, request: dict[str, Any]) -> None:
-        pass  # seat additions are always allowed for active subscriptions
+        active_sub = await self._repo.get_active_subscription(
+            request["estate_id"]
+        )
+        if not active_sub or active_sub.get("status") not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Seats can only be added to an active subscription.",
+            )
 
     async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
         result = await self._svc.prorate_seats(
@@ -207,6 +219,9 @@ class TierChangeCheckoutHandler(CheckoutHandler):
         self, repo: DbRevenueRepository, svc: CheckoutService
     ) -> None:
         super().__init__(repo, svc)
+        self._active_sub: dict[str, Any] | None = None
+        self._current_tier: dict[str, Any] | None = None
+        self._new_tier: dict[str, Any] | None = None
         self._covered_users: int = 0
         self._period_months: int = 1
 
@@ -272,14 +287,15 @@ class TierChangeCheckoutHandler(CheckoutHandler):
                     " for downgrades."
                 ),
             )
+        # Cache for get_quote() so it doesn't re-fetch.
+        self._active_sub = active_sub
+        self._current_tier = current_tier
+        self._new_tier = new_tier
 
     async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
         estate_id = request["estate_id"]
-        active_sub = await self._repo.get_active_subscription(estate_id)
-        if not active_sub or active_sub.get("status") not in (
-            "active",
-            "trialing",
-        ):
+        active_sub = self._active_sub
+        if not active_sub:
             raise HTTPException(
                 status_code=400, detail="No active subscription to upgrade"
             )
@@ -292,8 +308,7 @@ class TierChangeCheckoutHandler(CheckoutHandler):
         period_end = datetime.fromisoformat(
             str(period_end_raw).replace("Z", "+00:00")
         )
-        period_days = (period_end.date() - period_start.date()).days + 1
-        period_months = max(1, round(period_days / 30))
+        period_months = infer_period_months(active_sub)
         covered_users = int(active_sub.get("covered_users") or 1)
         self._covered_users = covered_users
         self._period_months = period_months
@@ -304,20 +319,19 @@ class TierChangeCheckoutHandler(CheckoutHandler):
             ai_prices,
             currency,
             vat_rate,
+            _catalog,
         ) = await self._svc._pricing_context(estate_id)
 
-        current_tier = await self._repo.get_tier_by_id(
-            str(active_sub["tier_id"])
-        )
+        current_tier = self._current_tier
         if not current_tier:
             raise HTTPException(
                 status_code=500, detail="Current subscription tier not found"
             )
-        new_tier = await self._repo.get_tier_by_slug(request["tier_slug"])
+        new_tier = self._new_tier
         if not new_tier:
             raise HTTPException(status_code=404, detail="Tier not found")
 
-        def _seat_price_from_tier(tier: dict[str, Any]) -> Decimal:
+        def _seat_price_from_tier(tier: dict[str, Any]) -> int:
             if tier.get("is_custom"):
                 entitlements = ensure_admin_fee_entitlement(
                     dict(active_sub.get("entitlements") or {})
@@ -328,12 +342,12 @@ class TierChangeCheckoutHandler(CheckoutHandler):
             result = compute_price_per_seat(service_prices, included_keys)
             return result["price_per_seat"]
 
-        def _ai_monthly_from_tier(tier: dict[str, Any]) -> Decimal:
+        def _ai_monthly_from_tier(tier: dict[str, Any]) -> int:
             ai_keys = list(tier.get("included_ai_features") or [])
             if not ai_keys:
-                return Decimal("0")
+                return 0
             result = compute_ai_monthly(ai_prices, ai_keys)
-            return Decimal(str(result["ai_price_per_month"]))
+            return result["ai_price_per_month"]
 
         try:
             old_pps = _seat_price_from_tier(current_tier)
@@ -358,24 +372,15 @@ class TierChangeCheckoutHandler(CheckoutHandler):
         vat = apply_vat(proration["subtotal"], vat_rate)
         snapshot = {
             **proration,
-            "subtotal": float(vat["subtotal"]),
+            "subtotal": vat["subtotal"],
             "vat_rate": float(vat["vat_rate"]),
-            "vat_amount": float(vat["vat_amount"]),
-            "client_total": float(vat["client_total"]),
-            "old_price_per_seat": float(proration["old_price_per_seat"]),
-            "new_price_per_seat": float(proration["new_price_per_seat"]),
-            "tier_diff_per_seat": float(proration["tier_diff_per_seat"]),
-            "old_ai_monthly": float(proration["old_ai_monthly"]),
-            "new_ai_monthly": float(proration["new_ai_monthly"]),
-            "prorated_charge": float(proration["prorated_charge"]),
-            "daily_seat_rate": float(proration["daily_seat_rate"]),
-            "period_seat_price": float(proration["period_seat_price"]),
-            "ai_prorated_charge": float(proration["ai_prorated_charge"]),
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
         }
         return {
-            "amount": float(vat["client_total"]),
+            "amount": vat["client_total"],
             "currency_code": currency,
             "country_code": country,
             "snapshot": snapshot,
@@ -442,8 +447,8 @@ class CheckoutService:
 
     async def _pricing_context(
         self, estate_id: str
-    ) -> tuple[str, dict[str, Any], dict[str, Any], str, Any]:
-        """Country, scaled prices, currency, and VAT rate for an estate."""
+    ) -> tuple[str, dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
+        """Country, scaled prices, currency, VAT rate, and catalog for an estate."""
         estate = await self.repo.get_estate(estate_id)
         country = (estate.get("country") or "").upper()
         if not country:
@@ -452,23 +457,29 @@ class CheckoutService:
                 detail="Estate has no country set; cannot price",
             )
         multiplier = self._estate_multiplier(estate.get("estate_type"))
-        service_prices, ai_prices, currency, vat_rate = await self._price_maps(
-            country, multiplier
-        )
-        return country, service_prices, ai_prices, currency, vat_rate
+        (
+            service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+            catalog,
+        ) = await self._price_maps(country, multiplier)
+        return country, service_prices, ai_prices, currency, vat_rate, catalog
 
     async def _price_maps(
         self, country: str, multiplier: float
-    ) -> tuple[dict[str, Any], dict[str, Any], str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
         """
-        Return service_prices, ai_prices, currency, and VAT rate.
+        Return service_prices, ai_prices, currency, VAT rate, and catalog.
 
         Unit prices (except VAT) are multiplied by ``multiplier`` before
         any quote math. VAT is the catalog percent, unscaled.
         """
-        catalog = await self.repo.get_service_catalog_map()
-        ai_catalog = await self.repo.get_ai_feature_map()
-        prices = await self.repo.get_prices_for_country(country)
+        catalog, ai_catalog, prices = await asyncio.gather(
+            self.repo.get_service_catalog_map(),
+            self.repo.get_ai_feature_map(),
+            self.repo.get_prices_for_country(country),
+        )
         if not prices:
             raise HTTPException(
                 status_code=400,
@@ -490,21 +501,17 @@ class CheckoutService:
                 if key == VAT_KEY:
                     vat_rate = amount  # percent; do not scale
                     continue
-                service_prices[key] = round_charge(
-                    Decimal(str(amount)) * factor
-                )
+                service_prices[key] = to_int(Decimal(str(amount)) * factor)
             if row.get("ai_feature_id"):
                 key = ai_id_to_key.get(str(row["ai_feature_id"]))
                 if key:
-                    ai_prices[key] = round_charge(
-                        Decimal(str(amount)) * factor
-                    )
+                    ai_prices[key] = to_int(Decimal(str(amount)) * factor)
         if vat_rate is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"No VAT rate for country {country}",
             )
-        return service_prices, ai_prices, currency, vat_rate
+        return service_prices, ai_prices, currency, vat_rate, catalog
 
     async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
         """
@@ -521,7 +528,7 @@ class CheckoutService:
                 ai_feature_keys).
 
         Returns:
-            Quote response with totals and line_items (floats).
+            Quote response with totals and line_items (int kobo).
 
         Raises:
             HTTPException: 400/404 on validation or missing pricing data.
@@ -533,9 +540,8 @@ class CheckoutService:
             ai_prices,
             currency,
             vat_rate,
+            catalog,
         ) = await self._pricing_context(estate_id)
-
-        catalog = await self.repo.get_service_catalog_map()
 
         tier_slug = request.get("tier_slug")
         entitlements = request.get("entitlements")
@@ -591,27 +597,16 @@ class CheckoutService:
             "estate_id": estate_id,
             "tier_slug": tier_slug,
             **breakdown,
-            # serialize Decimals as str/float-friendly
-            "price_per_seat": float(breakdown["price_per_seat"]),
-            "ai_price_per_month": float(breakdown["ai_price_per_month"]),
-            "monthly_subtotal": float(breakdown["monthly_subtotal"]),
-            "subtotal": float(vat["subtotal"]),
+            "subtotal": vat["subtotal"],
             "vat_rate": float(vat["vat_rate"]),
-            "vat_amount": float(vat["vat_amount"]),
-            "client_total": float(vat["client_total"]),
-            "administrative_fee": float(breakdown["administrative_fee"]),
-            "sum_of_included_features": float(
-                breakdown["sum_of_included_features"]
-            ),
-            "line_items": [
-                {**li, "unit_price": float(li["unit_price"])}
-                for li in breakdown["line_items"]
-            ]
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
+            "line_items": breakdown["line_items"]
             + [
                 {
                     "key": VAT_KEY,
                     "kind": "vat",
-                    "unit_price": float(vat["vat_amount"]),
+                    "unit_price": vat["vat_amount"],
                 }
             ],
         }
@@ -656,6 +651,7 @@ class CheckoutService:
             _ai_prices,
             currency,
             vat_rate,
+            _catalog,
         ) = await self._pricing_context(estate_id)
 
         tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
@@ -673,9 +669,7 @@ class CheckoutService:
 
         included_keys = extract_included_keys(entitlements)
 
-        # Infer period_months from the subscription window (~30-day months).
-        period_days = (period_end.date() - period_start.date()).days + 1
-        period_months = max(1, round(period_days / 30))
+        period_months = infer_period_months(subscription)
 
         try:
             full_quote = quote_pricing(
@@ -688,9 +682,7 @@ class CheckoutService:
                 currency_code=currency,
                 country_code=country,
             )
-            period_seat_price = round_charge(
-                full_quote["price_per_seat"] * period_months
-            )
+            period_seat_price = full_quote["price_per_seat"] * period_months
             prorated = compute_seat_proration(
                 period_seat_price=period_seat_price,
                 seats_added=seats_added,
@@ -710,16 +702,16 @@ class CheckoutService:
             "seats_added": seats_added,
             "country_code": country,
             "currency_code": currency,
-            "price_per_seat": float(full_quote["price_per_seat"]),
+            "price_per_seat": full_quote["price_per_seat"],
             "period_months": period_months,
-            "period_seat_price": float(prorated["period_seat_price"]),
+            "period_seat_price": prorated["period_seat_price"],
             "period_days": prorated["period_days"],
             "remaining_days": prorated["remaining_days"],
-            "daily_seat_rate": float(prorated["daily_seat_rate"]),
-            "subtotal": float(vat["subtotal"]),
+            "daily_seat_rate": prorated["daily_seat_rate"],
+            "subtotal": vat["subtotal"],
             "vat_rate": float(vat["vat_rate"]),
-            "vat_amount": float(vat["vat_amount"]),
-            "prorated_charge": float(vat["client_total"]),
+            "vat_amount": vat["vat_amount"],
+            "prorated_charge": vat["client_total"],
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
         }
@@ -750,14 +742,15 @@ class CheckoutService:
             ai_prices,
             currency,
             vat_rate,
+            _catalog,
         ) = await self._pricing_context(estate_id)
         try:
             ai = compute_ai_monthly(ai_prices, feature_keys)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        monthly = float(round_charge(ai["ai_price_per_month"]))
-        total = round_charge(ai["ai_price_per_month"] * period_months)
+        monthly = ai["ai_price_per_month"]
+        total = ai["ai_price_per_month"] * period_months
         vat = apply_vat(total, vat_rate)
         return {
             "estate_id": estate_id,
@@ -766,19 +759,16 @@ class CheckoutService:
             "ai_feature_keys": feature_keys,
             "period_months": period_months,
             "ai_price_per_month": monthly,
-            "subtotal": float(vat["subtotal"]),
+            "subtotal": vat["subtotal"],
             "vat_rate": float(vat["vat_rate"]),
-            "vat_amount": float(vat["vat_amount"]),
-            "client_total": float(vat["client_total"]),
-            "line_items": [
-                {**li, "unit_price": float(li["unit_price"])}
-                for li in ai["line_items"]
-            ]
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
+            "line_items": ai["line_items"]
             + [
                 {
                     "key": VAT_KEY,
                     "kind": "vat",
-                    "unit_price": float(vat["vat_amount"]),
+                    "unit_price": vat["vat_amount"],
                 }
             ],
         }
@@ -902,7 +892,7 @@ class CheckoutService:
 
         # 4. Compute quote
         quote_result = await handler.get_quote(request)
-        amount: float = quote_result["amount"]
+        amount: int = quote_result["amount"]
         currency: str = quote_result["currency_code"]
         country: str = quote_result["country_code"]
         snapshot: dict = quote_result["snapshot"]
@@ -923,7 +913,7 @@ class CheckoutService:
                 "idempotency_key": idempotency_key,
                 "status": "pending",
                 "pricing_snapshot": snapshot,
-                "amount": str(amount),
+                "amount": amount,
                 "currency_code": currency,
                 "country_code": country,
                 "checkout_kind": kind,
@@ -938,12 +928,11 @@ class CheckoutService:
             session_id, {"paystack_reference": paystack_reference}
         )
 
-        # 8. Call Paystack
-        amount_kobo = round(amount * 100)
+        # 8. Call Paystack — amount is already in kobo (int)
         try:
             paystack_data = await self._paystack.initialize_transaction(
                 email=request["customer_email"],
-                amount_kobo=amount_kobo,
+                amount_kobo=amount,
                 reference=paystack_reference,
                 callback_url=settings.PAYSTACK_CALLBACK_URL,
                 metadata=session_metadata,

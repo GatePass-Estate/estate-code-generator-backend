@@ -103,6 +103,30 @@ async def get_my_requests(
     return await service.list_my_requests(user_id, page, limit)
 
 
+@router.get("/edit/pending/check", response_model=CheckPendingRequestResponse)
+async def check_pending_request(
+    request_type: RequestType = Query(
+        ..., description="Type of field to check for pending request"
+    ),
+    current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
+):
+    """
+    Check if the current user has a pending request for a specific field type.
+    This helps the frontend prevent duplicate requests and show appropriate UI.
+    """
+    user_id = current_user["id"]
+
+    pending_request = await service.check_pending_request(
+        user_id, request_type
+    )
+
+    return CheckPendingRequestResponse(
+        has_pending_request=pending_request is not None,
+        pending_request=pending_request,
+    )
+
+
 @router.get("/edit/{request_id}", response_model=GetEditRequestResponse)
 async def get_request(
     request_id: str,
@@ -190,30 +214,6 @@ async def search_requests(
     )
 
     return await service.search_requests(search_request, user_id, user_role)
-
-
-@router.get("/edit/pending/check", response_model=CheckPendingRequestResponse)
-async def check_pending_request(
-    request_type: RequestType = Query(
-        ..., description="Type of field to check for pending request"
-    ),
-    current_user: dict = Depends(get_current_user),
-    service: RequestService = Depends(get_request_service),
-):
-    """
-    Check if the current user has a pending request for a specific field type.
-    This helps the frontend prevent duplicate requests and show appropriate UI.
-    """
-    user_id = current_user["id"]
-
-    pending_request = await service.check_pending_request(
-        user_id, request_type
-    )
-
-    return CheckPendingRequestResponse(
-        has_pending_request=pending_request is not None,
-        pending_request=pending_request,
-    )
 
 
 @router.patch(

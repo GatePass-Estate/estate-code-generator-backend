@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
@@ -12,7 +11,7 @@ from fastapi import HTTPException
 from app.core.config import settings
 from app.integrations.paystack_client import PaystackClient
 from app.libs.entitlement_validation import ensure_admin_fee_entitlement
-from app.libs.period_dating import compute_period_end
+from app.libs.period_dating import compute_period_end, infer_period_months
 from app.libs.transient_retry import retry_transient
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import (
@@ -26,13 +25,14 @@ from app.services.entitlement_resolver import (
 from app.services.pricing_service import (
     apply_vat,
     compute_ai_monthly,
+    compute_client_total,
     compute_price_per_seat,
     extract_included_keys,
     omit_vat,
-    round_charge,
 )
 
 logger = logging.getLogger(__name__)
+
 
 # Subscription writes and AI grant sync are separate HTTP calls to db-service
 # (no distributed transaction). activate/renew retry grant sync on transient
@@ -258,6 +258,7 @@ class SubscriptionService:
                     ai_prices,
                     currency,
                     vat_rate,
+                    _catalog,
                 ) = await checkout_svc._pricing_context(estate_id)
 
                 entitlements = dict(next_tier.get("entitlements") or {})
@@ -268,10 +269,10 @@ class SubscriptionService:
                 price_per_seat = seat_result["price_per_seat"]
 
                 ai_keys = list(next_tier.get("included_ai_features") or [])
-                ai_monthly = Decimal(0)
+                ai_monthly = 0
                 if ai_keys:
                     ai_result = compute_ai_monthly(ai_prices, ai_keys)
-                    ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
+                    ai_monthly = ai_result["ai_price_per_month"]
 
                 # Use pending_covered_users if a seat reduction is scheduled,
                 # since that is the seat count that will be charged at renewal.
@@ -282,27 +283,15 @@ class SubscriptionService:
                     else (subscription.get("covered_users") or 1)
                 )
 
-                period_start_raw = subscription.get("period_start")
-                if period_end_raw and period_start_raw:
-                    period_end_dt = datetime.fromisoformat(
-                        str(period_end_raw).replace("Z", "+00:00")
-                    )
-                    period_start_dt = datetime.fromisoformat(
-                        str(period_start_raw).replace("Z", "+00:00")
-                    )
-                    period_days = (
-                        period_end_dt.date() - period_start_dt.date()
-                    ).days + 1
-                    period_months = max(1, round(period_days / 30))
-                else:
-                    period_months = 1
-
-                subtotal = round_charge(
-                    (price_per_seat * covered_users + ai_monthly)
-                    * Decimal(period_months)
+                period_months = infer_period_months(subscription)
+                totals = compute_client_total(
+                    price_per_seat=price_per_seat,
+                    seats=covered_users,
+                    ai_price_per_month=ai_monthly,
+                    period_months=period_months,
                 )
-                vat_result = apply_vat(subtotal, vat_rate or 0)
-                next_billing_amount = float(vat_result["client_total"])
+                vat_result = apply_vat(totals["client_total"], vat_rate or 0)
+                next_billing_amount = vat_result["client_total"]
                 next_billing_currency = currency
             except Exception:
                 logger.exception(
@@ -810,6 +799,16 @@ class SubscriptionService:
                 detail=f"Unknown tier '{new_tier_slug}'",
             )
 
+        # Idempotency: skip if already on the target tier (webhook retry).
+        if str(active_sub.get("tier_id")) == str(new_tier["id"]):
+            logger.info(
+                "change_tier_immediate: subscription already on tier %s "
+                "for estate_id=%s — skipping (idempotent retry)",
+                new_tier_slug,
+                estate_id,
+            )
+            return active_sub
+
         subscription_id = str(active_sub["id"])
         period_end_raw = active_sub.get("period_end")
         period_end = datetime.fromisoformat(
@@ -899,20 +898,25 @@ class SubscriptionService:
             "tier_slug": new_tier_slug,
         }
 
-    async def _update_paystack_plan_for_tier(
+    async def _recompute_and_update_paystack_plan(
         self,
         *,
         estate_id: str,
         tier: dict,
+        seats: int,
         active_sub: dict,
         sub_code: str,
+        reason: str,
     ) -> None:
-        """Best-effort Paystack plan amount update for a tier change.
+        """Shared logic for best-effort Paystack plan amount updates.
 
-        Computes the full-period price for ``tier`` (seat price ×
-        covered_users × period_months) and updates the Paystack plan so
-        the next auto-renewal charges the correct amount. Logs and returns
-        silently on any failure — the DB change is already committed.
+        Computes the full-period price for ``tier`` at ``seats`` seats
+        and updates the Paystack plan so the next auto-renewal charges
+        the correct amount.  Logs and returns silently on any failure —
+        the DB change is already committed.
+
+        ``reason`` is used in log messages (e.g. "tier change",
+        "seat change").
         """
         # Late import avoids a circular dependency; CheckoutService does
         # not import SubscriptionService.
@@ -926,46 +930,30 @@ class SubscriptionService:
                 ai_prices,
                 _currency,
                 vat_rate,
+                _catalog,
             ) = await checkout_svc._pricing_context(estate_id)
             entitlements = dict(tier.get("entitlements") or {})
             included_keys = extract_included_keys(entitlements)
-            seat_result = compute_price_per_seat(service_prices, included_keys)
-            price_per_seat = Decimal(str(seat_result["price_per_seat"]))
+            price_per_seat = compute_price_per_seat(
+                service_prices, included_keys
+            )["price_per_seat"]
 
             ai_keys = list(tier.get("included_ai_features") or [])
-            ai_monthly = Decimal(0)
+            ai_monthly = 0
             if ai_keys:
-                ai_result = compute_ai_monthly(ai_prices, ai_keys)
-                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
+                ai_monthly = compute_ai_monthly(ai_prices, ai_keys)[
+                    "ai_price_per_month"
+                ]
 
-            pending_seats = active_sub.get("pending_covered_users")
-            covered_users = int(
-                pending_seats
-                if pending_seats is not None
-                else (active_sub.get("covered_users") or 1)
+            period_months = infer_period_months(active_sub)
+            totals = compute_client_total(
+                price_per_seat=price_per_seat,
+                seats=seats,
+                ai_price_per_month=ai_monthly,
+                period_months=period_months,
             )
-            period_end_raw = active_sub.get("period_end")
-            period_start_raw = active_sub.get("period_start")
-            if period_end_raw and period_start_raw:
-                period_end_dt = datetime.fromisoformat(
-                    str(period_end_raw).replace("Z", "+00:00")
-                )
-                period_start_dt = datetime.fromisoformat(
-                    str(period_start_raw).replace("Z", "+00:00")
-                )
-                period_days = (
-                    period_end_dt.date() - period_start_dt.date()
-                ).days + 1
-                period_months = max(1, round(period_days / 30))
-            else:
-                period_months = 1
-
-            subtotal = round_charge(
-                (price_per_seat * covered_users + ai_monthly)
-                * Decimal(period_months)
-            )
-            vat = apply_vat(subtotal, vat_rate)
-            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
+            vat = apply_vat(totals["client_total"], vat_rate)
+            new_amount_kobo = vat["client_total"]
 
             if not self._paystack:
                 return
@@ -979,13 +967,13 @@ class SubscriptionService:
                 plan_code,
                 amount_kobo=new_amount_kobo,
                 name=(
-                    f"GatePass - {tier_slug} - "
-                    f"{covered_users} seats - {interval}"
+                    f"GatePass - {tier_slug} - " f"{seats} seats - {interval}"
                 ),
             )
             logger.info(
-                "Updated Paystack plan for tier change estate_id=%s "
+                "Updated Paystack plan for %s estate_id=%s "
                 "plan_code=%s tier=%s new_amount_kobo=%s",
+                reason,
                 estate_id,
                 plan_code,
                 tier_slug,
@@ -993,12 +981,37 @@ class SubscriptionService:
             )
         except Exception:
             logger.exception(
-                "Failed to update Paystack plan for tier change "
+                "Failed to update Paystack plan for %s "
                 "estate_id=%s tier=%s — DB updated but "
                 "auto-renewal amount may be stale",
+                reason,
                 estate_id,
                 tier.get("slug"),
             )
+
+    async def _update_paystack_plan_for_tier(
+        self,
+        *,
+        estate_id: str,
+        tier: dict,
+        active_sub: dict,
+        sub_code: str,
+    ) -> None:
+        """Best-effort Paystack plan amount update for a tier change."""
+        pending_seats = active_sub.get("pending_covered_users")
+        covered_users = int(
+            pending_seats
+            if pending_seats is not None
+            else (active_sub.get("covered_users") or 1)
+        )
+        await self._recompute_and_update_paystack_plan(
+            estate_id=estate_id,
+            tier=tier,
+            seats=covered_users,
+            active_sub=active_sub,
+            sub_code=sub_code,
+            reason="tier change",
+        )
 
     async def schedule_tier_change(
         self,
@@ -1290,108 +1303,29 @@ class SubscriptionService:
     ) -> None:
         """Best-effort Paystack plan amount update for a seat count change.
 
-        Computes the full-period price for ``new_seats`` seats and updates
-        the Paystack plan so the next auto-renewal charges the correct
-        amount. When a tier change is pending, uses the pending tier's
-        pricing so the plan reflects what will actually be charged at
-        renewal. Logs and returns silently on any failure.
+        When a tier change is pending, uses the pending tier's pricing so
+        the plan reflects what will actually be charged at renewal.
         """
-        from app.services.checkout_service import CheckoutService
+        # Resolve the effective tier (pending tier takes priority).
+        pending_slug = active_sub.get("pending_tier_slug")
+        if pending_slug:
+            tier = await self.repo.get_tier_by_slug(pending_slug)
+        else:
+            tier_id = str(active_sub.get("tier_id") or "")
+            tier = await self.repo.get_tier_by_id(tier_id) if tier_id else None
+        if not tier:
+            return
+        if tier.get("is_custom"):
+            return  # Custom tier has negotiated pricing; do not overwrite plan amount
 
-        try:
-            checkout_svc = CheckoutService(self.repo)
-            (
-                _country,
-                service_prices,
-                ai_prices,
-                _currency,
-                vat_rate,
-            ) = await checkout_svc._pricing_context(estate_id)
-
-            # Use the pending tier if a tier change is scheduled, so
-            # the plan amount matches what renewal will actually charge.
-            pending_slug = active_sub.get("pending_tier_slug")
-            if pending_slug:
-                tier = await self.repo.get_tier_by_slug(pending_slug)
-            else:
-                tier_id = str(active_sub.get("tier_id") or "")
-                tier = (
-                    await self.repo.get_tier_by_id(tier_id)
-                    if tier_id
-                    else None
-                )
-            if not tier:
-                return
-            if tier.get("is_custom"):
-                return  # Custom tier has negotiated pricing; do not overwrite plan amount
-
-            entitlements = dict(tier.get("entitlements") or {})
-            included_keys = extract_included_keys(entitlements)
-            seat_result = compute_price_per_seat(service_prices, included_keys)
-            price_per_seat = Decimal(str(seat_result["price_per_seat"]))
-
-            ai_keys = list(tier.get("included_ai_features") or [])
-            ai_monthly = Decimal(0)
-            if ai_keys:
-                ai_result = compute_ai_monthly(ai_prices, ai_keys)
-                ai_monthly = Decimal(str(ai_result["ai_price_per_month"]))
-
-            period_end_raw = active_sub.get("period_end")
-            period_start_raw = active_sub.get("period_start")
-            if period_end_raw and period_start_raw:
-                period_end_dt = datetime.fromisoformat(
-                    str(period_end_raw).replace("Z", "+00:00")
-                )
-                period_start_dt = datetime.fromisoformat(
-                    str(period_start_raw).replace("Z", "+00:00")
-                )
-                period_days = (
-                    period_end_dt.date() - period_start_dt.date()
-                ).days + 1
-                period_months = max(1, round(period_days / 30))
-            else:
-                period_months = 1
-
-            subtotal = round_charge(
-                (price_per_seat * new_seats + ai_monthly)
-                * Decimal(period_months)
-            )
-            vat = apply_vat(subtotal, vat_rate)
-            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
-
-            if not self._paystack:
-                return
-            sub_data = await self._paystack.get_subscription(sub_code)
-            plan_code = (sub_data.get("plan") or {}).get("plan_code", "")
-            if not plan_code:
-                return
-            interval = (sub_data.get("plan") or {}).get("interval", "monthly")
-            tier_slug = tier.get("slug", "")
-            await self._paystack.update_plan(
-                plan_code,
-                amount_kobo=new_amount_kobo,
-                name=(
-                    f"GatePass - {tier_slug} - "
-                    f"{new_seats} seats - {interval}"
-                ),
-            )
-            logger.info(
-                "Updated Paystack plan for seat change estate_id=%s "
-                "plan_code=%s tier=%s new_seats=%s new_amount_kobo=%s",
-                estate_id,
-                plan_code,
-                tier_slug,
-                new_seats,
-                new_amount_kobo,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to update Paystack plan for seat change "
-                "estate_id=%s new_seats=%s — DB updated but "
-                "auto-renewal amount may be stale",
-                estate_id,
-                new_seats,
-            )
+        await self._recompute_and_update_paystack_plan(
+            estate_id=estate_id,
+            tier=tier,
+            seats=new_seats,
+            active_sub=active_sub,
+            sub_code=sub_code,
+            reason="seat change",
+        )
 
     # ── Access provisioning ────────────────────────────────────────────────
 

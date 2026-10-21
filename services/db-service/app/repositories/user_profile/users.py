@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import Users as TableModel
 from app.schemas.user_profile.users import (
+    RoleCountItem,
+    RoleCountsResponse,
     CreateRequest,
     CreateResponse,
     DeleteResponse,
@@ -429,5 +431,41 @@ class UsersRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def get_role_counts(
+        self,
+        estate_id: UUID,
+        status: bool | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> RoleCountsResponse:
+        query = select(
+            cast(TableModel.role, String).label("role"),
+            func.count().label("count"),
+        ).where(
+            TableModel.is_deleted == False,  # noqa E712
+            TableModel.estate_id == estate_id,
+        )
+
+        if status is not None:
+            query = query.where(TableModel.status == status)
+        if from_date is not None:
+            query = query.where(TableModel.created_at >= from_date)
+        if to_date is not None:
+            query = query.where(TableModel.created_at <= to_date)
+
+        query = query.group_by(TableModel.role)
+
+        try:
+            result = await self.session.execute(query)
+            rows = result.all()
+            items = [
+                RoleCountItem(role=row.role, count=row.count) for row in rows
+            ]
+            return RoleCountsResponse(items=items)
+        except SQLAlchemyError as e:
+            message = "Database error in getting role counts"
             logger.exception(message)
             raise DatabaseError(message) from e
