@@ -1,17 +1,38 @@
+import logging
 from typing import AsyncGenerator
 
 import httpx
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
 
-def _raise_if_client_error(e: httpx.HTTPStatusError) -> None:
-    """Re-raise 4xx responses from downstream services as HTTPException."""
-    if 400 <= e.response.status_code < 500:
-        try:
-            detail = e.response.json().get("detail", e.response.text)
-        except Exception:
-            detail = e.response.text
-        raise HTTPException(status_code=e.response.status_code, detail=detail)
+_UNAVAILABLE = "Downstream service unavailable"
+
+
+def _response_detail(e: httpx.HTTPStatusError) -> str:
+    try:
+        return e.response.json().get("detail", e.response.text)
+    except Exception:
+        return e.response.text
+
+
+def _raise_for_status(e: httpx.HTTPStatusError) -> None:
+    """Re-raise a downstream HTTP failure.
+
+    A 5xx becomes 503 so an outage is not mistaken for a missing record.
+    Every other status, including 3xx and 4xx, keeps its own code.
+    """
+    status_code = e.response.status_code
+    if status_code >= 500:
+        logger.warning("Downstream %s from %s", status_code, e.request.url)
+        raise HTTPException(status_code=503, detail=_UNAVAILABLE)
+    raise HTTPException(status_code=status_code, detail=_response_detail(e))
+
+
+def _raise_if_unavailable(e: httpx.RequestError) -> None:
+    """A connection failure or timeout is a 503, not a missing record."""
+    logger.warning("Downstream request failed: %s", e)
+    raise HTTPException(status_code=503, detail=_UNAVAILABLE)
 
 
 class AsyncHttpHandler:
@@ -38,16 +59,9 @@ class AsyncHttpHandler:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            _raise_if_client_error(e)
-            print(
-                f"GET request failed with status {e.response.status_code}:"
-                f" {e.response.text}"
-            )
+            _raise_for_status(e)
         except httpx.RequestError as e:
-            print(f"GET request encountered a network error: {e}")
-        except Exception as e:
-            print(f"GET request unexpected error: {e}")
-        return None
+            _raise_if_unavailable(e)
 
     async def async_post(
         self,
@@ -69,16 +83,9 @@ class AsyncHttpHandler:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            _raise_if_client_error(e)
-            print(
-                f"POST request failed with status {e.response.status_code}"
-                f": {e.response.text}"
-            )
+            _raise_for_status(e)
         except httpx.RequestError as e:
-            print(f"POST request encountered a network error: {e}")
-        except Exception as e:
-            print(f"POST request unexpected error: {e}")
-        return None
+            _raise_if_unavailable(e)
 
     async def async_put(
         self,
@@ -95,16 +102,9 @@ class AsyncHttpHandler:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            _raise_if_client_error(e)
-            print(
-                f"PUT request failed with status {e.response.status_code}"
-                f": {e.response.text}"
-            )
+            _raise_for_status(e)
         except httpx.RequestError as e:
-            print(f"PUT request encountered a network error: {e}")
-        except Exception as e:
-            print(f"PUT request unexpected error: {e}")
-        return None
+            _raise_if_unavailable(e)
 
     async def async_patch(
         self,
@@ -126,17 +126,9 @@ class AsyncHttpHandler:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            _raise_if_client_error(e)
-            print(
-                f"PATCH request failed"
-                f" with status {e.response.status_code}"
-                f": {e.response.text}"
-            )
+            _raise_for_status(e)
         except httpx.RequestError as e:
-            print(f"PATCH request encountered a network error: {e}")
-        except Exception as e:
-            print(f"PATCH request unexpected error: {e}")
-        return None
+            _raise_if_unavailable(e)
 
     async def async_delete(
         self,
@@ -150,17 +142,9 @@ class AsyncHttpHandler:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            _raise_if_client_error(e)
-            print(
-                f"DELETE request failed"
-                f" with status {e.response.status_code}"
-                f": {e.response.text}"
-            )
+            _raise_for_status(e)
         except httpx.RequestError as e:
-            print(f"DELETE request encountered a network error: {e}")
-        except Exception as e:
-            print(f"DELETE request unexpected error: {e}")
-        return None
+            _raise_if_unavailable(e)
 
 
 handler = AsyncHttpHandler()
