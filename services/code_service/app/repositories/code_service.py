@@ -171,17 +171,25 @@ class CodeServiceRepository:
         Called after a new code row is persisted so only one active code
         remains. Failures on individual deletes are logged and do not roll back
         the new code.
+
+        Search orders by ``created_at`` (newest first) and hides rows with
+        ``is_deleted`` set. Soft-delete writes ``is_deleted`` and ``deleted_at``
+        and leaves ``created_at`` unchanged, so the row leaves the result set
+        and the codes behind it keep their order and slide forward into the
+        gap. Page 1 of codes 1–50, after deleting 2–50, becomes code 1 followed
+        by what used to be 51, 52, 53, and so on. Asking for page 2 would skip
+        those. Always re-read page 1 until a pass deletes nothing.
         """
         search_url = (
             f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/search"
         )
-        page = 1
         limit = 50
+        deleted_ids: set[str] = set()
         while True:
             params = {
                 "user_id": user_id,
                 "estate_id": estate_id,
-                "page": page,
+                "page": 1,
                 "limit": limit,
             }
             try:
@@ -200,13 +208,18 @@ class CodeServiceRepository:
                 )
                 return
 
-            items = existing.get("items") or []
+            items = (existing or {}).get("items") or []
             if not items:
                 break
 
+            deleted_any = False
             for item in items:
                 old_id = item.get("id")
-                if not old_id or str(old_id) == str(keep_id):
+                if (
+                    not old_id
+                    or str(old_id) == str(keep_id)
+                    or str(old_id) in deleted_ids
+                ):
                     continue
                 delete_url = (
                     f"{settings.DB_SERVICE_URL}"
@@ -214,20 +227,21 @@ class CodeServiceRepository:
                 )
                 try:
                     await ahttp_client.async_delete(delete_url)
+                    deleted_ids.add(str(old_id))
+                    deleted_any = True
                     logger.info(
                         "Soft-deleted prior resident access code id=%s",
                         old_id,
                     )
                 except Exception as exc:
                     logger.warning(
-                        "Failed to soft-delete prior access code " "id=%s: %s",
+                        "Failed to soft-delete prior access code id=%s: %s",
                         old_id,
                         exc,
                     )
 
-            if len(items) < limit:
+            if not deleted_any:
                 break
-            page += 1
 
     async def _getitem(
         self,
