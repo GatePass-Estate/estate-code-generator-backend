@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Column, ForeignKey, Numeric, String
+from sqlalchemy import BigInteger, Column, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from app.models.base import BaseModelDB
@@ -24,7 +24,7 @@ class PaymentTransaction(BaseModelDB):
         ForeignKey("core.payment_checkout_session.id"),
         nullable=True,
     )
-    amount = Column(Numeric(18, 2), nullable=False)
+    amount = Column(BigInteger, nullable=False)
     currency_code = Column(String, nullable=False)
     status = Column(String, nullable=False)
     provider_reference = Column(String, nullable=True)

@@ -101,7 +101,7 @@ class AdminRepository:
         )
         response = await self.client.async_get(url)
 
-        if not response:
+        if not response or not response.get("items"):
             raise HTTPException(
                 status_code=404,
                 detail=f"No primary admin found for estate ID {estate_id}.",
@@ -141,8 +141,10 @@ class AdminRepository:
             f"estate_id={estate_id}&is_primary=true"
         )
         response = await self.client.async_get(url)
-        response = response["items"]
+        if not response or not response.get("items"):
+            return False
 
-        if response and not response[0]["is_deleted"]:
+        items = response["items"]
+        if items and not items[0]["is_deleted"]:
             return True
         return False

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any
 
 from app.core.config import settings
@@ -13,7 +12,8 @@ from app.libs.notify import fire_notify
 from app.repositories.db_revenue import DbRevenueRepository
 from app.services.ai_grant_sync import setup_standalone_ai_subscription
 from app.services.entitlement_service import EntitlementService
-from app.services.pricing_service import apply_vat, round_charge
+from app.libs.period_dating import compute_period_end
+from app.services.pricing_service import apply_vat, compute_client_total
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -191,16 +191,12 @@ class WebhookService:
             #    active subscription window at proration time.
             #    VAT must be applied to the delta because old_amount_kobo
             #    is already VAT-inclusive.
-            price_per_seat = Decimal(
-                str(pricing_snapshot.get("price_per_seat") or 0)
-            )
+            price_per_seat = int(pricing_snapshot.get("price_per_seat") or 0)
             period_months = int(pricing_snapshot.get("period_months") or 1)
-            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
-            delta_subtotal = round_charge(
-                price_per_seat * period_months * seats_added
-            )
-            delta_vat = round_charge(delta_subtotal * vat_rate / Decimal(100))
-            delta_kobo = int((delta_subtotal + delta_vat) * 100)
+            vat_rate = pricing_snapshot.get("vat_rate") or 0
+            delta_subtotal = price_per_seat * period_months * seats_added
+            vat_info = apply_vat(delta_subtotal, vat_rate)
+            delta_kobo = vat_info["client_total"]
             new_amount_kobo = old_amount_kobo + delta_kobo
 
             # 3. Update the Paystack plan.
@@ -262,21 +258,21 @@ class WebhookService:
                 return
 
             interval: str = plan.get("interval", "monthly")
-            new_price_per_seat = Decimal(
-                str(pricing_snapshot.get("new_price_per_seat") or 0)
+            new_price_per_seat = int(
+                pricing_snapshot.get("new_price_per_seat") or 0
             )
-            new_ai_monthly = Decimal(
-                str(pricing_snapshot.get("new_ai_monthly") or 0)
-            )
+            new_ai_monthly = int(pricing_snapshot.get("new_ai_monthly") or 0)
             covered_users = int(pricing_snapshot.get("covered_users") or 1)
             period_months = int(pricing_snapshot.get("period_months") or 1)
-            vat_rate = Decimal(str(pricing_snapshot.get("vat_rate") or 0))
-            subtotal = round_charge(
-                (new_price_per_seat * covered_users + new_ai_monthly)
-                * period_months
+            vat_rate = pricing_snapshot.get("vat_rate") or 0
+            totals = compute_client_total(
+                price_per_seat=new_price_per_seat,
+                seats=covered_users,
+                ai_price_per_month=new_ai_monthly,
+                period_months=period_months,
             )
-            vat = apply_vat(subtotal, vat_rate)
-            new_amount_kobo = int(Decimal(str(vat["client_total"])) * 100)
+            vat = apply_vat(totals["client_total"], vat_rate)
+            new_amount_kobo = vat["client_total"]
             new_name = (
                 f"GatePass - {new_tier_slug} - "
                 f"{covered_users} seats - {interval}"
@@ -343,7 +339,7 @@ class WebhookService:
             )
             return
 
-        expected_kobo = int(Decimal(str(session["amount"])) * 100)
+        expected_kobo = int(session["amount"])
         actual_kobo = int(verified.get("amount") or 0)
         if actual_kobo != expected_kobo:
             logger.error(
@@ -419,7 +415,7 @@ class WebhookService:
                         {"auto_renew": False},
                     )
                 else:
-                    amount_kobo = int(Decimal(str(session["amount"])) * 100)
+                    amount_kobo = int(session["amount"])
                     await self._setup_recurring_billing(
                         estate_id=estate_id,
                         subscription_id=result["subscription_id"],
@@ -518,14 +514,29 @@ class WebhookService:
                 catalog = await self.repo.get_ai_feature_map()
                 period_months = int(metadata.get("period_months", 1))
                 interval = _MONTHS_TO_INTERVAL.get(period_months, "monthly")
-                amount_kobo = int(Decimal(str(session["amount"])) * 100)
                 currency = session.get("currency_code", "NGN")
+
+                # Build per-feature price lookup from the pricing
+                # snapshot so each Paystack plan is charged its own
+                # amount (not the total session amount).
+                snapshot = session.get("pricing_snapshot") or {}
+                vat_rate = snapshot.get("vat_rate", 0)
+                line_item_map = {
+                    li["key"]: int(li["unit_price"])
+                    for li in (snapshot.get("line_items") or [])
+                    if li.get("kind") == "ai"
+                }
+
                 for item in features:
                     feature_key = item.get("feature_key", "")
                     ai_feature = catalog.get(feature_key)
                     grant = item.get("grant")
                     if not ai_feature or not grant:
                         continue
+                    feature_unit = line_item_map.get(feature_key, 0)
+                    feature_subtotal = feature_unit * period_months
+                    feature_vat = apply_vat(feature_subtotal, vat_rate)
+                    feature_amount = feature_vat["client_total"]
                     await setup_standalone_ai_subscription(
                         self.repo,
                         self._paystack,
@@ -533,7 +544,7 @@ class WebhookService:
                         ai_feature=ai_feature,
                         customer_email=customer_email,
                         authorization_code=authorization_code,
-                        amount_kobo=amount_kobo,
+                        amount_kobo=feature_amount,
                         billing_interval=interval,
                         currency=currency,
                     )
@@ -675,7 +686,7 @@ class WebhookService:
                 )
 
                 _checkout = CheckoutService(self.repo)
-                (_, _sp, _ap, _, _vr) = await _checkout._pricing_context(
+                (_, _sp, _ap, _, _vr, _) = await _checkout._pricing_context(
                     estate_id
                 )
                 _tier = await self.repo.get_tier_by_id(
@@ -684,24 +695,25 @@ class WebhookService:
                 if _tier:
                     _ent = dict(_tier.get("entitlements") or {})
                     _keys = _eik(_ent)
-                    _pps = Decimal(str(_cpps(_sp, _keys)["price_per_seat"]))
+                    _pps = _cpps(_sp, _keys)["price_per_seat"]
                     _ai_keys = list(_tier.get("included_ai_features") or [])
-                    _aim = Decimal(0)
+                    _aim = 0
                     if _ai_keys:
-                        _aim = Decimal(
-                            str(_cam(_ap, _ai_keys)["ai_price_per_month"])
-                        )
+                        _aim = _cam(_ap, _ai_keys)["ai_price_per_month"]
                     _pending = subscription.get("pending_covered_users")
                     _covered = int(
                         _pending
                         if _pending is not None
                         else (subscription.get("covered_users") or 1)
                     )
-                    _subtotal = (_pps * _covered + _aim) * period_months
-                    _vat = _av(_subtotal, _vr)
-                    expected_kobo = int(
-                        Decimal(str(_vat["client_total"])) * 100
+                    _totals = compute_client_total(
+                        price_per_seat=_pps,
+                        seats=_covered,
+                        ai_price_per_month=_aim,
+                        period_months=period_months,
                     )
+                    _vat = _av(_totals["client_total"], _vr)
+                    expected_kobo = _vat["client_total"]
                     if charged_kobo != expected_kobo:
                         logger.warning(
                             "Auto-renewal amount mismatch estate_id=%s "
@@ -723,7 +735,7 @@ class WebhookService:
             {
                 "estate_id": estate_id,
                 "checkout_session_id": None,
-                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
+                "amount": data.get("amount", 0),
                 # Prefer currency from the event; fall back to sub row.
                 "currency_code": (
                     data.get("currency")
@@ -767,14 +779,29 @@ class WebhookService:
         except (ValueError, AttributeError):
             paid_at = datetime.now(tz=timezone.utc)
 
-        new_expires_at = paid_at + timedelta(days=30 * period_months)
+        old_expires_raw = ai_grant.get("expires_at")
+        old_expires_at = None
+        if old_expires_raw:
+            try:
+                old_expires_at = datetime.fromisoformat(
+                    str(old_expires_raw).replace("Z", "+00:00")
+                )
+            except (ValueError, AttributeError):
+                pass
+
+        new_expires_at = compute_period_end(
+            paid_at=paid_at,
+            duration=timedelta(days=30 * period_months),
+            old_period_end=old_expires_at,
+            grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
+        )
         estate_id = str(ai_grant["estate_id"])
 
         await self.repo.create_payment_transaction(
             {
                 "estate_id": estate_id,
                 "checkout_session_id": None,
-                "amount": str(Decimal(data.get("amount", 0)) / Decimal(100)),
+                "amount": data.get("amount", 0),
                 "currency_code": data.get("currency", "NGN"),
                 "status": "success",
                 "provider_reference": reference,
@@ -1059,9 +1086,7 @@ class WebhookService:
             {
                 "estate_id": str(session["estate_id"]),
                 "checkout_session_id": str(session["id"]),
-                "amount": str(
-                    Decimal(amount) / Decimal(100)
-                ),  # kobo → major unit
+                "amount": amount,
                 "currency_code": session["currency_code"],
                 "status": "refund",
                 "provider_reference": reference,

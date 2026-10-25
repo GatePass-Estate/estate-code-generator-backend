@@ -53,10 +53,10 @@ def test_quote_vat_applied_after_totals():
         currency_code="NGN",
         country_code="NIGERIA",
     )
-    vat = apply_vat(quote["client_total"], "7.5")
+    vat = apply_vat(quote["client_total"], 750)  # 750 basis points = 7.5%
     assert quote["client_total"] == Decimal("170.00")
-    assert vat["vat_amount"] == Decimal("12.75")
-    assert vat["client_total"] == Decimal("182.75")
+    assert vat["vat_amount"] == 13  # 170 * 750 / 10000 = 12.75 → 13
+    assert vat["client_total"] == 183
 
 
 class _FakeRepo:
@@ -92,9 +92,13 @@ class _FakeRepo:
 @pytest.mark.asyncio
 async def test_price_maps_scales_unit_prices_but_not_vat():
     svc = CheckoutService(_FakeRepo())
-    service_prices, ai_prices, currency, vat_rate = await svc._price_maps(
-        "NIGERIA", 3.0
-    )
+    (
+        service_prices,
+        ai_prices,
+        currency,
+        vat_rate,
+        _catalog,
+    ) = await svc._price_maps("NIGERIA", 3.0)
     assert currency == "NGN"
     assert service_prices["guest_management"] == Decimal("300.00")
     assert ai_prices["access_anomaly_detection_tier_1"] == Decimal("15000.00")

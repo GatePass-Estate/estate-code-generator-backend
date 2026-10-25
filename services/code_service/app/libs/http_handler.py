@@ -27,45 +27,40 @@ def _raise_post_http_error(error: httpx.HTTPStatusError) -> None:
 
 
 class AsyncHttpHandler:
-    def __init__(self):
-        pass
+    def __init__(self, client: httpx.AsyncClient | None = None):
+        self._client = client
+
+    def set_client(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError(
+                "httpx.AsyncClient not initialised — "
+                "ensure the app lifespan has started"
+            )
+        return self._client
 
     async def async_get(
         self, url: str, params: dict = None, headers: dict = None
     ):
-        """
-        Performs an asynchronous GET request using httpx.
-
-        :param url: URL to request.
-        :param params: (Optional) Dictionary of URL parameters.
-        :param headers: (Optional) Dictionary of HTTP headers.
-        :return: Parsed JSON response, or None if an error occurred.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    url, params=params, headers=headers
+        client = self._get_client()
+        try:
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise NotFoundError(
+                    f"GET request failed with status "
+                    f" {e.response.status_code}: {e.response.text}"
                 )
-                # This will raise an error if the response status is 4xx or 5xx
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    raise NotFoundError(
-                        f"GET request failed with status "
-                        f" {e.response.status_code}: {e.response.text}"
-                    )
-                raise Exception(
-                    f"GET request failed with status {e.response.status_code}:"
-                    f" {e.response.text}"
-                )
-            except httpx.RequestError as e:
-                raise Exception(
-                    f"GET request encountered a network error: {e}"
-                )
-            except Exception as e:
-                raise Exception(f"GET request unexpected error: {e}")
-        return None
+            raise Exception(
+                f"GET request failed with status {e.response.status_code}:"
+                f" {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise Exception(f"GET request encountered a network error: {e}")
 
     async def async_post(
         self,
@@ -74,60 +69,35 @@ class AsyncHttpHandler:
         json_data: dict = None,
         headers: dict = None,
     ):
-        """
-        Performs an asynchronous POST request using httpx.
-
-        :param url: URL to request.
-        :param data: (Optional) Dictionary of form data.
-        :param json_data: (Optional) Dictionary of JSON payload.
-        :param headers: (Optional) Dictionary of HTTP headers.
-        :return: Parsed JSON response, or None if an error occurred.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url, data=data, json=json_data, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                _raise_post_http_error(e)
-            except httpx.RequestError as e:
-                raise Exception(
-                    f"POST request encountered a network error: {e}"
-                )
-            except Exception as e:
-                raise Exception(f"POST request unexpected error: {e}")
-        return None
+        client = self._get_client()
+        try:
+            response = await client.post(
+                url, data=data, json=json_data, headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            _raise_post_http_error(e)
+        except httpx.RequestError as e:
+            raise Exception(f"POST request encountered a network error: {e}")
 
     async def async_delete(
         self,
         url: str,
         headers: dict = None,
     ):
-        """
-        Performs an asynchronous DELETE request using httpx.
-
-        :param url: URL to request.
-        :param headers: (Optional) Dictionary of HTTP headers.
-        :return: Parsed JSON response, or None if an error occurred.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.delete(url, headers=headers)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                raise Exception(
-                    f"DELETE req. failed with status {e.response.status_code}"
-                    f": {e.response.text}"
-                )
-            except httpx.RequestError as e:
-                raise Exception(
-                    f"DELETE request encountered a network error: {e}"
-                )
-            except Exception as e:
-                raise Exception(f"DELETE request unexpected error: {e}")
+        client = self._get_client()
+        try:
+            response = await client.delete(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise Exception(
+                f"DELETE req. failed with status {e.response.status_code}"
+                f": {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise Exception(f"DELETE request encountered a network error: {e}")
 
     async def async_patch(
         self,
@@ -136,34 +106,20 @@ class AsyncHttpHandler:
         json_data: dict = None,
         headers: dict = None,
     ):
-        """
-        Performs an asynchronous PATCH request using httpx.
-
-        :param url: URL to request.
-        :param data: (Optional) Dictionary of form data.
-        :param json_data: (Optional) Dictionary of JSON payload.
-        :param headers: (Optional) Dictionary of HTTP headers.
-        :return: Parsed JSON response, or None if an error occurred.
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.patch(
-                    url, data=data, json=json_data, headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                raise Exception(
-                    "PATCH request failed with status "
-                    f"{e.response.status_code}: {e.response.text}"
-                )
-            except httpx.RequestError as e:
-                raise Exception(
-                    f"PATCH request encountered a network error: {e}"
-                )
-            except Exception as e:
-                raise Exception(f"PATCH request unexpected error: {e}")
-        return None
+        client = self._get_client()
+        try:
+            response = await client.patch(
+                url, data=data, json=json_data, headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise Exception(
+                "PATCH request failed with status "
+                f"{e.response.status_code}: {e.response.text}"
+            )
+        except httpx.RequestError as e:
+            raise Exception(f"PATCH request encountered a network error: {e}")
 
 
 handler = AsyncHttpHandler()

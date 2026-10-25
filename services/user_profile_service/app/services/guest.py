@@ -160,12 +160,13 @@ class GuestService:
         return await self.repository.search_guests(request, resident_id)
 
     async def list_guests(
-        self, page: int = 1, limit: int = 10
+        self, resident_id: str, page: int = 1, limit: int = 10
     ) -> ListGuestResponse:
         """
         Lists all guests with pagination.
 
         Args:
+            resident_id: The resident ID to scope the guest list.
             page: Page number for pagination.
             limit: Number of items per page.
 
@@ -173,4 +174,4 @@ class GuestService:
             ListGuestResponse: Guest list with pagination.
         """
         request = SearchGuestRequest(page=page, limit=limit)
-        return await self.repository.search_guests(request)
+        return await self.repository.search_guests(request, resident_id)

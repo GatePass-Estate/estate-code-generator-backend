@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler
@@ -41,6 +41,29 @@ class UserRepository:
         return await self.client.async_get(
             url=f"{self.users_endpoint}/search", params=params
         )
+
+    async def search_all(
+        self,
+        estate_id: Optional[str] = None,
+        role: Optional[str] = None,
+    ) -> List[Dict]:
+        """Paginate through all matching users."""
+        all_items: List[Dict] = []
+        page = 1
+        limit = 1000
+        while True:
+            result = await self.search(
+                estate_id=estate_id,
+                role=role,
+                page=page,
+                limit=limit,
+            )
+            items = (result.get("items") or []) if result else []
+            all_items.extend(items)
+            if len(items) < limit:
+                break
+            page += 1
+        return all_items
 
     async def get(self, user_id: str) -> Optional[Dict]:
         """Get a single user by ID."""

@@ -1,3 +1,4 @@
+import hmac
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -21,7 +22,7 @@ _internal_key_scheme = APIKeyHeader(name="X-Internal-Key", auto_error=False)
 def _verify_internal_key(
     key: str = Depends(_internal_key_scheme),
 ) -> None:
-    if not key or key != settings.INTERNAL_API_KEY:
+    if not key or not hmac.compare_digest(key, settings.INTERNAL_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid or missing internal API key",

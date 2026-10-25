@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import Boolean, Column, ForeignKey, Numeric, String
+from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.base import BaseModelDB
@@ -29,5 +29,5 @@ class FeatureUnitPrice(BaseModelDB):
         ForeignKey("core.ai_feature.id"),
         nullable=True,
     )
-    feature_unit_price = Column(Numeric(18, 2), nullable=False)
+    feature_unit_price = Column(BigInteger, nullable=False)
     is_active = Column(Boolean, nullable=False, server_default="true")

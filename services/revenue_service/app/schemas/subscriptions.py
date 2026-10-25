@@ -78,7 +78,7 @@ class BillingCycleResponse(BaseModel):
     next_tier: dict[str, Any] | None = None
     seat_reduction_scheduled: bool = False
     next_covered_users: int | None = None  # effective seat count at renewal
-    next_billing_amount: float | None = None
+    next_billing_amount: int | None = None
     next_billing_currency: str | None = None
 
 

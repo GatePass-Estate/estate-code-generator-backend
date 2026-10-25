@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -63,7 +64,13 @@ async def paystack_webhook(
         event_id = f"{event_type}:{raw_id}"
     else:
         ref = data.get("reference") or data.get("subscription_code") or ""
-        event_id = f"{event_type}:{ref}" if ref else event_type
+        if ref:
+            event_id = f"{event_type}:{ref}"
+        else:
+            payload_hash = hashlib.sha256(
+                json.dumps(data, sort_keys=True).encode()
+            ).hexdigest()
+            event_id = f"{event_type}:{payload_hash}"
 
     # 2. Dedup: skip events we have already successfully processed.
     existing = await service.repo.get_payment_event_by_event_id(event_id)

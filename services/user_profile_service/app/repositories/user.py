@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Optional, Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from fastapi import HTTPException
 
 from gatepass_rbac import get_role_permissions as fetch_role_permissions
@@ -269,7 +269,7 @@ class UserRepository:
         Returns:
             GetUserResponse containing the user data or None if not found.
         """
-        url = f"{self.users_endpoint}/search?email={email}"
+        url = f"{self.users_endpoint}/search?email={quote(email, safe='')}"
         response = await self.client.async_get(url)
 
         if response and response.get("items"):
@@ -306,7 +306,7 @@ class UserRepository:
         Returns:
             GetUserResponse or None if not found.
         """
-        params = f"email={email}&estate_id={estate_id}"
+        params = f"email={quote(email, safe='')}&estate_id={estate_id}"
         if active_only:
             params += "&status=true"
         url = f"{self.users_endpoint}/search?{params}"
@@ -485,10 +485,10 @@ class UserRepository:
         if estate_id:
             url = (
                 f"{self.users_endpoint}/search"
-                f"?email={email}&estate_id={estate_id}&status=true"
+                f"?email={quote(email, safe='')}&estate_id={estate_id}&status=true"
             )
         else:
-            url = f"{self.users_endpoint}/search?email={email}&status=true"
+            url = f"{self.users_endpoint}/search?email={quote(email, safe='')}&status=true"
         response = await self.client.async_get(url)
 
         if not response or not response.get("items"):

@@ -7,7 +7,7 @@ from gatepass_auth import get_current_user  # noqa: F401
 async def get_user_details(
     http_client: AsyncHttpHandler,
     user_id: str,
-) -> bool:
+) -> dict | None:
     """
     Retrieves user details using a given user_id.
     """

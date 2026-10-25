@@ -17,6 +17,7 @@ from app.schemas.user_profile.users import (
     DeleteResponse,
     GetResponse,
     ListResponse,
+    RoleCountsResponse,
     SearchRequest,
     UpdateRequest,
     UpdateResponse,
@@ -185,7 +186,7 @@ async def search(
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
     page: int = 1,
-    limit: int = 10,
+    limit: int = Query(default=10, le=100),
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
@@ -222,6 +223,33 @@ async def search(
         logger.exception(
             "An unexpected error happened while searching for matches"
         )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/role-counts",
+    response_model=RoleCountsResponse,
+    status_code=status.HTTP_200_OK,
+    description="Get user counts grouped by role for an estate",
+)
+async def role_counts(
+    estate_id: UUID4,
+    status_filter: bool | None = Query(None, alias="status"),
+    from_date: datetime.datetime | None = None,
+    to_date: datetime.datetime | None = None,
+    service: Service = Depends(get_service),
+) -> RoleCountsResponse:
+    try:
+        return await service.get_role_counts(
+            estate_id=estate_id,
+            status=status_filter,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except Exception as e:
+        logger.exception("Error getting role counts")
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e
@@ -277,7 +305,7 @@ async def get(
 )
 async def list_all(
     page: int | None = 1,
-    limit: int | None = 20,
+    limit: int | None = Query(default=20, le=100),
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """

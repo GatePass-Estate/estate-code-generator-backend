@@ -1,7 +1,9 @@
 """FastAPI app for the AI service: anomaly, incident, volume APIs."""
 
 import logging
+from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -9,14 +11,25 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import api_router
 from app.core.config import settings
+from app.libs.http_handler import handler
 
 logger = logging.getLogger("ai-service")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    client = httpx.AsyncClient(timeout=30.0)
+    handler.set_client(client)
+    yield
+    await client.aclose()
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
     root_path="/ai",
+    lifespan=lifespan,
 )
 
 
