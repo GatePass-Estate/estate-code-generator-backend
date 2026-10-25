@@ -124,15 +124,15 @@ def test_invalid_period():
 
 
 def test_apply_vat_percent_after_subtotal():
-    vat = apply_vat(4000, "7.5")
-    assert vat["subtotal"] == Decimal("4000.00")
+    vat = apply_vat(4000, 750)  # 750 basis points = 7.5%
+    assert vat["subtotal"] == 4000
     assert vat["vat_rate"] == Decimal("7.5")
-    assert vat["vat_amount"] == Decimal("300.00")
-    assert vat["client_total"] == Decimal("4300.00")
+    assert vat["vat_amount"] == 300
+    assert vat["client_total"] == 4300
 
 
 def test_apply_vat_rounds_amount_up():
-    vat = apply_vat("33.34", "7.5")
-    # 33.34 * 7.5 / 100 = 2.5005 → 2.51
-    assert vat["vat_amount"] == Decimal("2.51")
-    assert vat["client_total"] == Decimal("35.85")
+    vat = apply_vat(3334, 750)  # 750 basis points = 7.5%
+    # 3334 * 750 / 10000 = 250.05 → 251
+    assert vat["vat_amount"] == 251
+    assert vat["client_total"] == 3585

@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 ADMIN_FEE_KEY = "administrative_fee"
 VAT_KEY = "vat"
 _D100 = Decimal("100")
+_D10000 = Decimal("10000")
 
 
 def omit_vat(mapping: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -40,19 +41,22 @@ def to_int(value: Any) -> int:
 
 
 def apply_vat(amount: int, vat_rate: Any) -> dict[str, Any]:
-    """Add percent VAT to a finished subtotal (kobo).
+    """Add VAT to a finished subtotal (kobo).
 
-    ``vat_rate`` is a percentage (e.g. 7.5).  It is the only value that
-    stays as Decimal — it is a rate, not a monetary amount.
+    ``vat_rate`` is stored as basis points (e.g. 750 = 7.5%).
+    The returned ``vat_rate`` is the human-readable percentage.
     """
     subtotal = to_int(amount)
-    rate = Decimal(str(vat_rate))
+    rate_bps = Decimal(str(vat_rate))
+    rate_pct = rate_bps / _D100
     vat_amount = int(
-        (Decimal(subtotal) * rate / _D100).to_integral_value(rounding=ROUND_UP)
+        (Decimal(subtotal) * rate_bps / _D10000).to_integral_value(
+            rounding=ROUND_UP
+        )
     )
     return {
         "subtotal": subtotal,
-        "vat_rate": rate,
+        "vat_rate": rate_pct,
         "vat_amount": vat_amount,
         "client_total": subtotal + vat_amount,
     }
