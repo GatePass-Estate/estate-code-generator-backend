@@ -126,7 +126,12 @@ class CheckoutInitializeRequest(BaseModel):
     estate_id: str
     customer_email: EmailStr
     checkout_kind: Literal[
-        "tier", "custom", "seat_add", "ai_only", "tier_upgrade_immediate"
+        "tier",
+        "custom",
+        "seat_add",
+        "ai_only",
+        "tier_upgrade_immediate",
+        "renew",
     ]
     tier_slug: str | None = None
     entitlements: dict[str, Any] | None = None
@@ -161,7 +166,8 @@ class CheckoutInitializeRequest(BaseModel):
             )
         if kind == "tier_upgrade_immediate" and not self.tier_slug:
             raise ValueError(
-                "tier_slug is required for checkout_kind='tier_upgrade_immediate'"
+                "tier_slug is required for "
+                "checkout_kind='tier_upgrade_immediate'"
             )
 
         # seat_add and tier_upgrade_immediate have no billing period —
@@ -193,6 +199,13 @@ class CheckoutInitializeRequest(BaseModel):
                 "seats_added",
             },
             "tier_upgrade_immediate": {
+                "entitlements",
+                "covered_users",
+                "seats_added",
+                "ai_feature_keys",
+            },
+            "renew": {
+                "tier_slug",
                 "entitlements",
                 "covered_users",
                 "seats_added",

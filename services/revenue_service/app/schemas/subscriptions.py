@@ -104,3 +104,16 @@ class SeatReductionEligibilityResponse(BaseModel):
     current_seats: int
     active_users: int
     min_allowed_seats: int  # == active_users
+
+
+class RenewalEligibilityResponse(BaseModel):
+    """Response for GET /estate/{id}/renewal-eligibility."""
+
+    estate_id: str
+    can_renew: bool
+    reason: str | None = None
+    current_tier_slug: str | None = None
+    covered_users: int | None = None
+    period_end: str | None = None
+    auto_renew: bool = False
+    grace_days: int = 0

@@ -33,6 +33,30 @@ from app.services.pricing_service import (
 
 logger = logging.getLogger(__name__)
 
+FREE_TIER_SLUG = "access"
+
+
+async def require_paid_subscription(
+    repo: DbRevenueRepository, estate_id: str
+) -> dict:
+    """Return the active subscription or raise if none / free tier."""
+    sub = await repo.get_active_subscription(estate_id)
+    if not sub or sub.get("status") not in ("active", "trialing"):
+        raise HTTPException(404, "No active subscription for estate")
+
+    tier_id = str(sub.get("tier_id") or "")
+    if not tier_id:
+        raise HTTPException(
+            400, "Subscription is missing a tier — contact support."
+        )
+    tier = await repo.get_tier_by_id(tier_id)
+    if not tier or tier.get("slug") == FREE_TIER_SLUG:
+        raise HTTPException(
+            400, "No paid subscription — purchase a plan first."
+        )
+
+    return sub
+
 
 # Subscription writes and AI grant sync are separate HTTP calls to db-service
 # (no distributed transaction). activate/renew retry grant sync on transient
@@ -513,6 +537,72 @@ class SubscriptionService:
             "period_end": period_end.isoformat(),
         }
 
+    async def get_renewal_eligibility(self, estate_id: str) -> dict:
+        """Check whether the estate can renew its subscription."""
+        grace_days = settings.RENEWAL_GRACE_PERIOD_DAYS
+        base = {
+            "estate_id": estate_id,
+            "grace_days": grace_days,
+        }
+
+        sub = await self.repo.get_active_subscription(estate_id)
+        if not sub or sub.get("status") not in ("active", "trialing"):
+            return {
+                **base,
+                "can_renew": False,
+                "reason": "No active subscription for estate",
+            }
+
+        tier_id = str(sub.get("tier_id") or "")
+        tier = await self.repo.get_tier_by_id(tier_id) if tier_id else None
+        tier_slug = (tier.get("slug") if tier else None) or None
+
+        if not tier or tier_slug == FREE_TIER_SLUG:
+            return {
+                **base,
+                "can_renew": False,
+                "reason": ("No paid subscription — purchase a plan first."),
+            }
+
+        auto_renew = bool(sub.get("auto_renew"))
+        covered_users = int(sub.get("covered_users") or 1)
+        period_end_raw = sub.get("period_end")
+        info = {
+            **base,
+            "current_tier_slug": tier_slug,
+            "covered_users": covered_users,
+            "period_end": str(period_end_raw) if period_end_raw else None,
+            "auto_renew": auto_renew,
+        }
+
+        if auto_renew:
+            return {
+                **info,
+                "can_renew": False,
+                "reason": (
+                    "Subscription has auto-renewal enabled — "
+                    "renewal is handled automatically."
+                ),
+            }
+
+        if period_end_raw:
+            period_end = datetime.fromisoformat(
+                str(period_end_raw).replace("Z", "+00:00")
+            )
+            earliest = period_end - timedelta(days=grace_days)
+            if datetime.now(tz=timezone.utc) < earliest:
+                return {
+                    **info,
+                    "can_renew": False,
+                    "reason": (
+                        f"Renewal is only available within "
+                        f"{grace_days} days of the billing "
+                        f"period end ({period_end_raw})."
+                    ),
+                }
+
+        return {**info, "can_renew": True, "reason": None}
+
     async def renew(
         self,
         estate_id: str,
@@ -697,11 +787,7 @@ class SubscriptionService:
                 False when called from the ``subscription.disable`` webhook
                 handler — Paystack already disabled it on their side.
         """
-        subscription = await self.repo.get_active_subscription(estate_id)
-        if not subscription:
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
+        subscription = await require_paid_subscription(self.repo, estate_id)
 
         if call_paystack:
             sub_code = subscription.get("paystack_subscription_code")
@@ -740,21 +826,7 @@ class SubscriptionService:
             raise HTTPException(
                 status_code=400, detail="seats_added must be >= 1"
             )
-        subscription = await self.repo.get_active_subscription(estate_id)
-        if not subscription:
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
-        status = (subscription.get("status") or "").lower()
-        if status not in ("active", "trialing"):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Cannot add seats to a subscription with "
-                    f"status '{status}'. Only active or trialing "
-                    "subscriptions allow mid-period seat additions."
-                ),
-            )
+        subscription = await require_paid_subscription(self.repo, estate_id)
         current = int(subscription.get("covered_users") or 0)
         pending_cleared = subscription.get("pending_covered_users") is not None
         update_payload: dict[str, Any] = {
@@ -1024,14 +1096,7 @@ class SubscriptionService:
         the active subscription, current tier, and new tier so the caller
         can do a best-effort Paystack plan amount update.
         """
-        active_sub = await self.repo.get_active_subscription(estate_id)
-        if not active_sub or active_sub.get("status") not in (
-            "active",
-            "trialing",
-        ):
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
+        active_sub = await require_paid_subscription(self.repo, estate_id)
         if not active_sub.get("auto_renew"):
             raise HTTPException(
                 status_code=400,
@@ -1142,14 +1207,7 @@ class SubscriptionService:
 
     async def get_seat_reduction_eligibility(self, estate_id: str) -> dict:
         """Return whether a seat reduction is possible and the minimum seat count."""
-        sub = await self.repo.get_active_subscription(estate_id)
-        if not sub or (sub.get("status") or "").lower() not in (
-            "active",
-            "trialing",
-        ):
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
+        sub = await require_paid_subscription(self.repo, estate_id)
         current_seats = int(sub.get("covered_users") or 1)
         active_users = await self.repo.get_estate_active_user_count(estate_id)
         can_reduce = (
@@ -1178,14 +1236,7 @@ class SubscriptionService:
         Paystack plan amount best-effort so the next auto-charge reflects the
         lower seat count.
         """
-        sub = await self.repo.get_active_subscription(estate_id)
-        if not sub or (sub.get("status") or "").lower() not in (
-            "active",
-            "trialing",
-        ):
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
+        sub = await require_paid_subscription(self.repo, estate_id)
         if not sub.get("auto_renew"):
             raise HTTPException(
                 status_code=400,
@@ -1254,11 +1305,7 @@ class SubscriptionService:
 
     async def cancel_seat_reduction(self, estate_id: str) -> dict:
         """Cancel a scheduled seat reduction (clears pending_covered_users)."""
-        sub = await self.repo.get_active_subscription(estate_id)
-        if not sub:
-            raise HTTPException(
-                status_code=404, detail="No active subscription for estate"
-            )
+        sub = await require_paid_subscription(self.repo, estate_id)
         if sub.get("pending_covered_users") is None:
             raise HTTPException(
                 status_code=400,

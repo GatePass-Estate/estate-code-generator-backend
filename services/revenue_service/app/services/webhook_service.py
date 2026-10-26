@@ -604,6 +604,61 @@ class WebhookService:
                 {"status": "paid", "paid_at": paid_at.isoformat()},
             )
 
+        elif kind == "renew":
+            period_months = int(metadata.get("period_months", 1))
+            result = await self._sub_svc.renew(
+                estate_id,
+                period_months=period_months,
+                paid_at=paid_at,
+            )
+            await self.repo.update_checkout_session(
+                str(session["id"]),
+                {"status": "paid", "paid_at": paid_at.isoformat()},
+            )
+
+            # Set up recurring billing if the card is reusable.
+            authorization_code = (data.get("authorization") or {}).get(
+                "authorization_code", ""
+            )
+            customer_email = (data.get("customer") or {}).get("email", "")
+            is_reusable = (data.get("authorization") or {}).get(
+                "reusable", False
+            )
+
+            subscription_id = str(
+                (result.get("subscription") or {}).get("id", "")
+            )
+            if authorization_code and customer_email:
+                if not is_reusable:
+                    logger.warning(
+                        "renew: authorization not reusable — "
+                        "marking auto_renew=False "
+                        "estate_id=%s reference=%s",
+                        estate_id,
+                        reference,
+                    )
+                    if subscription_id:
+                        await self.repo.update_estate_subscription(
+                            subscription_id,
+                            {"auto_renew": False},
+                        )
+                else:
+                    amount_kobo = int(session["amount"])
+                    tier_slug = metadata.get("tier_slug", "")
+                    covered_users = int(metadata.get("covered_users", 1))
+                    await self._setup_recurring_billing(
+                        estate_id=estate_id,
+                        subscription_id=subscription_id,
+                        period_months=period_months,
+                        amount_kobo=amount_kobo,
+                        currency=session["currency_code"],
+                        tier_slug=tier_slug,
+                        covered_users=covered_users,
+                        period_end=result.get("period_end", ""),
+                        authorization_code=authorization_code,
+                        customer_email=customer_email,
+                    )
+
     async def _handle_renewal_charge(self, data: dict[str, Any]) -> None:
         """
         Handle charge.success fired by Paystack for an auto-renewal.
