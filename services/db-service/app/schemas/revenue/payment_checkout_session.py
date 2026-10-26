@@ -41,6 +41,7 @@ class CheckoutKind(str, Enum):
     SEAT_ADD = "seat_add"
     AI_ONLY = "ai_only"
     TIER_UPGRADE_IMMEDIATE = "tier_upgrade_immediate"
+    RENEW = "renew"
 
 
 class PaymentCheckoutSessionBase(BaseModel):

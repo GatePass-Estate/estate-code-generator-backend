@@ -30,6 +30,7 @@ from app.schemas.subscriptions import (
     BillingCycleResponse,
     EstateSubscriptionResponse,
     MutationSubscriptionResponse,
+    RenewalEligibilityResponse,
     ScheduleSeatReductionRequest,
     ScheduleSeatReductionResponse,
     ScheduleTierChangeRequest,
@@ -345,6 +346,35 @@ async def cancel_tier_change(
         raise
     except Exception as e:
         logger.exception("cancel_tier_change failed estate_id=%s", estate_id)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/estate/{estate_id}/renewal-eligibility",
+    response_model=RenewalEligibilityResponse,
+)
+async def get_renewal_eligibility(
+    estate_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionService = Depends(get_service),
+):
+    """Return whether the estate can renew its subscription.
+
+    The FE uses this to decide whether to show the renewal UI.
+    """
+    require_admin(current_user["role"])
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.get_renewal_eligibility(estate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "get_renewal_eligibility failed estate_id=%s",
+            estate_id,
+        )
         raise HTTPException(
             status_code=500, detail="Internal server error"
         ) from e

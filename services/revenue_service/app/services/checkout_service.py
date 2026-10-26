@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -24,6 +24,7 @@ from app.libs.entitlement_validation import (
 from app.libs.period_dating import infer_period_months
 from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.estate import EstateTypeMultiplier
+from app.services.subscription_service import require_paid_subscription
 from app.services.pricing_service import (
     VAT_KEY,
     to_int,
@@ -141,17 +142,7 @@ class SeatAddCheckoutHandler(CheckoutHandler):
     """Handles 'seat_add' checkout kind."""
 
     async def guard(self, request: dict[str, Any]) -> None:
-        active_sub = await self._repo.get_active_subscription(
-            request["estate_id"]
-        )
-        if not active_sub or active_sub.get("status") not in (
-            "active",
-            "trialing",
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Seats can only be added to an active subscription.",
-            )
+        await require_paid_subscription(self._repo, request["estate_id"])
 
     async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
         result = await self._svc.prorate_seats(
@@ -398,12 +389,92 @@ class TierChangeCheckoutHandler(CheckoutHandler):
         }
 
 
+class RenewCheckoutHandler(CheckoutHandler):
+    """Handles 'renew' checkout kind for manual-renewal users."""
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        super().__init__(repo, svc)
+        self._active_sub: dict[str, Any] | None = None
+        self._tier_slug: str = ""
+        self._covered_users: int = 0
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        sub = await require_paid_subscription(self._repo, request["estate_id"])
+        tier = await self._repo.get_tier_by_id(str(sub["tier_id"]))
+        if not tier:
+            raise HTTPException(
+                status_code=500,
+                detail="Current subscription tier not found",
+            )
+
+        # Only allow renewal within the grace window before expiry.
+        grace_days = settings.RENEWAL_GRACE_PERIOD_DAYS
+        period_end_raw = sub.get("period_end")
+        if period_end_raw:
+            period_end = datetime.fromisoformat(
+                str(period_end_raw).replace("Z", "+00:00")
+            )
+            earliest_renew = period_end - timedelta(days=grace_days)
+            if datetime.now(tz=timezone.utc) < earliest_renew:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Renewal is only available within "
+                        f"{grace_days} days of the billing "
+                        f"period end ({period_end_raw})."
+                    ),
+                )
+
+        if sub.get("auto_renew"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Subscription has auto-renewal enabled — "
+                    "renewal is handled automatically."
+                ),
+            )
+
+        self._active_sub = sub
+        self._tier_slug = tier.get("slug", "")
+        self._covered_users = int(sub.get("covered_users") or 1)
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote(
+            {
+                "estate_id": request["estate_id"],
+                "tier_slug": self._tier_slug,
+                "covered_users": self._covered_users,
+                "period_months": request["period_months"],
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "renew",
+            "initiated_by_user_id": user_id,
+            "tier_slug": self._tier_slug,
+            "covered_users": self._covered_users,
+            "period_months": request.get("period_months"),
+        }
+
+
 _HANDLERS: dict[str, type[CheckoutHandler]] = {
     "tier": SubscriptionCheckoutHandler,
     "custom": SubscriptionCheckoutHandler,
     "seat_add": SeatAddCheckoutHandler,
     "ai_only": AiOnlyCheckoutHandler,
     "tier_upgrade_immediate": TierChangeCheckoutHandler,
+    "renew": RenewCheckoutHandler,
 }
 
 
