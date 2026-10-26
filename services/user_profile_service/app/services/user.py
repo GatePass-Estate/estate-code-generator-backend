@@ -732,7 +732,9 @@ class UserService:
         if not response or "items" not in response:
             return {}
 
-        return {item["role"]: item["count"] for item in response["items"]}
+        return {
+            item["role"].lower(): item["count"] for item in response["items"]
+        }
 
     async def get_estate_id_by_user_id(self, user_id: str) -> str:
         """
