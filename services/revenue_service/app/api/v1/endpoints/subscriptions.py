@@ -96,6 +96,20 @@ async def list_subscription_tiers(
 
 
 @router.get(
+    "/tiers/my-tier", response_model=SubscriptionTierCatalogItem | None
+)
+async def get_my_tier(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: SubscriptionTierCatalogService = Depends(
+        get_tier_catalog_service
+    ),
+):
+    """Return the caller's current subscription tier, or null."""
+    estate_id = current_user.get("estate_id")
+    return await service.get_my_tier(estate_id)
+
+
+@router.get(
     "/tiers/by-slug/{slug}",
     response_model=SubscriptionTierCatalogItem,
 )
