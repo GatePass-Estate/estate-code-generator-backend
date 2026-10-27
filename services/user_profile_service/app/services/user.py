@@ -388,6 +388,15 @@ class UserService:
                 status_code=400, detail="Account already activated"
             )
 
+        # Block if another account with the same email is already active
+        if user.estate_id and await self.repository.check_active_email_exists(
+            user.email, str(user.estate_id)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Another account with this email is already active in this estate.",
+            )
+
         # Hash password and activate account
         hashed_password = hash_password(request.new_password)
 

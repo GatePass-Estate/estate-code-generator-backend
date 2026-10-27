@@ -2,6 +2,14 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+_FRONTEND_URLS = {
+    "dev": "http://localhost:8081",
+    "staging": "https://staging.gatepassng.com",
+    "production": "https://app.gatepassng.com",
+}
+
 
 class Settings(BaseSettings):
     """
@@ -15,6 +23,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "user-profile-service Service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "user-profile-service Service for GatePass"
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     # Configuration for the RDB Database
@@ -53,7 +62,8 @@ class Settings(BaseSettings):
         os.getenv("NOTIFICATION_PURGE_MIN_AGE_DAYS", 90)
     )
     FRONTEND_BASE_URL: str = os.getenv(
-        "FRONTEND_BASE_URL", "https://app.gatepassng.com"
+        "FRONTEND_BASE_URL",
+        _FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS["dev"]),
     )
 
     # Revenue / billing entitlements

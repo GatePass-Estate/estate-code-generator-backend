@@ -61,6 +61,15 @@ async def activate_user(
             detail="Account is already activated.",
         )
 
+    # Block if another account with the same email is already active
+    if user.estate_id and await repo.check_active_email_exists(
+        user.email, str(user.estate_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Another account with this email is already active in this estate.",
+        )
+
     hashed = hash_password(body.password)
     url = f"{repo.users_endpoint}/{body.user_id}"
     response = await repo.client.async_patch(
