@@ -63,7 +63,7 @@ def custom_openapi():
         openapi_schema["components"] = {}
 
     openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2PasswordBearer": {
+        "HTTPBearer": {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
@@ -71,7 +71,7 @@ def custom_openapi():
         }
     }
 
-    openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
+    openapi_schema["security"] = [{"HTTPBearer": []}]
 
     for path in openapi_schema["paths"]:
         if path in ("/", "/healthz"):
