@@ -1,6 +1,8 @@
 # GatePass Cloud Run Deployment Guide
 
-A step-by-step guide for deploying all 7 GatePass microservices to Google Cloud Run.
+A step-by-step guide for deploying all 7 GatePass microservices to Google Cloud Run as separate services.
+
+> **Note:** This guide describes the **distributed** deployment where each service runs independently. For the consolidated single-container setup (used during low-traffic periods to reduce costs), see the [Monolith Consolidation Guide](monolith-consolidation-guide.md). This guide is also used as the reference when reverting from the monolith back to distributed services.
 
 **Project ID:** `gatepass-6d009`
 **Region:** `europe-west1`

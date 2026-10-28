@@ -166,3 +166,13 @@ gcloud run services update-traffic code-service \
 | Load Balancer  | Small fixed monthly cost                   |
 | Secret Manager | A few cents per month                      |
 | Cloud Build    | 120 free build-minutes per day             |
+
+## Monolith Consolidation (Cost Optimization)
+
+During early stages with low/zero traffic, all 7 services can be consolidated into a single Cloud Run container to reduce costs. This eliminates the overhead of 5+ always-on instances.
+
+See the [Monolith Consolidation Guide](monolith-consolidation-guide.md) for the full plan, deployment steps, and instructions for reverting back to the distributed setup when traffic grows.
+
+## Legacy GKE Scripts
+
+The `infra/deploy.sh` and `infra/teardown.sh` scripts reference an earlier GKE-based deployment (project `gatepass-461616`, cluster `gatepass-cluster`). These are **not used** in the current Cloud Run setup and are kept for historical reference only.
