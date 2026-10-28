@@ -2,6 +2,14 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+_FRONTEND_URLS = {
+    "dev": "http://localhost:8081",
+    "staging": "https://staging.gatepassng.com",
+    "production": "https://app.gatepassng.com",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -11,6 +19,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "notification-service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "Notification Service for GatePass"
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL", "")
@@ -33,7 +42,8 @@ class Settings(BaseSettings):
     )
 
     FRONTEND_BASE_URL: str = os.getenv(
-        "FRONTEND_BASE_URL", "https://app.gatepassng.com"
+        "FRONTEND_BASE_URL",
+        _FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS["dev"]),
     )
 
     # Email / SMTP configuration
@@ -46,8 +56,13 @@ class Settings(BaseSettings):
     MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
     MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
     # When true, emails are logged but not actually sent.
-    # Set MAIL_DEV_MODE=true in .env during local development.
-    MAIL_DEV_MODE: bool = os.getenv("MAIL_DEV_MODE", "true").lower() == "true"
+    # Defaults to true in dev/staging, false in production.
+    MAIL_DEV_MODE: bool = (
+        os.getenv(
+            "MAIL_DEV_MODE", "false" if _APP_ENV == "production" else "true"
+        ).lower()
+        == "true"
+    )
 
     # Recipient for user-submitted feedback emails
     FEEDBACK_RECIPIENT_EMAIL: str = os.getenv(

@@ -4,6 +4,14 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+_FRONTEND_URLS = {
+    "dev": "http://localhost:8081",
+    "staging": "https://staging.gatepassng.com",
+    "production": "https://app.gatepassng.com",
+}
+
 
 class Settings(BaseSettings):
     """Runtime configuration for the revenue service."""
@@ -15,6 +23,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "revenue-service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "Revenue Service for GatePass"
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL", "")
@@ -45,7 +54,10 @@ class Settings(BaseSettings):
     PAYSTACK_TIMEOUT_SECONDS: float = float(
         os.getenv("PAYSTACK_TIMEOUT_SECONDS", "30.0")
     )
-    PAYSTACK_CALLBACK_URL: str = os.getenv("PAYSTACK_CALLBACK_URL", "")
+    PAYSTACK_CALLBACK_URL: str = os.getenv(
+        "PAYSTACK_CALLBACK_URL",
+        f"{_FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS['dev'])}/payment/callback",
+    )
 
     CHECKOUT_TOKEN_EXPIRY_SECONDS: int = int(
         os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
