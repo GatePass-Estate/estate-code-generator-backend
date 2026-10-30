@@ -30,7 +30,7 @@ class UserRepository:
         estate_id: Optional[str] = None,
         role: Optional[str] = None,
         page: int = 1,
-        limit: int = 1000,
+        limit: int = 100,
     ) -> Optional[Dict]:
         """Search users by estate and/or role."""
         params: Dict = {"page": page, "limit": limit}
@@ -50,7 +50,7 @@ class UserRepository:
         """Paginate through all matching users."""
         all_items: List[Dict] = []
         page = 1
-        limit = 1000
+        limit = 100
         while True:
             result = await self.search(
                 estate_id=estate_id,

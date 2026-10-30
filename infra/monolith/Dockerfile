@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt -y update && apt install -y curl nginx supervisor && rm -rf /var/lib/apt/lists/*
+RUN apt -y update && apt install -y curl nginx supervisor ca-certificates && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

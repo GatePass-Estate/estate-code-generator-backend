@@ -16,38 +16,53 @@ logger = logging.getLogger("cache-service")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ups_task = asyncio.create_task(
-        scheduled_http_job(
-            url=settings.USER_PROFILE_CRON_URL,
-            internal_api_key=settings.INTERNAL_API_KEY,
-            hour=settings.CRON_HOUR,
-            name="user-profile-daily-cron",
+    tasks: list[asyncio.Task] = []
+
+    # In production, Cloud Scheduler handles cron — skip in-process loops.
+    if settings.APP_ENV != "production":
+        tasks.append(
+            asyncio.create_task(
+                scheduled_http_job(
+                    url=settings.USER_PROFILE_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    hour=settings.CRON_HOUR,
+                    name="user-profile-daily-cron",
+                )
+            )
         )
-    )
-    revenue_task = asyncio.create_task(
-        scheduled_http_job(
-            url=settings.REVENUE_CRON_URL,
-            internal_api_key=settings.INTERNAL_API_KEY,
-            hour=settings.REVENUE_CRON_HOUR,
-            name="revenue-daily-expiry",
+        tasks.append(
+            asyncio.create_task(
+                scheduled_http_job(
+                    url=settings.REVENUE_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    hour=settings.REVENUE_CRON_HOUR,
+                    name="revenue-daily-expiry",
+                )
+            )
         )
-    )
-    logger.info(
-        "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
-        settings.CRON_HOUR,
-    )
-    logger.info(
-        "Scheduler started: revenue-daily-expiry at %02d:00 UTC",
-        settings.REVENUE_CRON_HOUR,
-    )
+        logger.info(
+            "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
+            settings.CRON_HOUR,
+        )
+        logger.info(
+            "Scheduler started: revenue-daily-expiry at %02d:00 UTC",
+            settings.REVENUE_CRON_HOUR,
+        )
+    else:
+        logger.info(
+            "Scheduler skipped: production uses Google Cloud Scheduler"
+        )
+
     yield
-    for task in (ups_task, revenue_task):
+
+    for task in tasks:
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
-    logger.info("Schedulers stopped")
+    if tasks:
+        logger.info("Schedulers stopped")
 
 
 app = FastAPI(

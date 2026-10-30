@@ -4,6 +4,9 @@ from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+
 class Settings(BaseSettings):
     """
     Imports all the configuration settings for the API service
@@ -16,6 +19,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "cache-service Service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "cache-service Service for Estace Code Generator "
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     # Environment variables for Redis connection (defaulting to localhost for
@@ -57,6 +61,8 @@ class Settings(BaseSettings):
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_db_url(cls, v, info: ValidationInfo):
+        if _APP_ENV == "production":
+            return v
         return (
             f"redis://{info.data['REDIS_HOST']}:"
             f"{info.data['REDIS_PORT']}/{info.data['REDIS_DB']}"
