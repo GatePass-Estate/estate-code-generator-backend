@@ -35,3 +35,4 @@ class Sessions(BaseModelDB):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_2fa_verified = Column(Boolean, default=False, nullable=False)
     biometric_token_hash = Column(Text, nullable=True)
+    refresh_token_hash = Column(Text, nullable=True)

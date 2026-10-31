@@ -541,6 +541,7 @@ class SessionsRepository:
                 expires_at=session.expires_at,
                 last_active_at=session.last_active_at,
                 is_2fa_verified=session.is_2fa_verified,
+                refresh_token_hash=session.refresh_token_hash,
                 user_id=user.id,
                 email=user.email,
                 role=user.role,

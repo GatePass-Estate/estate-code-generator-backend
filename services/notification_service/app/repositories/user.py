@@ -37,7 +37,7 @@ class UserRepository:
         if estate_id:
             params["estate_id"] = estate_id
         if role:
-            params["role"] = role
+            params["roles"] = role
         return await self.client.async_get(
             url=f"{self.users_endpoint}/search", params=params
         )

@@ -1,5 +1,6 @@
 import os
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _APP_ENV = os.getenv("APP_ENV", "dev")
@@ -29,7 +30,12 @@ class Settings(BaseSettings):
     # Configuration for the RDB Database
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
-    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 60))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30)
+    )
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("REFRESH_TOKEN_EXPIRE_MINUTES", 60)
+    )
     SESSION_EXPIRE_DAYS: int = int(os.getenv("SESSION_EXPIRE_DAYS", 30))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
     TOTP_ENCRYPTION_KEY: str = os.getenv("TOTP_ENCRYPTION_KEY", "")
@@ -78,6 +84,18 @@ class Settings(BaseSettings):
     GCS_ID_CARD_MAX_BYTES: int = int(
         os.getenv("GCS_ID_CARD_MAX_BYTES", str(10 * 1024 * 1024))
     )
+
+    @model_validator(mode="after")
+    def _validate_token_expiry(self) -> "Settings":
+        if (
+            self.REFRESH_TOKEN_EXPIRE_MINUTES
+            <= self.ACCESS_TOKEN_EXPIRE_MINUTES
+        ):
+            raise ValueError(
+                "REFRESH_TOKEN_EXPIRE_MINUTES must be greater than "
+                "ACCESS_TOKEN_EXPIRE_MINUTES"
+            )
+        return self
 
 
 settings = Settings()
