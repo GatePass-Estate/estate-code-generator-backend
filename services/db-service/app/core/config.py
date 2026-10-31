@@ -1,7 +1,7 @@
 import os
 
-from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -24,18 +24,19 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "estate_code_db")
     DB_PORT: str = os.getenv("DB_PORT", "5445")
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
-    DB_CONFIG: str = os.getenv(
-        "DB_CONFIG",
-        f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-        f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}",
-    )
+    DB_CONFIG: str | None = os.getenv("DB_CONFIG")
 
-    @field_validator("DB_CONFIG", mode="before")
-    def assemble_db_url(cls, v, info: ValidationInfo):
-        return (
-            f"postgresql+asyncpg://{info.data['POSTGRES_USER']}:"
-            f"{info.data['POSTGRES_PASSWORD']}@{info.data['DB_HOST']}:"
-            f"{info.data['DB_PORT']}/{info.data['POSTGRES_DB']}"
+    @property
+    def db_url(self) -> URL:
+        if self.DB_CONFIG:
+            return make_url(self.DB_CONFIG)
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.DB_HOST,
+            port=int(self.DB_PORT),
+            database=self.POSTGRES_DB,
         )
 
     # GCS user documents (profile picture, ID card)

@@ -303,7 +303,51 @@ gcloud run services update gatepass-monolith \
   --project=gatepass-6d009
 ```
 
-### 8. Delete old services
+### 8. Set up Google Cloud Scheduler (cron jobs)
+
+In the distributed setup, the cache-service ran two `asyncio` sleep loops to trigger daily cron endpoints. In production, these are replaced by Google Cloud Scheduler — a managed cron service that hits the endpoints through the Load Balancer.
+
+The cache-service's in-process scheduler is automatically skipped when `APP_ENV=production`.
+
+```bash
+# User profile daily cron — midnight UTC
+gcloud scheduler jobs create http user-profile-daily-cron \
+  --location=europe-west1 \
+  --schedule="0 0 * * *" \
+  --uri="https://api.gatepassng.com/user/api/v1/internal/cron/daily" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<YOUR_INTERNAL_API_KEY>" \
+  --attempt-deadline=300s \
+  --project=gatepass-6d009
+
+# Revenue daily expiry — 2am UTC
+gcloud scheduler jobs create http revenue-daily-expiry \
+  --location=europe-west1 \
+  --schedule="0 2 * * *" \
+  --uri="https://api.gatepassng.com/revenue/api/v1/internal/cron/daily" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<YOUR_INTERNAL_API_KEY>" \
+  --attempt-deadline=300s \
+  --project=gatepass-6d009
+```
+
+To test:
+
+```bash
+gcloud scheduler jobs run user-profile-daily-cron --location=europe-west1 --project=gatepass-6d009
+gcloud scheduler jobs run revenue-daily-expiry --location=europe-west1 --project=gatepass-6d009
+```
+
+To update the schedule or API key later:
+
+```bash
+gcloud scheduler jobs update http <JOB_NAME> \
+  --schedule="0 1 * * *" \
+  --headers="X-Internal-Key=NEW_KEY" \
+  --location=europe-west1 --project=gatepass-6d009
+```
+
+### 9. Delete old services
 
 Once the monolith is verified:
 

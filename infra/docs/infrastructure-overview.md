@@ -166,6 +166,13 @@ gcloud run services update-traffic code-service \
 | Load Balancer  | Small fixed monthly cost                   |
 | Secret Manager | A few cents per month                      |
 | Cloud Build    | 120 free build-minutes per day             |
+| Cloud Scheduler| 3 free jobs; $0.10/job/month after         |
+
+## Scheduled Jobs (Cron)
+
+Daily maintenance tasks (session cleanup, subscription expiry checks) are triggered by **Google Cloud Scheduler** in production. Two jobs POST to internal cron endpoints through the Load Balancer using the `X-Internal-Key` header.
+
+In dev/staging, the cache-service runs equivalent in-process `asyncio` loops instead (controlled by `APP_ENV`).
 
 ## Monolith Consolidation (Cost Optimization)
 
