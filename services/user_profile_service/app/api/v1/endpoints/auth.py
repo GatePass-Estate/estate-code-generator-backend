@@ -22,6 +22,7 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
+    RefreshTokenRequest,
     SessionListResponse,
     TwoFADisableRequest,
     TwoFAEnableRequest,
@@ -150,6 +151,18 @@ async def accept_tos(
         ip=get_client_ip(http_request),
         device=get_device_name(http_request),
     )
+
+
+@router.post("/refresh", response_model=LoginResponse)
+async def refresh_token(
+    request: RefreshTokenRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> LoginResponse:
+    """
+    Exchange a valid refresh token for a new access + refresh token pair.
+    The old refresh token is invalidated (rotation).
+    """
+    return await auth_service.refresh_tokens(request.refresh_token)
 
 
 @router.post("/logout")
