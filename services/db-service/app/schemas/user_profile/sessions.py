@@ -72,6 +72,9 @@ class UpdateRequest(BaseModel):
     biometric_token_hash: Optional[str] = Field(
         None, description="SHA-256 hex hash of the biometric token"
     )
+    refresh_token_hash: Optional[str] = Field(
+        None, description="SHA-256 hex hash of the refresh token jti"
+    )
     expires_at: Optional[datetime] = Field(
         None, description="Extended session expiry time"
     )
@@ -109,6 +112,9 @@ class GetResponse(SharedModel):
     )
     biometric_token_hash: Optional[str] = Field(
         None, description="SHA-256 hex hash of the biometric token"
+    )
+    refresh_token_hash: Optional[str] = Field(
+        None, description="SHA-256 hex hash of the refresh token jti"
     )
 
     @field_serializer("user_id")
@@ -149,6 +155,10 @@ class ValidateSessionResponse(BaseModel):
     last_active_at: datetime = Field(..., description="Last active time")
     is_2fa_verified: bool = Field(
         False, description="Whether 2FA was completed"
+    )
+    refresh_token_hash: Optional[str] = Field(
+        None,
+        description="SHA-256 hex hash of the refresh token jti",
     )
     user_id: UUID4 = Field(..., description="User ID")
     email: str = Field(..., description="User email")

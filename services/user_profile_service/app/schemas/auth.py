@@ -23,6 +23,7 @@ __all__ = [
     "BiometricEnableResponse",
     "BiometricLoginRequest",
     "BiometricLoginResponse",
+    "RefreshTokenRequest",
 ]
 
 model_config = ConfigDict(
@@ -125,6 +126,10 @@ class LoginResponse(BaseModel):
     two_fa_token: Optional[str] = Field(
         default=None,
         description="Short-lived 2FA-pending token (when requires_2fa=True)",
+    )
+    refresh_token: Optional[str] = Field(
+        default=None,
+        description="JWT refresh token — use to obtain new access tokens",
     )
     session_id: Optional[str] = Field(
         default=None,
@@ -271,11 +276,13 @@ class BiometricLoginResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the exchange succeeded")
     role: Optional[str] = Field(None, description="User's role")
-    access_token: Optional[str] = Field(
-        None, description="Fresh 1-hour JWT access token"
-    )
+    access_token: Optional[str] = Field(None, description="JWT access token")
     token_type: str = Field(default="bearer", description="Token type")
     session_id: Optional[str] = Field(None, description="Session ID")
+    refresh_token: Optional[str] = Field(
+        default=None,
+        description="JWT refresh token — use to obtain new access tokens",
+    )
     biometric_token: Optional[str] = Field(
         None,
         description=(
@@ -289,5 +296,13 @@ class BiometricLoginResponse(BaseModel):
             "FE must fall back to password login."
         ),
     )
+
+    model_config = model_config
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request to exchange a refresh token for a new token pair."""
+
+    refresh_token: str = Field(..., description="The refresh token JWT")
 
     model_config = model_config

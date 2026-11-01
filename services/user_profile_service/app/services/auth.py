@@ -8,16 +8,28 @@ import jwt
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.libs.auth_helpers import session_expires_at
 from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
+from app.schemas.auth import (
+    BiometricEnableResponse,
+    BiometricLoginResponse,
+    LoginResponse,
+    SessionListResponse,
+    SessionResponse,
+    TwoFAEnableResponse,
+    TwoFARegenerateCodesResponse,
+    TwoFASetupResponse,
+)
 from gatepass_auth import auth_token_from_request  # noqa: F401
 from gatepass_auth import get_current_user  # noqa: F401
 from gatepass_auth import get_current_user_unverified  # noqa: F401
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_MINUTES = settings.LOGIN_EXPIRE_MINUTES
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+REFRESH_TOKEN_EXPIRE_MINUTES = settings.REFRESH_TOKEN_EXPIRE_MINUTES
 
 
 def _generate_biometric_token() -> tuple[str, str]:
@@ -33,7 +45,7 @@ def _generate_biometric_token() -> tuple[str, str]:
 
 def generate_access_token(user: dict, session_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
-        minutes=TOKEN_EXPIRE_MINUTES
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
     )
     payload = {
         "sub": user["id"],
@@ -44,6 +56,28 @@ def generate_access_token(user: dict, session_id: str) -> str:
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def generate_refresh_token(session_id: str) -> tuple[str, str]:
+    """Return (refresh_jwt, jti_hash).
+
+    The JWT is returned to the client.  Only the SHA-256 hash of the
+    jti is stored on the session row so we can validate on refresh and
+    detect reuse.
+    """
+    jti = secrets.token_urlsafe(32)
+    jti_hash = hashlib.sha256(jti.encode()).hexdigest()
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=REFRESH_TOKEN_EXPIRE_MINUTES
+    )
+    payload = {
+        "session_id": session_id,
+        "scope": "refresh",
+        "jti": jti,
+        "exp": expire,
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return token, jti_hash
 
 
 class AuthService:
@@ -63,6 +97,21 @@ class AuthService:
         self.totp_recovery_repo = totp_recovery_repo
 
     # ------------------------------------------------------------------
+    # Token helpers
+    # ------------------------------------------------------------------
+
+    async def _issue_token_pair(
+        self, user: dict, session_id: str
+    ) -> tuple[str, str]:
+        """Issue access + refresh tokens and persist the refresh hash."""
+        access_token = generate_access_token(user, session_id)
+        refresh_token, jti_hash = generate_refresh_token(session_id)
+        await self.session_repo.update_session(
+            session_id, {"refresh_token_hash": jti_hash}
+        )
+        return access_token, refresh_token
+
+    # ------------------------------------------------------------------
     # Login flows
     # ------------------------------------------------------------------
 
@@ -74,7 +123,6 @@ class AuthService:
         ip: str | None,
         device: str | None,
     ):
-        from app.libs.auth_helpers import session_expires_at
         from app.services.token import (
             generate_2fa_pending_token,
             generate_tos_pending_token,
@@ -106,8 +154,6 @@ class AuthService:
                     status_code=403,
                     detail="This estate has been deactivated.",
                 )
-
-        from app.schemas.auth import LoginResponse
 
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)
@@ -191,11 +237,14 @@ class AuthService:
                 )
             )
 
-        token = generate_access_token(user, session["id"])
+        access_token, refresh_token = await self._issue_token_pair(
+            user, session["id"]
+        )
         return LoginResponse(
             success=True,
             role=user["role"],
-            access_token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             session_id=session["id"],
         )
 
@@ -206,8 +255,6 @@ class AuthService:
         ip: str | None,
         device: str | None,
     ):
-        from app.libs.auth_helpers import session_expires_at
-        from app.schemas.auth import LoginResponse
         from app.services.token import (
             decode_2fa_pending_token,
             generate_tos_pending_token,
@@ -258,11 +305,14 @@ class AuthService:
                 requires_tos_acceptance=True,
             )
 
-        token = generate_access_token(user_dict, session["id"])
+        access_token, refresh_token = await self._issue_token_pair(
+            user_dict, session["id"]
+        )
         return LoginResponse(
             success=True,
             role=user_dict["role"],
-            access_token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             session_id=session["id"],
         )
 
@@ -273,8 +323,6 @@ class AuthService:
         ip: str | None,
         device: str | None,
     ):
-        from app.libs.auth_helpers import session_expires_at
-        from app.schemas.auth import LoginResponse
         from app.services.token import generate_tos_pending_token
 
         user_dict = await self.user_service.recover_with_code(
@@ -305,11 +353,14 @@ class AuthService:
                 requires_tos_acceptance=True,
             )
 
-        token = generate_access_token(user_dict, session["id"])
+        access_token, refresh_token = await self._issue_token_pair(
+            user_dict, session["id"]
+        )
         return LoginResponse(
             success=True,
             role=user_dict["role"],
-            access_token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             session_id=session["id"],
         )
 
@@ -319,9 +370,6 @@ class AuthService:
         ip: str | None,
         device: str | None,
     ):
-        from app.libs.auth_helpers import session_expires_at
-        from app.schemas.auth import LoginResponse
-
         user = await self.user_service.accept_tos(tos_token)
 
         session = await self.session_repo.create_session(
@@ -332,11 +380,14 @@ class AuthService:
             is_2fa_verified=user.get("totp_enabled", False),
         )
 
-        token = generate_access_token(user, session["id"])
+        access_token, refresh_token = await self._issue_token_pair(
+            user, session["id"]
+        )
         return LoginResponse(
             success=True,
             role=user["role"],
-            access_token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             requires_tos_acceptance=False,
             session_id=session["id"],
         )
@@ -350,8 +401,6 @@ class AuthService:
         return {"success": True, "message": "Logged out successfully."}
 
     async def list_sessions(self, user_id: str):
-        from app.schemas.auth import SessionListResponse, SessionResponse
-
         result = await self.session_repo.search_sessions(
             user_id=user_id, limit=100
         )
@@ -391,18 +440,97 @@ class AuthService:
         return {"success": True, "message": "All sessions revoked."}
 
     # ------------------------------------------------------------------
+    # Token refresh
+    # ------------------------------------------------------------------
+
+    async def refresh_tokens(self, refresh_token_jwt: str):
+        """
+        Exchange a valid refresh token for a new access + refresh pair.
+
+        Validates the refresh JWT, checks the jti hash against the
+        stored hash on the session, and rotates the token.  If the
+        hash does not match, the session is revoked (theft detection).
+        """
+        try:
+            payload = jwt.decode(
+                refresh_token_jwt,
+                SECRET_KEY,
+                algorithms=[ALGORITHM],
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=401,
+                detail="Refresh token has expired.",
+            )
+        except jwt.InvalidTokenError:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid refresh token.",
+            )
+
+        if payload.get("scope") != "refresh":
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid token scope.",
+            )
+
+        session_id = payload.get("session_id")
+        jti = payload.get("jti")
+        if not session_id or not jti:
+            raise HTTPException(
+                status_code=401,
+                detail="Malformed refresh token.",
+            )
+
+        # Validate session + user + estate and get hash in one call.
+        data = await self.session_repo.validate_session(session_id)
+        if not data:
+            raise HTTPException(
+                status_code=401,
+                detail="Session is invalid or expired.",
+            )
+
+        presented_hash = hashlib.sha256(jti.encode()).hexdigest()
+        stored_hash = data.get("refresh_token_hash")
+        if presented_hash != stored_hash:
+            await self.session_repo.delete_session(session_id)
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Refresh token reuse detected. "
+                    "Session revoked for security."
+                ),
+            )
+
+        user_dict = {
+            "id": str(data["user_id"]),
+            "email": data["email"],
+            "role": data["role"],
+            "estate_id": (
+                str(data["estate_id"]) if data.get("estate_id") else None
+            ),
+        }
+
+        access_token, refresh_token = await self._issue_token_pair(
+            user_dict, session_id
+        )
+        return LoginResponse(
+            success=True,
+            role=user_dict["role"],
+            access_token=access_token,
+            refresh_token=refresh_token,
+            session_id=session_id,
+        )
+
+    # ------------------------------------------------------------------
     # 2FA management (delegates to UserService)
     # ------------------------------------------------------------------
 
     async def setup_2fa(self, user_id: str):
-        from app.schemas.auth import TwoFASetupResponse
-
         result = await self.user_service.setup_2fa(user_id)
         return TwoFASetupResponse(**result)
 
     async def enable_2fa(self, user_id: str, code: str):
-        from app.schemas.auth import TwoFAEnableResponse
-
         codes = await self.user_service.enable_2fa(
             user_id, code, self.totp_recovery_repo
         )
@@ -414,8 +542,6 @@ class AuthService:
         )
 
     async def regenerate_recovery_codes(self, user_id: str, code: str):
-        from app.schemas.auth import TwoFARegenerateCodesResponse
-
         codes = await self.user_service.regenerate_recovery_codes(
             user_id, code, self.totp_recovery_repo
         )
@@ -439,7 +565,6 @@ class AuthService:
         Returns:
             BiometricEnableResponse with plaintext biometric_token.
         """
-        from app.schemas.auth import BiometricEnableResponse
 
         token, hash_ = _generate_biometric_token()
         await self.session_repo.enable_biometric(session_id, hash_)
@@ -473,8 +598,6 @@ class AuthService:
             BiometricLoginResponse with new access_token and rotated
             biometric_token, or requires_full_reauth=True.
         """
-        from app.libs.auth_helpers import session_expires_at
-        from app.schemas.auth import BiometricLoginResponse
 
         token_hash = hashlib.sha256(biometric_token.encode()).hexdigest()
 
@@ -537,12 +660,15 @@ class AuthService:
             "role": user.role,
             "estate_id": str(user.estate_id) if user.estate_id else None,
         }
-        access_token = generate_access_token(user_dict, session["id"])
+        access_token, refresh_token = await self._issue_token_pair(
+            user_dict, session["id"]
+        )
 
         return BiometricLoginResponse(
             success=True,
             role=user.role,
             access_token=access_token,
+            refresh_token=refresh_token,
             session_id=session["id"],
             biometric_token=new_token,
         )

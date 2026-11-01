@@ -71,6 +71,11 @@ async def get_current_user_unverified(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=("Please complete 2FA verification to continue."),
             )
+        if scope == "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=("Refresh tokens cannot be used " "as access tokens."),
+            )
 
         user_id = payload.get("sub")
         if not user_id:
