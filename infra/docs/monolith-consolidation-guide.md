@@ -117,6 +117,8 @@ upstream revenue_service  { server 127.0.0.1:9037; }
 
 server {
     listen 8080;
+    access_log /dev/stdout;
+    error_log /dev/stderr;
 
     location /code/    { proxy_pass http://code_service; }
     location /user/    { proxy_pass http://user_service; }
@@ -135,11 +137,13 @@ server {
 
 ### `infra/monolith/supervisord.conf`
 
-Manages all 8 processes (7 uvicorn + 1 nginx). If any process crashes, supervisord restarts it. If nginx (the entrypoint) dies, the container exits.
+Manages all 8 processes (7 uvicorn + 1 nginx). Supervisord runs as PID 1 (via `CMD` in the Dockerfile), so it receives SIGTERM directly from Cloud Run and propagates it to all child processes for graceful shutdown. Each program has `stopwaitsecs=8` to ensure everything stops within Cloud Run's 10-second SIGTERM window. If any process crashes, supervisord restarts it automatically.
 
-### `infra/monolith/entrypoint.sh`
+Nginx's command runs `wait-for-upstreams.sh` before `exec nginx`, so port 8080 doesn't open until all uvicorns are healthy. This prevents Cloud Run's TCP startup probe from passing prematurely.
 
-Starts supervisord as PID 1. Handles SIGTERM gracefully so Cloud Run can shut down cleanly.
+### `infra/monolith/wait-for-upstreams.sh`
+
+Polls all 7 uvicorn `/healthz` endpoints in a loop with a 180-second deadline. Used as a pre-command for nginx in supervisord. If any service fails to become healthy within 180 seconds, the script exits with an error and supervisord marks nginx as failed.
 
 ---
 
@@ -216,6 +220,27 @@ gcloud secrets create gatepass-monolith-env \
 
 ### 4. Build and push the image
 
+**Option A: Cloud Build (recommended, ~10-20 min)**
+
+```bash
+REGISTRY="europe-west1-docker.pkg.dev/gatepass-6d009/gatepass-repo"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+cat > /tmp/cloudbuild-monolith.yaml <<EOF
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'infra/monolith/Dockerfile', '-t', '${REGISTRY}/gatepass-monolith:${TIMESTAMP}', '.']
+images: ['${REGISTRY}/gatepass-monolith:${TIMESTAMP}']
+EOF
+
+gcloud builds submit . \
+  --project=gatepass-6d009 \
+  --timeout=1800 \
+  --config=/tmp/cloudbuild-monolith.yaml
+```
+
+**Option B: Local Docker build (~1 hour)**
+
 ```bash
 REGISTRY="europe-west1-docker.pkg.dev/gatepass-6d009/gatepass-repo"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
@@ -247,7 +272,7 @@ gcloud run deploy gatepass-monolith \
   --project=gatepass-6d009
 ```
 
-> **Note:** The entrypoint script waits for all 7 uvicorn processes to pass health checks before starting nginx. This prevents Cloud Run's TCP startup probe from passing prematurely (which would throttle CPU before uvicorns finish booting). `--cpu-boost` provides extra CPU during cold starts for faster boot times.
+> **Note:** Nginx's supervisord command runs `wait-for-upstreams.sh` before starting, which polls all 7 uvicorn `/healthz` endpoints. Port 8080 doesn't open until all services are healthy, preventing Cloud Run's TCP startup probe from passing prematurely (which would throttle CPU before uvicorns finish booting). `--cpu-boost` provides extra CPU during cold starts for faster boot times.
 
 ### 6. Route the Load Balancer to the monolith
 
@@ -425,7 +450,7 @@ Repeat for each service. The last service peeled off is the monolith itself.
 | Slower cold start (~10-15s vs ~3-5s)                      | Keep `min-instances=1` so cold starts are rare.                                                                                                             |
 | No Cloud Armor (WAF/rate-limiting)                        | Add `slowapi` middleware if needed, or keep the LB in front (Option B).                                                                                     |
 | Higher memory per instance                                | Set `--memory=2Gi`. Still cheaper than 5+ separate instances.                                                                                               |
-| CPU throttling kills uvicorn processes                    | Entrypoint delays nginx startup until all uvicorns are healthy, so the TCP probe doesn't pass early. `--cpu-boost` gives extra CPU during cold starts.      |
+| CPU throttling kills uvicorn processes                    | `wait-for-upstreams.sh` delays nginx startup until all uvicorns are healthy, so the TCP probe doesn't pass early. `--cpu-boost` gives extra CPU during cold starts. |
 | Logging all mixed together                                | Each service already logs its `APP_NAME`. Use Cloud Logging filters: `jsonPayload.app_name="code-service"`.                                                 |
 | Dependency conflicts between services                     | All services already share the same Python 3.11 base and compatible deps. The AI service's ML stack (scikit-learn, numpy) adds image size but no conflicts. |
 
