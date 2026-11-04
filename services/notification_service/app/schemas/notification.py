@@ -30,7 +30,6 @@ class NotificationType(str, Enum):
     FORGOT_PASSWORD = "FORGOT_PASSWORD"
     EMAIL_VERIFICATION = "EMAIL_VERIFICATION"
     WELCOME = "WELCOME"
-    PASSWORD_RESET_CONFIRMED = "PASSWORD_RESET_CONFIRMED"
     ACCOUNT_CLOSED = "ACCOUNT_CLOSED"
     # Admin-initiated account deactivation
     ACCOUNT_DEACTIVATED = "ACCOUNT_DEACTIVATED"
@@ -74,7 +73,6 @@ MANDATORY_TYPES: set[NotificationType] = {
     NotificationType.FORGOT_PASSWORD,
     NotificationType.EMAIL_VERIFICATION,
     NotificationType.WELCOME,
-    NotificationType.PASSWORD_RESET_CONFIRMED,
     NotificationType.ACCOUNT_CLOSED,
     NotificationType.ACCOUNT_DEACTIVATED,
     NotificationType.ACCOUNT_DEACTIVATION_SCHEDULED,
@@ -112,21 +110,14 @@ NO_IN_APP_TYPES: set[NotificationType] = {
 
 # Types that send email by default
 EMAIL_TYPES: set[NotificationType] = {
-    NotificationType.BROADCAST_HIGH,
     NotificationType.LOGIN_NEW_DEVICE,
     NotificationType.PASSWORD_CHANGED,
     NotificationType.TWO_FA_ENABLED,
     NotificationType.TWO_FA_DISABLED,
     NotificationType.TWO_FA_RECOVERY_USED,
-    NotificationType.ROLE_PROMOTED,
-    NotificationType.ROLE_DEMOTED,
-    NotificationType.HOUSEHOLD_TRANSFERRED,
-    NotificationType.INCIDENT_REPORT_FILED,
-    NotificationType.EDIT_REQUEST_REVIEWED,
     NotificationType.FORGOT_PASSWORD,
     NotificationType.EMAIL_VERIFICATION,
     NotificationType.WELCOME,
-    NotificationType.PASSWORD_RESET_CONFIRMED,
     NotificationType.ACCOUNT_CLOSED,
     NotificationType.ACCOUNT_DEACTIVATED,
     NotificationType.ACCOUNT_DEACTIVATION_SCHEDULED,

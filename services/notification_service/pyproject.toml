@@ -17,6 +17,8 @@ httpx = "^0.28.1"
 pyjwt = "^2.9.0"
 firebase-admin = "^6.5.0"
 fastapi-mail = "^1.6.5"
+sendbyte = "^0.1.0"
+resend = "^2.0.0"
 load-dotenv = "^0.1.0"
 
 [tool.poetry.group.dev.dependencies]

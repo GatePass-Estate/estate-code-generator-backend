@@ -83,6 +83,19 @@ The db-service connects via Cloud SQL Auth Proxy sidecar, which is automatically
 /cloudsql/gatepass-6d009:europe-west1:gatepass-db
 ```
 
+4. Enable automated backups with point-in-time recovery:
+
+```bash
+gcloud sql instances patch gatepass-db \
+  --backup-start-time=04:00 \
+  --enable-point-in-time-recovery \
+  --retained-backups-count=14 \
+  --retained-transaction-log-days=7 \
+  --project=gatepass-6d009
+```
+
+This runs daily backups at 4:00 AM UTC and retains 14 days of backups plus 7 days of transaction logs for point-in-time recovery.
+
 ---
 
 ## 4. Redis (Upstash)

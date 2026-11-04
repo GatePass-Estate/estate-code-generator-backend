@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 
 from fastapi import Depends, Request
+from user_agents import parse as parse_ua
 
 from app.core.config import settings
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -12,6 +14,31 @@ from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
 from app.repositories.user import UserRepository
 from app.services.user import UserService
 
+_MAX_DEVICE_NAME_LEN = 100
+
+
+def _clean_device_name(value: str) -> str:
+    value = unquote(value).strip()
+    value = "".join(ch for ch in value if ch.isprintable())
+    return value[:_MAX_DEVICE_NAME_LEN]
+
+
+def _name_from_user_agent(ua: str) -> str:
+    if "CFNetwork" in ua and "Darwin" in ua:
+        return "iOS device"
+    if "okhttp" in ua.lower():
+        return "Android device"
+
+    parsed = parse_ua(ua)
+    browser = parsed.browser.family
+    os = parsed.os.family
+
+    if browser != "Other" and os != "Other":
+        return f"{browser} on {os}"
+    if os != "Other":
+        return os
+    return _clean_device_name(ua)
+
 
 def get_client_ip(request: Request) -> str | None:
     forwarded_for = request.headers.get("X-Forwarded-For")
@@ -20,8 +47,18 @@ def get_client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def get_device_name(request: Request) -> str | None:
-    return request.headers.get("User-Agent")
+def get_device_name(request: Request) -> str:
+    header_name = request.headers.get("X-Device-Name")
+    if header_name:
+        cleaned = _clean_device_name(header_name)
+        if cleaned:
+            return cleaned
+
+    ua = request.headers.get("User-Agent")
+    if ua:
+        return _name_from_user_agent(ua)
+
+    return "Unknown device"
 
 
 def session_expires_at() -> datetime:

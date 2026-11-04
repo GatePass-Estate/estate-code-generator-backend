@@ -68,7 +68,7 @@ Internal services (db, cache, notification) are **not routed by nginx** and are 
 | Cloud Build        | Build 7 images, deploy 7 services | Build 1 image, deploy 1 service          |
 | Memory             | ~256-512Mi per service            | ~2GB total (single instance)             |
 | CPU                | 1 vCPU per service                | 2 vCPUs (single instance)                |
-| CPU throttling     | Default (throttled when idle)     | Disabled (`--no-cpu-throttling`)         |
+| CPU throttling     | Default (throttled when idle)     | Default (nginx starts after all uvicorns are healthy) |
 | Cold start         | ~3-5s per service                 | ~10-15s (all 7 boot)                     |
 | min-instances cost | 5 always-on instances             | 1 always-on instance                     |
 
@@ -240,14 +240,14 @@ gcloud run deploy gatepass-monolith \
   --cpu=2 \
   --port=8080 \
   --timeout=300 \
-  --no-cpu-throttling \
+  --cpu-boost \
   --allow-unauthenticated \
   --add-cloudsql-instances=gatepass-6d009:europe-west1:gatepass-db \
   --service-account=db-service-sa@gatepass-6d009.iam.gserviceaccount.com \
   --project=gatepass-6d009
 ```
 
-> **Important:** `--no-cpu-throttling` is required. Without it, Cloud Run throttles CPU after nginx passes the startup probe, starving the 7 uvicorn processes before they finish booting (results in 502s).
+> **Note:** The entrypoint script waits for all 7 uvicorn processes to pass health checks before starting nginx. This prevents Cloud Run's TCP startup probe from passing prematurely (which would throttle CPU before uvicorns finish booting). `--cpu-boost` provides extra CPU during cold starts for faster boot times.
 
 ### 6. Route the Load Balancer to the monolith
 
@@ -425,7 +425,7 @@ Repeat for each service. The last service peeled off is the monolith itself.
 | Slower cold start (~10-15s vs ~3-5s)                      | Keep `min-instances=1` so cold starts are rare.                                                                                                             |
 | No Cloud Armor (WAF/rate-limiting)                        | Add `slowapi` middleware if needed, or keep the LB in front (Option B).                                                                                     |
 | Higher memory per instance                                | Set `--memory=2Gi`. Still cheaper than 5+ separate instances.                                                                                               |
-| CPU throttling kills uvicorn processes                    | Deploy with `--no-cpu-throttling`. Nginx passes the startup probe instantly; without always-on CPU, the 7 uvicorn processes never finish booting.           |
+| CPU throttling kills uvicorn processes                    | Entrypoint delays nginx startup until all uvicorns are healthy, so the TCP probe doesn't pass early. `--cpu-boost` gives extra CPU during cold starts.      |
 | Logging all mixed together                                | Each service already logs its `APP_NAME`. Use Cloud Logging filters: `jsonPayload.app_name="code-service"`.                                                 |
 | Dependency conflicts between services                     | All services already share the same Python 3.11 base and compatible deps. The AI service's ML stack (scikit-learn, numpy) adds image size but no conflicts. |
 

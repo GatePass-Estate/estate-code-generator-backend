@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         _FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS["dev"]),
     )
 
+    # Email providers (tried in order: Sendbyte → Resend → SMTP)
+    SENDBYTE_API_KEY: str = os.getenv("SENDBYTE_API_KEY", "")
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+
     # Email / SMTP configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")

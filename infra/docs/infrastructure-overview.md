@@ -156,6 +156,39 @@ gcloud run services update-traffic code-service \
   --project=gatepass-6d009
 ```
 
+## Database Backups
+
+Cloud SQL automated backups are enabled on the `gatepass-db` instance:
+
+- **Daily backups** at 4:00 AM UTC
+- **Point-in-time recovery (PITR)** enabled — restore to any second within the transaction log window
+- **14 retained backups** (rolling 2-week history)
+- **7 days of transaction logs** for PITR
+
+To trigger an on-demand backup before a risky migration:
+
+```bash
+gcloud sql backups create --instance=gatepass-db --project=gatepass-6d009
+```
+
+To list existing backups:
+
+```bash
+gcloud sql backups list --instance=gatepass-db --project=gatepass-6d009
+```
+
+To restore from a backup or to a point in time, use the Cloud Console or:
+
+```bash
+# Restore from a specific backup
+gcloud sql backups restore BACKUP_ID --restore-instance=gatepass-db --project=gatepass-6d009
+
+# Point-in-time restore (creates a new instance)
+gcloud sql instances clone gatepass-db gatepass-db-restored \
+  --point-in-time=2026-11-04T03:30:00Z \
+  --project=gatepass-6d009
+```
+
 ## Cost Summary
 
 | Service        | Pricing Model                              |

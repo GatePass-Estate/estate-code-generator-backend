@@ -111,11 +111,13 @@ async def recover_2fa(
     Logs in using a one-time recovery code. Disables 2FA on the account.
     Creates a session and returns an access token.
     """
+    ip = get_client_ip(http_request)
+    device = get_device_name(http_request)
     result = await auth_service.recover_2fa(
         two_fa_token=request.two_fa_token,
         recovery_code=request.recovery_code,
-        ip=get_client_ip(http_request),
-        device=get_device_name(http_request),
+        ip=ip,
+        device=device,
     )
     try:
         user_id = decode_2fa_pending_token(request.two_fa_token)
@@ -129,6 +131,10 @@ async def recover_2fa(
                     "and 2FA has been disabled."
                 ),
                 "recipient_user_ids": [str(user_id)],
+                "metadata": {
+                    "ip_address": ip or "",
+                    "device_name": device,
+                },
             },
         )
     except Exception:
@@ -243,6 +249,7 @@ async def setup_2fa(
 @router.post("/2fa/enable", response_model=TwoFAEnableResponse)
 async def enable_2fa(
     request: TwoFAEnableRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     auth_service: AuthService = Depends(get_auth_service),
@@ -259,6 +266,10 @@ async def enable_2fa(
             "title": "Two-factor authentication enabled",
             "body": "2FA has been enabled on your account.",
             "recipient_user_ids": [current_user["id"]],
+            "metadata": {
+                "ip_address": get_client_ip(http_request) or "",
+                "device_name": get_device_name(http_request),
+            },
         },
     )
     return result
@@ -267,6 +278,7 @@ async def enable_2fa(
 @router.delete("/2fa/disable")
 async def disable_2fa(
     request: TwoFADisableRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     auth_service: AuthService = Depends(get_auth_service),
@@ -280,6 +292,10 @@ async def disable_2fa(
             "title": "Two-factor authentication disabled",
             "body": "2FA has been disabled on your account.",
             "recipient_user_ids": [current_user["id"]],
+            "metadata": {
+                "ip_address": get_client_ip(http_request) or "",
+                "device_name": get_device_name(http_request),
+            },
         },
     )
     return {"success": True, "message": "2FA disabled."}

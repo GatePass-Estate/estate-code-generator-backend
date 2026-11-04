@@ -2,7 +2,14 @@ from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+)
 from gatepass_entitlement import (
     GUEST_MANAGEMENT_KEY,
     require_service_entitlement,
@@ -16,6 +23,7 @@ from gatepass_rbac import (
 )
 
 from app.core.config import settings
+from app.libs.auth_helpers import get_client_ip, get_device_name
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify, fire_notify_critical
 from app.repositories.admin_management import AdminRepository
@@ -412,21 +420,15 @@ async def verify_password_reset_token(
 @router.post("/password/reset", response_model=SetPasswordResponse)
 async def reset_password(
     payload: SetPasswordRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_user_service),
 ):
     """Resets the password for an active account
     (no current password required)."""
+    ip = get_client_ip(http_request)
+    device = get_device_name(http_request)
     result, user_id = await service.reset_password(payload)
-    background_tasks.add_task(
-        fire_notify,
-        {
-            "type": "PASSWORD_RESET_CONFIRMED",
-            "title": "Password reset successfully",
-            "body": "Your GatePass password has been reset.",
-            "recipient_user_ids": [user_id],
-        },
-    )
     background_tasks.add_task(
         fire_notify,
         {
@@ -434,6 +436,10 @@ async def reset_password(
             "title": "Password changed",
             "body": "Your account password has been changed.",
             "recipient_user_ids": [user_id],
+            "metadata": {
+                "ip_address": ip or "",
+                "device_name": device,
+            },
         },
     )
     return result
@@ -461,6 +467,7 @@ async def set_password(
 @router.post("/password/update", response_model=SetPasswordResponse)
 async def update_password(
     payload: UpdatePasswordRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
@@ -478,6 +485,10 @@ async def update_password(
             "title": "Password changed",
             "body": "Your account password has been changed.",
             "recipient_user_ids": [str(payload.user_id)],
+            "metadata": {
+                "ip_address": get_client_ip(http_request) or "",
+                "device_name": get_device_name(http_request),
+            },
         },
     )
     return result
