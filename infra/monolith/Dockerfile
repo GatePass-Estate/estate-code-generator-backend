@@ -67,12 +67,12 @@ COPY services/notification_service/app ./app
 # ── Config files ──
 COPY infra/monolith/nginx.conf /etc/nginx/conf.d/default.conf
 COPY infra/monolith/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY infra/monolith/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY infra/monolith/wait-for-upstreams.sh /usr/local/bin/wait-for-upstreams.sh
+RUN chmod +x /usr/local/bin/wait-for-upstreams.sh
 
 # Remove default nginx site
 RUN rm -f /etc/nginx/sites-enabled/default
 
 EXPOSE 8080
 
-CMD ["/entrypoint.sh"]
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

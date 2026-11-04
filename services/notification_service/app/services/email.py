@@ -1,13 +1,32 @@
 import logging
+from datetime import datetime
 from html import escape as _esc
+from zoneinfo import ZoneInfo
 
+import resend
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
+from sendbyte import AsyncSendByte
 
 from app.core.config import settings
+from app.libs.geoip import lookup_ip_location
 from app.schemas.notification import NotificationType
 
 logger = logging.getLogger(__name__)
 
+# ── Email provider setup ────────────────────────────────────────────────────
+# Sendbyte / Resend use noreply; SMTP must use the authenticated mailbox.
+_API_EMAIL_FROM = f"{settings.MAIL_FROM_NAME} <noreply@gatepassng.com>"
+
+# Sendbyte (primary)
+_sendbyte: AsyncSendByte | None = None
+if settings.SENDBYTE_API_KEY:
+    _sendbyte = AsyncSendByte(settings.SENDBYTE_API_KEY)
+
+# Resend (secondary)
+if settings.RESEND_API_KEY:
+    resend.api_key = settings.RESEND_API_KEY
+
+# SMTP (tertiary fallback)
 _conf = ConnectionConfig(
     MAIL_USERNAME=settings.MAIL_USERNAME,
     MAIL_PASSWORD=settings.MAIL_PASSWORD,
@@ -29,6 +48,41 @@ _BTN_COLOR = "#113e55"
 _TEXT_COLOR = "#172024"
 _HEADING_COLOR = "#113e55"
 _FRONTEND_BASE_URL = settings.FRONTEND_BASE_URL
+_WAT = ZoneInfo("Africa/Lagos")
+
+
+def _text_to_html(text: str) -> str:
+    """Escape text and convert newlines to <br> for HTML emails."""
+    return _esc(text).replace("\r\n", "\n").replace("\n", "<br>")
+
+
+def _subject(s: str) -> str:
+    """Sanitize a user-controlled subject: collapse whitespace, cap length."""
+    return " ".join(s.split())[:150]
+
+
+async def _device_location_time_block(
+    ip_address: str | None, device_name: str | None
+) -> str:
+    """Build an HTML block with device, location, and time info."""
+    parts: list[str] = []
+    if device_name:
+        parts.append(f"<b>Device:</b> {_esc(device_name)}")
+    if ip_address and ip_address != "unknown":
+        try:
+            location = await lookup_ip_location(ip_address)
+        except Exception:
+            logger.warning("GeoIP lookup failed for %s", ip_address)
+            location = None
+        location_display = (
+            f"{_esc(location)} (IP {_esc(ip_address)})"
+            if location
+            else f"IP {_esc(ip_address)}"
+        )
+        parts.append(f"<b>Location:</b> {location_display}")
+    now_wat = datetime.now(_WAT).strftime("%d %b %Y, %I:%M %p WAT")
+    parts.append(f"<b>Time:</b> {now_wat}")
+    return "<br>".join(parts)
 
 
 def _build_email(
@@ -41,7 +95,7 @@ def _build_email(
 ) -> str:
     """Builds a full email HTML string using the GatePass branded template."""
     heading = _esc(heading)
-    first_name = _esc(first_name)
+    first_name = _esc(first_name.strip() or "there")
     if not instruction_is_html:
         instruction = _esc(instruction)
     if button_label:
@@ -285,99 +339,197 @@ def _build_email(
 </html>"""
 
 
+async def _send_via_sendbyte(subject: str, recipient: str, body: str) -> None:
+    """Send email via Sendbyte (primary provider)."""
+    await _sendbyte.emails.send(
+        from_=_API_EMAIL_FROM,
+        to=recipient,
+        subject=subject,
+        html=body,
+    )
+
+
+async def _send_via_resend(subject: str, recipient: str, body: str) -> None:
+    """Send email via Resend (secondary provider)."""
+    await resend.Emails.send_async(
+        {
+            "from": _API_EMAIL_FROM,
+            "to": [recipient],
+            "subject": subject,
+            "html": body,
+        }
+    )
+
+
+async def _send_via_smtp(subject: str, recipient: str, body: str) -> None:
+    """Send email via SMTP (tertiary fallback)."""
+    message = MessageSchema(
+        subject=subject,
+        recipients=[recipient],
+        body=body,
+        subtype=MessageType.html,
+    )
+    await FastMail(_conf).send_message(message)
+
+
 async def _send(subject: str, recipient: str, body: str) -> None:
     if settings.MAIL_DEV_MODE:
         logger.info(
-            "MAIL_DEV_MODE — suppressed email" " to=%s subject=%r",
+            "MAIL_DEV_MODE — suppressed email to=%s subject=%r",
             recipient,
             subject,
         )
         return
-    if not settings.MAIL_USERNAME:
-        logger.warning("SMTP not configured — skipping email to %s", recipient)
-        return
-    try:
-        message = MessageSchema(
-            subject=subject,
-            recipients=[recipient],
-            body=body,
-            subtype=MessageType.html,
+
+    providers = []
+    if _sendbyte:
+        providers.append(("sendbyte", _send_via_sendbyte))
+    if settings.RESEND_API_KEY:
+        providers.append(("resend", _send_via_resend))
+    if settings.MAIL_USERNAME:
+        providers.append(("smtp", _send_via_smtp))
+
+    if not providers:
+        logger.warning(
+            "No email provider configured — skipping email to %s",
+            recipient,
         )
-        await FastMail(_conf).send_message(message)
-    except Exception:
-        logger.exception("Failed to send email to %s", recipient)
+        return
+
+    for name, send_fn in providers:
+        try:
+            await send_fn(subject, recipient, body)
+            logger.info(
+                "Email sent via %s to=%s subject=%r",
+                name,
+                recipient,
+                subject,
+            )
+            return
+        except Exception:
+            logger.exception(
+                "Email via %s failed for %s — trying next provider",
+                name,
+                recipient,
+            )
+
+    logger.error(
+        "All email providers failed for %s subject=%r",
+        recipient,
+        subject,
+    )
 
 
 async def send_login_new_device_email(
     email: str, first_name: str, ip_address: str, device_name: str
 ) -> None:
+    context = await _device_location_time_block(ip_address, device_name)
+    details = (
+        "We noticed a new sign-in to your GatePass account."
+        f"<br><br>{context}<br><br>"
+        "If this was you, no action is needed. "
+        "If you don't recognise this activity, change your password "
+        "immediately and contact your administrator."
+    )
     body = _build_email(
         heading="New Sign-In Detected",
         first_name=first_name,
-        instruction=(
-            f"We noticed a new sign-in to your GatePass account from "
-            f"device '{device_name}' at IP {ip_address}. "
-            "If this was you, no action is needed. "
-            "If you don't recognise this activity, please change your "
-            "password immediately and contact your administrator."
-        ),
+        instruction=details,
+        instruction_is_html=True,
         button_label="Secure My Account",
         button_href=f"{_FRONTEND_BASE_URL}/settings/security",
     )
     await _send("New sign-in to your GatePass account", email, body)
 
 
-async def send_password_changed_email(email: str, first_name: str) -> None:
+async def send_password_changed_email(
+    email: str,
+    first_name: str,
+    ip_address: str | None = None,
+    device_name: str | None = None,
+) -> None:
+    context = await _device_location_time_block(ip_address, device_name)
+    details = (
+        "Your GatePass password was successfully changed."
+        f"<br><br>{context}<br><br>"
+        "If you did not make this change, contact your "
+        "administrator immediately."
+    )
     body = _build_email(
         heading="Password Changed",
         first_name=first_name,
-        instruction=(
-            "Your GatePass password was successfully changed. "
-            "If you did not make this change, "
-            "contact your administrator immediately."
-        ),
+        instruction=details,
+        instruction_is_html=True,
     )
     await _send("Your GatePass password was changed", email, body)
 
 
-async def send_two_fa_enabled_email(email: str, first_name: str) -> None:
+async def send_two_fa_enabled_email(
+    email: str,
+    first_name: str,
+    ip_address: str | None = None,
+    device_name: str | None = None,
+) -> None:
+    context = await _device_location_time_block(ip_address, device_name)
+    details = (
+        "Two-factor authentication has been enabled on your GatePass "
+        "account. Your account is now more secure."
+        f"<br><br>{context}<br><br>"
+        "If you did not make this change, please contact your "
+        "administrator immediately."
+    )
     body = _build_email(
         heading="Two-Factor Authentication Enabled",
         first_name=first_name,
-        instruction=(
-            "Two-factor authentication has been enabled on your GatePass "
-            "account. Your account is now more secure. "
-            "If you did not make this change, please contact your "
-            "administrator immediately."
-        ),
+        instruction=details,
+        instruction_is_html=True,
     )
     await _send("Two-factor authentication enabled", email, body)
 
 
-async def send_two_fa_disabled_email(email: str, first_name: str) -> None:
+async def send_two_fa_disabled_email(
+    email: str,
+    first_name: str,
+    ip_address: str | None = None,
+    device_name: str | None = None,
+) -> None:
+    context = await _device_location_time_block(ip_address, device_name)
+    details = (
+        "Two-factor authentication has been disabled on your GatePass "
+        "account."
+        f"<br><br>{context}<br><br>"
+        "If you did not make this change, please contact your "
+        "administrator immediately and re-enable 2FA."
+    )
     body = _build_email(
         heading="Two-Factor Authentication Disabled",
         first_name=first_name,
-        instruction=(
-            "Two-factor authentication has been disabled on your GatePass "
-            "account. If you did not make this change, please contact your "
-            "administrator immediately and re-enable 2FA."
-        ),
+        instruction=details,
+        instruction_is_html=True,
     )
     await _send("Two-factor authentication disabled", email, body)
 
 
-async def send_two_fa_recovery_used_email(email: str, first_name: str) -> None:
+async def send_two_fa_recovery_used_email(
+    email: str,
+    first_name: str,
+    ip_address: str | None = None,
+    device_name: str | None = None,
+) -> None:
+    context = await _device_location_time_block(ip_address, device_name)
+    details = (
+        "A recovery code was used to access your GatePass account. "
+        "Two-factor authentication has been disabled as a result."
+        f"<br><br>{context}<br><br>"
+        "If this was not you, your account may be compromised. "
+        "Please change your password immediately. "
+        "Otherwise, re-enable 2FA from your security settings."
+    )
     body = _build_email(
         heading="Recovery Code Used",
         first_name=first_name,
-        instruction=(
-            "A recovery code was used to access your GatePass account. "
-            "Two-factor authentication has been disabled as a result. "
-            "If this was not you, your account may be compromised — "
-            "please change your password immediately. "
-            "Otherwise, re-enable 2FA from your security settings."
-        ),
+        instruction=details,
+        instruction_is_html=True,
         button_label="Manage Security",
         button_href=f"{_FRONTEND_BASE_URL}/settings/security",
     )
@@ -387,34 +539,42 @@ async def send_two_fa_recovery_used_email(email: str, first_name: str) -> None:
 async def send_role_promoted_email(
     email: str, first_name: str, new_role: str, estate_name: str
 ) -> None:
+    role_display = new_role.replace("_", " ").title()
     body = _build_email(
         heading="You've Been Promoted",
         first_name=first_name,
         instruction=(
-            f"Your role on '{estate_name}' has been updated to "
-            f"{new_role.replace('_', ' ').title()}. "
+            f"Your role on {estate_name} has been updated to "
+            f"{role_display}. "
             "Log in to access your new permissions."
         ),
         button_label="Log In",
         button_href=f"{_FRONTEND_BASE_URL}/auth/login",
     )
     await _send(
-        f"You've been promoted to {new_role} on {estate_name}", email, body
+        _subject(f"You've been promoted to {role_display} on {estate_name}"),
+        email,
+        body,
     )
 
 
 async def send_role_demoted_email(
     email: str, first_name: str, new_role: str, estate_name: str
 ) -> None:
+    role_display = new_role.replace("_", " ").title()
     body = _build_email(
         heading="Role Updated",
         first_name=first_name,
         instruction=(
-            f"Your role on '{estate_name}' has been updated to "
-            f"{new_role.replace('_', ' ').title()}."
+            f"Your role on {estate_name} has been updated to "
+            f"{role_display}."
         ),
     )
-    await _send(f"Your role on {estate_name} has been updated", email, body)
+    await _send(
+        _subject(f"Your role on {estate_name} has been updated"),
+        email,
+        body,
+    )
 
 
 async def send_household_transferred_email(
@@ -442,13 +602,13 @@ async def send_incident_report_email(
         heading="New Incident Report",
         first_name=first_name,
         instruction=(
-            f"A new incident report titled '{incident_title}' has been "
-            f"filed in '{estate_name}'. Please log in to review it."
+            f'A new incident report titled "{incident_title}" has been '
+            f"filed in {estate_name}. Please log in to review it."
         ),
         button_label="View Report",
         button_href=f"{_FRONTEND_BASE_URL}/incidents",
     )
-    await _send(f"New incident report in {estate_name}", email, body)
+    await _send(_subject(f"New incident report in {estate_name}"), email, body)
 
 
 async def send_edit_request_reviewed_email(
@@ -515,32 +675,14 @@ async def send_welcome_email(email: str, first_name: str) -> None:
         heading="Welcome to GatePass",
         first_name=first_name,
         instruction=(
-            "Your account has been successfully activated. "
-            "You are now part of the GatePass community — "
-            "a smarter way to manage access and keep your community "
-            "secure. Log in to get started."
+            "Your account is now active. Log in to manage visitor "
+            "access and stay updated on everything happening in your "
+            "community."
         ),
         button_label="Log In to GatePass",
         button_href=f"{_FRONTEND_BASE_URL}/auth/login",
     )
-    await _send("Welcome to GatePass — you're all set!", email, body)
-
-
-async def send_password_reset_confirmed_email(
-    email: str, first_name: str
-) -> None:
-    body = _build_email(
-        heading="Password Reset",
-        first_name=first_name,
-        instruction=(
-            "Your GatePass password has been successfully reset. "
-            "Log in with your new password to continue accessing "
-            "your account. "
-            "If you did not make this change, please contact your "
-            "administrator immediately."
-        ),
-    )
-    await _send("Your GatePass password has been reset", email, body)
+    await _send("Welcome to GatePass, you're all set!", email, body)
 
 
 async def send_account_closed_email(email: str, first_name: str) -> None:
@@ -549,27 +691,29 @@ async def send_account_closed_email(email: str, first_name: str) -> None:
         first_name=first_name,
         instruction=(
             "Your GatePass account has been successfully closed. "
-            "We're sorry to see you go. If you ever change your mind, "
-            "you're welcome to create a new account at any time. "
-            "If you did not request this, please contact your "
-            "administrator immediately."
+            "We're sorry to see you go."
+            "<br><br>"
+            "If you'd like to use GatePass again, ask your "
+            "administrator to invite you. If you did not request this, "
+            "please contact your administrator immediately."
         ),
+        instruction_is_html=True,
     )
     await _send("Your GatePass account has been closed", email, body)
 
 
 async def send_account_deactivated_email(email: str, first_name: str) -> None:
     body = _build_email(
-        heading="Account Closed",
+        heading="Account Deactivated",
         first_name=first_name,
         instruction=(
-            "Your GatePass account has been closed by your administrator. "
+            "Your GatePass account has been deactivated by your administrator. "
             "You will no longer be able to log in. "
             "For more information, please contact your administrator directly."
         ),
     )
     await _send(
-        "Your GatePass account has been closed",
+        "Your GatePass account has been deactivated",
         email,
         body,
     )
@@ -650,11 +794,13 @@ async def send_subscription_grace_period_email(
         heading="Subscription Payment Overdue",
         first_name=first_name,
         instruction=(
-            "Your GatePass estate subscription payment is overdue. "
-            "You are currently in the grace period — your community still has "
-            "full access, but this will be revoked if payment is not received "
-            "soon. Please renew your subscription to avoid any interruption."
+            "Your GatePass subscription payment is overdue."
+            "<br><br>"
+            "Your community still has full access for now, but features "
+            "will be limited if payment is not received soon. "
+            "Please renew your subscription to avoid any interruption."
         ),
+        instruction_is_html=True,
         button_label="Renew Subscription",
         button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
     )
@@ -670,11 +816,13 @@ async def send_subscription_expired_email(email: str, first_name: str) -> None:
         heading="Subscription Expired",
         first_name=first_name,
         instruction=(
-            "Your GatePass estate subscription has expired. "
-            "Your community's access has been downgraded to the free Access "
-            "tier. Renew now to restore full access for your residents and "
-            "administrators."
+            "Your GatePass subscription has expired."
+            "<br><br>"
+            "Your community's access has been downgraded to the free "
+            "Access tier. Renew now to restore full access for everyone "
+            "in your community."
         ),
+        instruction_is_html=True,
         button_label="Renew Subscription",
         button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
     )
@@ -693,9 +841,10 @@ async def send_broadcast_email(
     body = _build_email(
         heading=title,
         first_name=first_name,
-        instruction=message,
+        instruction=_text_to_html(message),
+        instruction_is_html=True,
     )
-    await _send(f"[{from_label}] {title}", email, body)
+    await _send(_subject(f"[{from_label}] {title}"), email, body)
 
 
 async def send_user_feedback_email(
@@ -711,7 +860,7 @@ async def send_user_feedback_email(
     attachment_url: str | None = None,
 ) -> None:
     """Send a user-submitted feedback email to the GatePass team."""
-    subject = (
+    subject = _subject(
         f"[GatePass Feedback] {feedback_type.capitalize()} "
         f"from {user_name}"
     )
@@ -732,12 +881,12 @@ async def send_user_feedback_email(
         ]
         if liked:
             body_lines.append(
-                f"<b>What they liked:</b><br>{_esc(liked)}<br><br>"
+                f"<b>What they liked:</b><br>{_text_to_html(liked)}<br><br>"
             )
         if improvement:
             body_lines.append(
                 f"<b>Suggested improvement:</b><br>"
-                f"{_esc(improvement)}<br><br>"
+                f"{_text_to_html(improvement)}<br><br>"
             )
     else:
         body_lines = [
@@ -747,7 +896,7 @@ async def send_user_feedback_email(
         ]
         if description:
             body_lines.append(
-                f"<b>Description:</b><br>{_esc(description)}<br><br>"
+                f"<b>Description:</b><br>{_text_to_html(description)}<br><br>"
             )
         if attachment_url:
             body_lines.append(
@@ -780,14 +929,32 @@ async def dispatch_email(
             device_name=metadata.get("device_name", "unknown device"),
         )
     elif notification_type == NotificationType.PASSWORD_CHANGED:
-        await send_password_changed_email(email=email, first_name=first_name)
+        await send_password_changed_email(
+            email=email,
+            first_name=first_name,
+            ip_address=metadata.get("ip_address"),
+            device_name=metadata.get("device_name"),
+        )
     elif notification_type == NotificationType.TWO_FA_ENABLED:
-        await send_two_fa_enabled_email(email=email, first_name=first_name)
+        await send_two_fa_enabled_email(
+            email=email,
+            first_name=first_name,
+            ip_address=metadata.get("ip_address"),
+            device_name=metadata.get("device_name"),
+        )
     elif notification_type == NotificationType.TWO_FA_DISABLED:
-        await send_two_fa_disabled_email(email=email, first_name=first_name)
+        await send_two_fa_disabled_email(
+            email=email,
+            first_name=first_name,
+            ip_address=metadata.get("ip_address"),
+            device_name=metadata.get("device_name"),
+        )
     elif notification_type == NotificationType.TWO_FA_RECOVERY_USED:
         await send_two_fa_recovery_used_email(
-            email=email, first_name=first_name
+            email=email,
+            first_name=first_name,
+            ip_address=metadata.get("ip_address"),
+            device_name=metadata.get("device_name"),
         )
     elif notification_type == NotificationType.ROLE_PROMOTED:
         await send_role_promoted_email(
@@ -839,10 +1006,6 @@ async def dispatch_email(
         )
     elif notification_type == NotificationType.WELCOME:
         await send_welcome_email(email=email, first_name=first_name)
-    elif notification_type == NotificationType.PASSWORD_RESET_CONFIRMED:
-        await send_password_reset_confirmed_email(
-            email=email, first_name=first_name
-        )
     elif notification_type == NotificationType.ACCOUNT_CLOSED:
         await send_account_closed_email(email=email, first_name=first_name)
     elif notification_type == NotificationType.ACCOUNT_DEACTIVATED:
@@ -891,26 +1054,37 @@ async def dispatch_email(
             email=email, first_name=first_name
         )
     elif notification_type == NotificationType.SUBSCRIPTION_RENEWAL_REMINDER:
-        days_left = metadata.get("days_left", "a few")
+        days_left = metadata.get("days_left")
+        try:
+            days_left = int(days_left)
+            day_word = "day" if days_left == 1 else "days"
+        except (TypeError, ValueError):
+            days_left, day_word = "a few", "days"
         body = _build_email(
             heading="Subscription Renewal Reminder",
             first_name=first_name,
             instruction=(
-                f"Your GatePass estate subscription will renew in "
-                f"{days_left} days. Please ensure your payment method is "
-                "up to date to avoid any interruption in service."
+                f"Your GatePass subscription will renew in "
+                f"{days_left} {day_word}. Please ensure your payment method "
+                "is up to date to avoid any interruption in service."
             ),
             button_label="Manage Subscription",
             button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
         )
         await _send("Your GatePass subscription is renewing soon", email, body)
     elif notification_type == NotificationType.AI_GRANT_RENEWAL_REMINDER:
-        days_left = metadata.get("days_left", "a few")
+        days_left = metadata.get("days_left")
+        try:
+            days_left = int(days_left)
+            day_word = "day" if days_left == 1 else "days"
+        except (TypeError, ValueError):
+            days_left, day_word = "a few", "days"
         body = _build_email(
             heading="AI Grant Renewal Reminder",
             first_name=first_name,
             instruction=(
-                f"Your GatePass AI grant will renew in {days_left} days. "
+                f"Your GatePass AI grant will renew in "
+                f"{days_left} {day_word}. "
                 "Please ensure your payment method is up to date to "
                 "continue using AI features without interruption."
             ),
@@ -923,11 +1097,13 @@ async def dispatch_email(
             heading="AI Grant Payment Overdue",
             first_name=first_name,
             instruction=(
-                "Your GatePass AI grant payment is overdue. "
-                "You are currently in the grace period — AI features are "
-                "still available, but they will be suspended if payment is "
-                "not received soon. Please renew to avoid any interruption."
+                "Your GatePass AI grant payment is overdue."
+                "<br><br>"
+                "AI features are still available for now, but they will "
+                "be suspended if payment is not received soon. "
+                "Please renew to avoid any interruption."
             ),
+            instruction_is_html=True,
             button_label="Renew Now",
             button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
         )
@@ -961,3 +1137,7 @@ async def dispatch_email(
             button_href=f"{_FRONTEND_BASE_URL}/settings/subscription",
         )
         await _send("Payment failed for your GatePass AI grant", email, body)
+    else:
+        logger.warning(
+            "No email handler for notification type %s", notification_type
+        )

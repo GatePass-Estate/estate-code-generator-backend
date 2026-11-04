@@ -83,6 +83,19 @@ The db-service connects via Cloud SQL Auth Proxy sidecar, which is automatically
 /cloudsql/gatepass-6d009:europe-west1:gatepass-db
 ```
 
+4. Enable automated backups with point-in-time recovery:
+
+```bash
+gcloud sql instances patch gatepass-db \
+  --backup-start-time=04:00 \
+  --enable-point-in-time-recovery \
+  --retained-backups-count=14 \
+  --retained-transaction-log-days=7 \
+  --project=gatepass-6d009
+```
+
+This runs daily backups at 4:00 AM UTC and retains 14 days of backups plus 7 days of transaction logs for point-in-time recovery.
+
 ---
 
 ## 4. Redis (Upstash)
@@ -252,7 +265,8 @@ DB_SERVICE_URL: "https://db-service-<PROJECT_NUMBER>.europe-west1.run.app/"
 NOTIFICATION_SERVICE_URL: "https://notification-service-<PROJECT_NUMBER>.europe-west1.run.app/"
 REVENUE_SERVICE_URL: "https://revenue-service-<PROJECT_NUMBER>.europe-west1.run.app/"
 CACHE_SERVICE_URL: "https://cache-service-<PROJECT_NUMBER>.europe-west1.run.app/"
-LOGIN_EXPIRE_MINUTES: "60"
+ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+REFRESH_TOKEN_EXPIRE_MINUTES: "60"
 SESSION_EXPIRE_DAYS: "30"
 TOS_VERSION: "1.0.0"
 TOTP_ENCRYPTION_KEY: "<YOUR_TOTP_KEY>"
@@ -353,6 +367,8 @@ MAIL_SERVER: "smtp.zoho.com"
 MAIL_PORT: "465"
 MAIL_SSL_TLS: "true"
 MAIL_STARTTLS: "false"
+SENDBYTE_API_KEY: "<YOUR_SENDBYTE_API_KEY>"
+RESEND_API_KEY: "<YOUR_RESEND_API_KEY>"
 MAIL_DEV_MODE: "false"
 FEEDBACK_RECIPIENT_EMAIL: "info@gatepassng.com"
 NOTIFICATION_MAX_AGE_DAYS: "90"

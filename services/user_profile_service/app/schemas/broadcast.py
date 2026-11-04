@@ -44,8 +44,10 @@ class BroadcastPriority(str, Enum):
 
 
 class CreateBroadcastRequest(BaseModel):
-    title: str = Field(..., description="Broadcast title")
-    message: str = Field(..., description="Full broadcast message")
+    title: str = Field(..., min_length=1, description="Broadcast title")
+    message: str = Field(
+        ..., min_length=10, description="Full broadcast message"
+    )
     category: BroadcastCategory = Field(
         BroadcastCategory.BROADCAST, description="Broadcast category"
     )

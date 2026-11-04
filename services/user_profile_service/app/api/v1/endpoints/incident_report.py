@@ -11,6 +11,7 @@ from gatepass_entitlement import (
 )
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.libs.notify import fire_notify
+from app.repositories.estate import EstateRepository
 from app.repositories.incident_report import IncidentReportRepository
 from app.schemas.incident_report import (
     CreateIncidentReportRequest,
@@ -46,6 +47,7 @@ async def create(
     current_user: dict = Depends(get_current_user),
     service: IncidentReportService = Depends(get_service),
     auth_token: str | None = Depends(auth_token_from_request),
+    http_client: AsyncHttpHandler = Depends(get_http_handler),
 ) -> CreateIncidentReportResponse:
     """File a new incident report. Requires the incident_report entitlement."""
     await require_service_entitlement(
@@ -54,11 +56,14 @@ async def create(
         service_key=INCIDENT_REPORT_KEY,
         auth_token=auth_token,
     )
+    estate_id = str(current_user.get("estate_id"))
     result = await service.create(
         request,
-        estate_id=str(current_user.get("estate_id")),
+        estate_id=estate_id,
         user_id=str(current_user.get("id")),
     )
+    estate_repo = EstateRepository(http_client)
+    estate = await estate_repo.get_estate_by_id(estate_id)
     background_tasks.add_task(
         fire_notify,
         {
@@ -66,12 +71,13 @@ async def create(
             "title": "New Incident Report",
             "body": "A new incident report has been filed.",
             "fan_out": {
-                "estate_id": str(current_user.get("estate_id")),
+                "estate_id": estate_id,
                 "roles": ["admin", "primary_admin"],
             },
             "metadata": {
                 "incident_id": str(result.id),
                 "title": request.title or "Incident Report",
+                "estate_name": estate.name,
             },
         },
     )
