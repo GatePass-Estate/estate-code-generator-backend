@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from gatepass_auth.dependencies import get_current_user
+from gatepass_auth.dependencies import (
+    get_current_user,
+    get_current_user_unverified,
+)
 from gatepass_rbac import (
     require_admin,
     require_estate_membership,
@@ -99,7 +102,7 @@ async def list_subscription_tiers(
     "/tiers/my-tier", response_model=SubscriptionTierCatalogItem | None
 )
 async def get_my_tier(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
     service: SubscriptionTierCatalogService = Depends(
         get_tier_catalog_service
     ),

@@ -4,7 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from gatepass_auth.dependencies import get_current_user
+from gatepass_auth.dependencies import get_current_user_unverified
 from gatepass_rbac import require_estate_membership
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -30,7 +30,7 @@ def get_service(
 async def check_entitlement(
     estate_id: str,
     service_key: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
     service: EntitlementService = Depends(get_service),
 ):
     """
@@ -57,7 +57,7 @@ async def check_entitlement(
 @router.get("/estate/{estate_id}", response_model=EstateEntitlementsResponse)
 async def estate_entitlements(
     estate_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
     service: EntitlementService = Depends(get_service),
 ):
     """Return the full effective entitlements map for an estate."""
