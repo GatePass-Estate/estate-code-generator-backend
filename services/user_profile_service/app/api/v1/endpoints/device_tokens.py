@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from gatepass_auth import get_current_user
+from gatepass_auth import get_current_user, get_current_user_unverified
 from gatepass_rbac import require_owner
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.post("", response_model=RegisterDeviceTokenResponse)
 async def register_device_token(
     payload: RegisterDeviceTokenRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
     repo = DeviceTokenRepository(ahttp_client)
