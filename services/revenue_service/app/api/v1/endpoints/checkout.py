@@ -5,7 +5,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from gatepass_auth.dependencies import get_current_user
-from gatepass_rbac import require_admin, require_estate_membership
+from gatepass_rbac import (
+    require_admin,
+    require_estate_membership,
+    require_roles,
+)
 
 from app.libs.http_handler import AsyncHttpHandler, get_http_handler
 from app.repositories.db_revenue import DbRevenueRepository
@@ -148,7 +152,7 @@ async def initialize_checkout(
     Requires an ``Idempotency-Key`` header. Re-using a key that maps to a
     failed or expired session returns 409.
     """
-    require_admin(current_user["role"])
+    require_roles(current_user["role"], ("primary_admin", "root"))
     require_estate_membership(current_user, request.estate_id)
     try:
         return await service.initialize(

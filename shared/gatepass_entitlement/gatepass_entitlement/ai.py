@@ -145,7 +145,7 @@ async def resolve_incident_entitlements(
         auth_token=auth_token,
         allow_security=allow_security,
     )
-    inhouse_ok = llm_ok or await is_ai_feature_allowed(
+    inhouse_ok = await is_ai_feature_allowed(
         revenue_base_url,
         estate_id=estate_id,
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_2_KEY,
@@ -153,7 +153,7 @@ async def resolve_incident_entitlements(
         auth_token=auth_token,
         allow_security=allow_security,
     )
-    page_ok = inhouse_ok or await is_ai_feature_allowed(
+    page_ok = (inhouse_ok or llm_ok) or await is_ai_feature_allowed(
         revenue_base_url,
         estate_id=estate_id,
         feature_key=settings.INCIDENT_REPORT_SUMMARY_TIER_1_KEY,

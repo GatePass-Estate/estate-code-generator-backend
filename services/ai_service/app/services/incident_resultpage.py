@@ -328,7 +328,7 @@ class IncidentResultPageService:
                 client=client,
                 auth_token=auth_token,
             )
-            if not inhouse_ok:
+            if not inhouse_ok and not llm_ok:
                 raise EntitlementDeniedError(
                     "Estate is not entitled to incident summary.",
                     status_code=403,
@@ -357,7 +357,11 @@ class IncidentResultPageService:
             patch_t2 = None
             records: list[dict[str, Any]] | None = None
             # 5. Fetch rows only if an entitled tier still needs work.
-            need_records = inhouse is None or (llm_ok and llm is None)
+            #    LLM generation needs in-house EDA, so fetch rows for
+            #    that case even when tier 2 is uninstalled.
+            need_records = (inhouse_ok and inhouse is None) or (
+                llm_ok and (llm is None or inhouse is None)
+            )
             if need_records:
                 try:
                     records = await load_incident_reports_for_estate(
@@ -371,10 +375,12 @@ class IncidentResultPageService:
                     raise ResultPageError(
                         exc.message, status_code=exc.status_code
                     ) from exc
-            # 6. In-house topics: generate only when cache missed.
-            if inhouse is None:
+            # 6. In-house topics: generate when cache missed and either
+            #    tier 2 is entitled or LLM needs the EDA data.
+            if inhouse is None and (inhouse_ok or llm_ok):
                 inhouse = build_inhouse_incident_summary(records or [])
-                patch_t1 = inhouse.model_dump()
+                if inhouse_ok:
+                    patch_t1 = inhouse.model_dump()
                 generated = True
             # 7. LLM: only if catalog tier 3 is granted and missing.
             #    Cached reports skip the daily generation counter.
@@ -408,10 +414,10 @@ class IncidentResultPageService:
                     tier1=patch_t1,
                     tier2=patch_t2,
                 )
-        # 9. Withhold the LLM body when the estate is not entitled.
+        # 9. Withhold tier bodies when the estate is not entitled.
         return IncidentSummaryResponse(
             entitled_tier="tier2" if llm_ok else "tier1",
             from_cache=not generated,
-            tier1=inhouse,
+            tier1=inhouse if inhouse_ok else None,
             tier2=llm if llm_ok else None,
         )

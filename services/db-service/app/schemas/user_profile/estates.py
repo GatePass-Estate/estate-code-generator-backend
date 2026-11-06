@@ -45,6 +45,7 @@ class EstateBase(BaseModel):
 
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     lga: str | None = Field(default=None, description="Local Government Area")
     state: str | None = Field(default=None, description="State")
     country: str | None = Field(default=None, description="Country")
@@ -119,6 +120,7 @@ class UpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, description="Estate name")
     location: str | None = Field(default=None, description="Estate location")
+    city: str | None = Field(default=None, description="City")
     lga: str | None = Field(default=None, description="Local Government Area")
     state: str | None = Field(default=None, description="State")
     country: str | None = Field(default=None, description="Country")
@@ -238,6 +240,7 @@ class SearchRequest(BaseSearchRequest):
     )
     name: Optional[str] = Field(None, description="Estate name")
     location: Optional[str] = Field(None, description="Estate location")
+    city: Optional[str] = Field(None, description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
