@@ -25,7 +25,11 @@ from app.schemas.broadcast import (
     UnreadBroadcastCountResponse,
     UpdateBroadcastRequest,
 )
-from app.services.auth import auth_token_from_request, get_current_user
+from app.services.auth import (
+    auth_token_from_request,
+    get_current_user,
+    get_current_user_unverified,
+)
 from app.services.broadcast import BroadcastService
 
 logger = logging.getLogger(__name__)
@@ -78,7 +82,7 @@ async def create_broadcast(
 
 @router.get("/unread-count", response_model=UnreadBroadcastCountResponse)
 async def unread_count(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ) -> UnreadBroadcastCountResponse:
     """Count broadcasts visible to the current user that they haven't read."""
@@ -95,7 +99,7 @@ async def unread_count(
 async def list_broadcasts(
     page: int = 1,
     limit: int = 20,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ) -> BroadcastListResponse:
     """List broadcasts visible to the current user."""
@@ -113,7 +117,7 @@ async def list_broadcasts(
 @router.get("/{broadcast_id}", response_model=BroadcastItem)
 async def get_broadcast(
     broadcast_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ):
     """Get a single broadcast by ID (scoped to user's estate and role)."""
@@ -137,7 +141,7 @@ async def get_broadcast(
 )
 async def mark_broadcast_read(
     broadcast_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ):
     """Mark a broadcast as read for the current user."""
@@ -156,7 +160,7 @@ async def mark_broadcast_read(
 )
 async def dismiss_broadcast(
     broadcast_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ):
     """Dismiss a BROADCAST-category broadcast for the current user."""
@@ -178,7 +182,7 @@ async def dismiss_broadcast(
     "/dismiss-all", status_code=200, response_model=DismissAllResponse
 )
 async def dismiss_all_broadcasts(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
     service: BroadcastService = Depends(_get_service),
 ):
     """Dismiss all BROADCAST-category broadcasts for the current user."""
