@@ -80,6 +80,7 @@ class BroadcastService:
         while True:
             search = SearchEstateRequest(
                 state=request.target_state,
+                city=request.target_city,
                 lga=request.target_lga,
                 estate_type=(
                     EstateType(request.target_estate_type)

@@ -107,6 +107,8 @@ class EstateRepository:
             payload["name"] = estate_data.name
         if estate_data.location is not None:
             payload["location"] = estate_data.location
+        if estate_data.city is not None:
+            payload["city"] = estate_data.city
         if estate_data.lga is not None:
             payload["lga"] = estate_data.lga
         if estate_data.state is not None:
@@ -249,6 +251,8 @@ class EstateRepository:
             params["name"] = request.name
         if request.location:
             params["location"] = request.location
+        if request.city:
+            params["city"] = request.city
         if request.lga:
             params["lga"] = request.lga
         if request.state:

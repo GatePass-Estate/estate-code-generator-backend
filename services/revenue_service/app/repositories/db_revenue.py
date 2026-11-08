@@ -512,12 +512,31 @@ class DbRevenueRepository:
         return response
 
     async def get_checkout_session_by_idempotency_key(
-        self, key: str
+        self, key: str, *, user_id: str | None = None
     ) -> dict | None:
-        """Return a checkout session by idempotency_key, or None."""
+        """Return a checkout session by idempotency_key (scoped to user).
+
+        Args:
+            key: Client-supplied idempotency key.
+            user_id: Authenticated user UUID. When provided the lookup
+                is scoped to that user.
+
+        Returns:
+            Session row, or None if not found.
+        """
+        params: dict = {"idempotency_key": key, "limit": 1}
+        if user_id:
+            params["initiated_by_user_id"] = user_id
+        items = await self._search(self.payment_checkout_session, params)
+        return items[0] if items else None
+
+    async def get_pending_checkout_for_estate(
+        self, estate_id: str
+    ) -> dict | None:
+        """Return the newest pending checkout session for an estate."""
         items = await self._search(
             self.payment_checkout_session,
-            {"idempotency_key": key, "limit": 1},
+            {"estate_id": estate_id, "status": "pending", "limit": 1},
         )
         return items[0] if items else None
 

@@ -63,6 +63,11 @@ class Settings(BaseSettings):
         os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
     )
 
+    # Pending checkout sessions older than this are treated as expired.
+    CHECKOUT_SESSION_TTL_SECONDS: int = int(
+        os.getenv("CHECKOUT_SESSION_TTL_SECONDS", "86400")  # 24 hours
+    )
+
     # Applied to feature_unit_price rows (except VAT) before quote math.
     ESTATE_TYPE_HOUSING_MULTIPLIER: float = float(
         os.getenv("ESTATE_TYPE_HOUSING_MULTIPLIER", "1.0")

@@ -129,6 +129,7 @@ async def delete(
 )
 async def search(
     estate_id: UUID4 | None = None,
+    initiated_by_user_id: UUID4 | None = None,
     idempotency_key: str | None = None,
     paystack_reference: str | None = None,
     status: CheckoutStatus | None = None,

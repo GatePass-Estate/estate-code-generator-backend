@@ -384,12 +384,33 @@ class AiMarketPlaceService:
     async def rate(
         self,
         product_id: str,
+        estate_id: str,
         user_id: str,
         score: int,
         comment: str | None = None,
     ) -> RatingResponse:
-        """Upsert the user's rating and return it with the product summary."""
-        await self.repository.get_product(product_id)
+        """Upsert the user's rating and return it with the product summary.
+
+        Only users whose estate holds an active entitlement for at least
+        one child tier of the product may rate it.
+        """
+        product = await self.repository.get_product(product_id)
+
+        # Entitlement gate: estate must have a grant for ≥1 child tier
+        child_ids = _ai_feature_ids(product.get("tiers"))
+        grants = _grant_map(
+            await self.repository.list_estate_ai_features(estate_id)
+        )
+        if not _is_purchased(child_ids, grants):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Your estate does not have an active entitlement for "
+                    "this product. Subscribe to a tier or purchase it as a "
+                    "standalone feature before rating."
+                ),
+            )
+
         existing = await self.repository.search_rating(
             feature_id=product_id, user_id=user_id
         )

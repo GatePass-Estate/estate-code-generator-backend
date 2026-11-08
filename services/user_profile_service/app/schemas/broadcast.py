@@ -74,6 +74,9 @@ class CreateBroadcastRequest(BaseModel):
     target_state: Optional[str] = Field(
         None, description="Target all estates in this state"
     )
+    target_city: Optional[str] = Field(
+        None, description="Target all estates in this city"
+    )
     target_lga: Optional[str] = Field(
         None, description="Target all estates in this LGA"
     )
