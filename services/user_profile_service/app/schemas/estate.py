@@ -53,6 +53,7 @@ class RegisterEstateRequest(BaseModel):
 
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
@@ -90,6 +91,7 @@ class RegisterEstateResponse(BaseModel):
     id: UUID4 = Field(..., description="Estate ID")
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
@@ -132,6 +134,7 @@ class UpdateEstateRequest(BaseModel):
 
     name: Optional[str] = Field(None, description="Estate name")
     location: Optional[str] = Field(None, description="Estate location")
+    city: Optional[str] = Field(None, description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
@@ -194,6 +197,7 @@ class GetEstateResponse(BaseModel):
     id: UUID4 = Field(..., description="Estate ID")
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
@@ -266,6 +270,7 @@ class SearchEstateRequest(BaseModel):
     location: Optional[str] = Field(
         None, description="Filter by estate location"
     )
+    city: Optional[str] = Field(None, description="Filter by city")
     lga: Optional[str] = Field(None, description="Filter by LGA")
     state: Optional[str] = Field(None, description="Filter by state")
     country: Optional[str] = Field(None, description="Filter by country")
@@ -336,6 +341,7 @@ class PublicEstateSearchResponse(BaseModel):
     id: UUID4 = Field(..., description="Estate ID")
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     estate_type: Optional[EstateType] = Field(
         None, description="Type of estate"
     )

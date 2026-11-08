@@ -42,6 +42,7 @@ class Estates(BaseModelDB):
 
     name = Column(String, nullable=False)
     location = Column(Text, nullable=False)
+    city = Column(String, nullable=False)
     lga = Column(String, nullable=True)
     state = Column(String, nullable=True)
     country = Column(String, nullable=True)

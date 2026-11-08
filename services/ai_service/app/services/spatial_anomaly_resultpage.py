@@ -224,8 +224,8 @@ class SpatialAnomalyResultPageService:
         the missing tier is generated and stored.
         """
         async with httpx.AsyncClient(timeout=_SUMMARY_TIMEOUT) as client:
-            # Re-check grants every call. Tier3 implies both; else
-            # tier2 (in-house only); neither → 403.
+            # Re-check grants every call. Tier 2 and tier 3 are
+            # checked independently; at least one must be installed.
             tier2_ok = await is_ai_feature_allowed(
                 self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
@@ -233,14 +233,14 @@ class SpatialAnomalyResultPageService:
                 client=client,
                 auth_token=auth_token,
             )
-            tier1_ok = tier2_ok or await is_ai_feature_allowed(
+            tier1_ok = await is_ai_feature_allowed(
                 self.settings.REVENUE_SERVICE_URL,
                 estate_id=estate_id,
                 feature_key=ACCESS_ANOMALY_DETECTION_TIER_2_KEY,
                 client=client,
                 auth_token=auth_token,
             )
-            if not tier1_ok:
+            if not tier1_ok and not tier2_ok:
                 raise EntitlementDeniedError(
                     "Estate is not entitled to anomaly case summary.",
                     status_code=403,
@@ -265,9 +265,10 @@ class SpatialAnomalyResultPageService:
             generated = False
             patch_t1 = None
             patch_t2 = None
-            if inhouse is None:
+            if inhouse is None and (tier1_ok or tier2_ok):
                 inhouse = build_inhouse_summary(result)
-                patch_t1 = inhouse.model_dump()
+                if tier1_ok:
+                    patch_t1 = inhouse.model_dump()
                 generated = True
             if tier2_ok and llm is None:
                 llm, _used = await summarize_case_with_llm(
@@ -289,6 +290,6 @@ class SpatialAnomalyResultPageService:
         return CaseSummaryResponse(
             entitled_tier="tier2" if tier2_ok else "tier1",
             from_cache=not generated,
-            tier1=inhouse,
+            tier1=inhouse if tier1_ok else None,
             tier2=llm if tier2_ok else None,
         )

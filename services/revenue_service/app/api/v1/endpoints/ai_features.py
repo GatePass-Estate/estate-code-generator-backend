@@ -4,7 +4,10 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from gatepass_auth.dependencies import get_current_user
+from gatepass_auth.dependencies import (
+    get_current_user,
+    get_current_user_unverified,
+)
 from gatepass_rbac import (
     require_admin,
     require_estate_membership,
@@ -51,7 +54,7 @@ def get_service(
 async def check_ai_feature(
     estate_id: str,
     feature_key: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
     service: EntitlementService = Depends(get_service),
     allow_security: bool = False,
 ):
@@ -85,7 +88,7 @@ async def check_ai_feature(
 @router.get("/estate/{estate_id}", response_model=EstateAiFeaturesResponse)
 async def list_ai_features(
     estate_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user_unverified)],
     service: EntitlementService = Depends(get_service),
 ):
     """List AI feature grants; orphans are marked catalog_deleted."""
