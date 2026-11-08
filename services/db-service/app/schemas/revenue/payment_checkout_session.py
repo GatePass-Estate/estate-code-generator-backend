@@ -48,7 +48,13 @@ class PaymentCheckoutSessionBase(BaseModel):
     """Base fields for the resource."""
 
     estate_id: UUID4 = Field(..., description="Estate ID")
+    initiated_by_user_id: UUID4 | None = Field(
+        None, description="User who initiated the checkout"
+    )
     idempotency_key: str = Field(..., description="Idempotency key")
+    request_hash: str | None = Field(
+        None, description="SHA-256 hash of the request body"
+    )
     paystack_reference: str | None = Field(
         None, description="Paystack reference"
     )
@@ -64,9 +70,16 @@ class PaymentCheckoutSessionBase(BaseModel):
         None, description="Optional metadata"
     )
     paid_at: datetime | None = Field(None, description="Paid at")
+    expires_at: datetime | None = Field(
+        None, description="Session expiry timestamp"
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
+        return str(value) if value else None
+
+    @field_serializer("initiated_by_user_id")
+    def serialize_initiated_by_user_id(self, value):
         return str(value) if value else None
 
     model_config = model_config
@@ -93,8 +106,14 @@ class UpdateRequest(BaseModel):
     """Request model to UPDATE a record. All fields optional."""
 
     estate_id: UUID4 | None = Field(default=None, description="Estate ID")
+    initiated_by_user_id: UUID4 | None = Field(
+        default=None, description="User who initiated the checkout"
+    )
     idempotency_key: str | None = Field(
         default=None, description="Idempotency key"
+    )
+    request_hash: str | None = Field(
+        default=None, description="SHA-256 hash of the request body"
     )
     paystack_reference: str | None = Field(
         default=None, description="Paystack reference"
@@ -119,9 +138,16 @@ class UpdateRequest(BaseModel):
         default=None, description="Optional metadata"
     )
     paid_at: datetime | None = Field(default=None, description="Paid at")
+    expires_at: datetime | None = Field(
+        default=None, description="Session expiry timestamp"
+    )
 
     @field_serializer("estate_id")
     def serialize_estate_id(self, value):
+        return str(value) if value else None
+
+    @field_serializer("initiated_by_user_id")
+    def serialize_initiated_by_user_id(self, value):
         return str(value) if value else None
 
     model_config = model_config
@@ -151,6 +177,9 @@ class SearchRequest(BaseSearchRequest):
     """Search/filter request."""
 
     estate_id: Optional[UUID4] = Field(None, description="Estate ID")
+    initiated_by_user_id: Optional[UUID4] = Field(
+        None, description="User who initiated the checkout"
+    )
     idempotency_key: Optional[str] = Field(None, description="Idempotency key")
     paystack_reference: str | None = Field(
         None, description="Paystack reference"

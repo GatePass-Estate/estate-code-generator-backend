@@ -111,7 +111,11 @@ async def rate_feature(
     """
     require_admin(current_user["role"])
     return await service.rate(
-        id, str(current_user["id"]), request.score, request.comment
+        id,
+        _estate_id(current_user),
+        str(current_user["id"]),
+        request.score,
+        request.comment,
     )
 
 

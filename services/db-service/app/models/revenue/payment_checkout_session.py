@@ -1,5 +1,6 @@
 import logging
 
+import sqlalchemy as sa
 from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
@@ -14,12 +15,23 @@ class PaymentCheckoutSession(BaseModelDB):
     """
 
     __tablename__ = "payment_checkout_session"
-    __table_args__ = {"schema": "core"}
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "initiated_by_user_id",
+            "idempotency_key",
+            name="uq_checkout_user_idempotency",
+        ),
+        {"schema": "core"},
+    )
 
     estate_id = Column(
         UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=False
     )
-    idempotency_key = Column(String, nullable=False, unique=True)
+    initiated_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
+    )
+    idempotency_key = Column(String, nullable=False)
+    request_hash = Column(String(64), nullable=True)
     paystack_reference = Column(String, nullable=True, unique=True)
     status = Column(String, nullable=False, server_default="pending")
     pricing_snapshot = Column(
@@ -32,3 +44,4 @@ class PaymentCheckoutSession(BaseModelDB):
     # "metadata" is reserved on Declarative API; map to column name metadata
     session_metadata = Column("metadata", JSONB, nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)

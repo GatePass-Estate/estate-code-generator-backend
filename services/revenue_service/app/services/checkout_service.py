@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -584,6 +586,37 @@ class CheckoutService:
             )
         return service_prices, ai_prices, currency, vat_rate, catalog
 
+    @staticmethod
+    def _hash_request(request: dict[str, Any]) -> str:
+        """Return a deterministic SHA-256 hex digest of the request body."""
+        canonical = json.dumps(request, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _build_cached_response(self, existing: dict) -> dict[str, Any]:
+        """Build the idempotent replay response from an existing session."""
+        meta = existing.get("session_metadata") or {}
+        return {
+            "checkout_session_id": str(existing["id"]),
+            "paystack_reference": existing.get("paystack_reference", ""),
+            "authorization_url": meta.get("authorization_url", ""),
+            "checkout_token": generate_checkout_token(
+                str(existing["id"]), settings.SECRET_KEY
+            ),
+        }
+
+    @staticmethod
+    def _is_session_expired(
+        created_at: str | datetime, ttl_seconds: int
+    ) -> bool:
+        """Check if a session has exceeded its TTL."""
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return datetime.now(tz=timezone.utc) - created_at > timedelta(
+            seconds=ttl_seconds
+        )
+
     async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
         """
         Produce a checkout quote for an estate subscription purchase.
@@ -917,16 +950,21 @@ class CheckoutService:
 
         Raises:
             HTTPException: 409 on terminal idempotency key re-use;
+                422 on key reuse with different payload;
                 502 if Paystack fails.
         """
-        # 1. Idempotency check
+        # 1. Validate key length
         if len(idempotency_key) > 255:
             raise HTTPException(
                 status_code=400,
                 detail="Idempotency-Key exceeds maximum length of 255 chars",
             )
+
+        request_hash = self._hash_request(request)
+
+        # 2. Idempotency check — scoped to the authenticated user
         existing = await self.repo.get_checkout_session_by_idempotency_key(
-            idempotency_key
+            idempotency_key, user_id=current_user_id
         )
         if existing:
             if existing["status"] in ("failed", "expired"):
@@ -937,18 +975,43 @@ class CheckoutService:
                         "failed or expired. Use a new key to retry."
                     ),
                 )
+            # Verify request body matches — catch client bugs reusing
+            # the same key for a different cart.
+            stored_hash = existing.get("request_hash")
+            if stored_hash and stored_hash != request_hash:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Idempotency key was already used with a different "
+                        "request payload. Use a new key for a new checkout."
+                    ),
+                )
             # pending or paid: return cached response (idempotent)
-            meta = existing.get("session_metadata") or {}
-            return {
-                "checkout_session_id": str(existing["id"]),
-                "paystack_reference": existing.get("paystack_reference", ""),
-                "authorization_url": meta.get("authorization_url", ""),
-                "checkout_token": generate_checkout_token(
-                    str(existing["id"]), settings.SECRET_KEY
-                ),
-            }
+            return self._build_cached_response(existing)
 
-        # 2. Resolve handler for this checkout kind
+        # 3. Business-level guard: one pending checkout per estate
+        pending = await self.repo.get_pending_checkout_for_estate(
+            request["estate_id"]
+        )
+        if pending:
+            # Auto-expire stale sessions so they don't block forever
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    str(pending["id"]), {"status": "expired"}
+                )
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This estate already has a pending checkout session. "
+                        "Complete or wait for it to expire before starting "
+                        "a new one."
+                    ),
+                )
+
+        # 4. Resolve handler for this checkout kind
         kind = request["checkout_kind"]
         handler_cls = _HANDLERS.get(kind)
         if not handler_cls:
@@ -958,10 +1021,10 @@ class CheckoutService:
             )
         handler = handler_cls(self.repo, self)
 
-        # 3. Kind-specific guard (raises 409 on conflict)
+        # 5. Kind-specific guard (raises 409 on conflict)
         await handler.guard(request)
 
-        # 4. Compute quote
+        # 6. Compute quote
         quote_result = await handler.get_quote(request)
         amount: int = quote_result["amount"]
         currency: str = quote_result["currency_code"]
@@ -974,32 +1037,55 @@ class CheckoutService:
                 detail="Checkout amount must be greater than zero",
             )
 
-        # 5. Build session_metadata
+        # 7. Build session_metadata
         session_metadata = handler.build_metadata(request, current_user_id)
 
-        # 6. Create pending session (no paystack_reference yet)
-        session = await self.repo.create_checkout_session(
-            {
-                "estate_id": request["estate_id"],
-                "idempotency_key": idempotency_key,
-                "status": "pending",
-                "pricing_snapshot": snapshot,
-                "amount": amount,
-                "currency_code": currency,
-                "country_code": country,
-                "checkout_kind": kind,
-                "session_metadata": session_metadata,
-            }
-        )
+        # 8. Compute session expiry
+        expires_at = (
+            datetime.now(tz=timezone.utc)
+            + timedelta(seconds=settings.CHECKOUT_SESSION_TTL_SECONDS)
+        ).isoformat()
+
+        # 9. Create pending session (no paystack_reference yet)
+        try:
+            session = await self.repo.create_checkout_session(
+                {
+                    "estate_id": request["estate_id"],
+                    "initiated_by_user_id": current_user_id,
+                    "idempotency_key": idempotency_key,
+                    "request_hash": request_hash,
+                    "status": "pending",
+                    "pricing_snapshot": snapshot,
+                    "amount": amount,
+                    "currency_code": currency,
+                    "country_code": country,
+                    "checkout_kind": kind,
+                    "session_metadata": session_metadata,
+                    "expires_at": expires_at,
+                }
+            )
+        except HTTPException as exc:
+            # Concurrent duplicate: the unique constraint
+            # (initiated_by_user_id, idempotency_key) rejected the
+            # insert. Re-fetch and return the cached response.
+            if exc.status_code == 502:
+                existing = (
+                    await self.repo.get_checkout_session_by_idempotency_key(
+                        idempotency_key, user_id=current_user_id
+                    )
+                )
+                if existing and existing["status"] in ("pending", "paid"):
+                    return self._build_cached_response(existing)
+            raise
         session_id = str(session["id"])
 
-        # 7. Stamp the reference (GP-<session_id>)
+        # 10. Stamp the reference (GP-<session_id>)
         paystack_reference = f"GP-{session_id}"
         await self.repo.update_checkout_session(
             session_id, {"paystack_reference": paystack_reference}
         )
 
-        # 8. Call Paystack — amount is already in kobo (int)
+        # 11. Call Paystack — amount is already in kobo (int)
         try:
             paystack_data = await self._paystack.initialize_transaction(
                 email=request["customer_email"],
@@ -1022,7 +1108,7 @@ class CheckoutService:
             )
             raise
 
-        # 9. Persist authorization_url for idempotent replays
+        # 12. Persist authorization_url for idempotent replays
         authorization_url: str = paystack_data["authorization_url"]
         await self.repo.update_checkout_session(
             session_id,
@@ -1035,7 +1121,7 @@ class CheckoutService:
             },
         )
 
-        # 10. Mint checkout token
+        # 13. Mint checkout token
         checkout_token = generate_checkout_token(
             session_id, settings.SECRET_KEY
         )

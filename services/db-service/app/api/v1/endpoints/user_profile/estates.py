@@ -172,6 +172,7 @@ async def search(
     search_query: str | None = None,
     name: str | None = None,
     location: str | None = None,
+    city: str | None = None,
     lga: str | None = None,
     state: str | None = None,
     country: str | None = None,

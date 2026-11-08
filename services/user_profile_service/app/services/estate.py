@@ -76,6 +76,7 @@ class EstateService:
         estate_data = {
             "name": request.name,
             "location": request.location,
+            "city": request.city,
             "lga": request.lga,
             "state": request.state,
             "country": request.country,
@@ -139,6 +140,8 @@ class EstateService:
             update_data["name"] = request.name
         if request.location is not None:
             update_data["location"] = request.location
+        if request.city is not None:
+            update_data["city"] = request.city
         if request.lga is not None:
             update_data["lga"] = request.lga
         if request.state is not None:
@@ -189,14 +192,17 @@ class EstateService:
             id=estate.id,
             name=estate.name,
             location=estate.location,
+            city=estate.city,
             lga=estate.lga,
             state=estate.state,
             country=estate.country,
             postal_code=estate.postal_code,
             primary_admin_id=estate.primary_admin_id,
+            estate_type=estate.estate_type,
             created_at=estate.created_at,
             updated_at=estate.updated_at,
             is_deleted=estate.is_deleted,
+            is_active=estate.is_active,
         )
 
     async def delete_estate(self, estate_id: str) -> DeleteEstateResponse:
