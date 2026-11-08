@@ -298,6 +298,7 @@ async def public_search_estates(
             id=item.id,
             name=item.name,
             location=item.location,
+            city=item.city,
             estate_type=item.estate_type,
         )
         for item in result.items
