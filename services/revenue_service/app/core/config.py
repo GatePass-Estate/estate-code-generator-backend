@@ -63,9 +63,10 @@ class Settings(BaseSettings):
         os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
     )
 
-    # Pending checkout sessions older than this are treated as expired.
+    # Pending checkout sessions older than this are treated as expired
+    # (default 1 hour).
     CHECKOUT_SESSION_TTL_SECONDS: int = int(
-        os.getenv("CHECKOUT_SESSION_TTL_SECONDS", "86400")  # 24 hours
+        os.getenv("CHECKOUT_SESSION_TTL_SECONDS", "3600")
     )
 
     # Applied to feature_unit_price rows (except VAT) before quote math.

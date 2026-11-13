@@ -244,3 +244,11 @@ class CheckoutStatusResponse(BaseModel):
     checkout_kind: str
     paid_at: str | None = None
     estate_id_masked: str
+
+
+class CheckoutCancelResponse(BaseModel):
+    """Response for POST /checkout/cancel/{paystack_reference}."""
+
+    paystack_reference: str
+    previous_status: str
+    status: str

@@ -16,6 +16,7 @@ from app.repositories.db_revenue import DbRevenueRepository
 from app.schemas.checkout import (
     AiCheckoutRequest,
     AiQuoteResponse,
+    CheckoutCancelResponse,
     CheckoutInitializeRequest,
     CheckoutInitializeResponse,
     CheckoutStatusResponse,
@@ -202,6 +203,38 @@ async def checkout_status(
     except Exception as e:
         logger.exception(
             "Checkout status lookup failed reference=%s", paystack_reference
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.post(
+    "/cancel/{paystack_reference}",
+    response_model=CheckoutCancelResponse,
+)
+async def cancel_checkout(
+    paystack_reference: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: CheckoutService = Depends(get_service),
+):
+    """
+    Cancel a pending checkout session.
+
+    Verifies with Paystack that the transaction was not already paid
+    before marking the session as cancelled.
+    """
+    require_roles(current_user["role"], ("primary_admin", "root"))
+    try:
+        return await service.cancel_checkout(
+            paystack_reference,
+            estate_id=current_user["estate_id"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Checkout cancel failed reference=%s", paystack_reference
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"
