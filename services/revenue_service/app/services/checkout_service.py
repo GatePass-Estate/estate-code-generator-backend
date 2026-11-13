@@ -617,6 +617,192 @@ class CheckoutService:
             seconds=ttl_seconds
         )
 
+    # Paystack statuses that mean the transaction is still in flight.
+    _PAYSTACK_IN_PROGRESS = frozenset(
+        {"ongoing", "pending", "processing", "queued"}
+    )
+    # Paystack statuses that mean the transaction is dead.
+    _PAYSTACK_TERMINAL_DEAD = frozenset({"abandoned", "failed", "reversed"})
+
+    async def _resolve_pending_session(self, pending: dict[str, Any]) -> bool:
+        """Try to clear a pending session so a new checkout can proceed.
+
+        Verifies with Paystack to determine the real state. Falls back
+        to TTL expiry only for sessions that never reached Paystack.
+
+        Returns:
+            True if the session was resolved (expired / abandoned / failed)
+            and the caller may proceed with a new checkout.
+            False if the session is genuinely still active.
+        """
+        session_id = str(pending["id"])
+        reference = pending.get("paystack_reference")
+
+        # No reference means Paystack was never called (session was
+        # created but initialize failed before stamping the reference).
+        # Safe to expire.
+        if not reference:
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            return True
+
+        # Verify with Paystack to determine the real transaction state.
+        try:
+            txn = await self._paystack.verify_transaction(reference)
+        except HTTPException:
+            # Verify failed — check TTL as a last resort.
+            # If the session is stale enough, expire it. Otherwise
+            # fail closed so the caller gets a 409.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack verify failed for stale session %s "
+                    "reference=%s — expired by TTL",
+                    session_id,
+                    reference,
+                )
+                return True
+            logger.warning(
+                "Paystack verify failed for pending session %s "
+                "reference=%s — failing closed",
+                session_id,
+                reference,
+            )
+            return False
+
+        ps_status = (txn.get("status") or "").lower()
+
+        if ps_status == "success":
+            # Payment went through but webhook hasn't arrived yet.
+            # Don't expire — the webhook will fulfil it. Block new
+            # checkouts so we don't risk a double charge.
+            logger.warning(
+                "Pending session %s reference=%s is paid at Paystack "
+                "but webhook has not arrived — blocking new checkout",
+                session_id,
+                reference,
+            )
+            return False
+
+        if ps_status in self._PAYSTACK_IN_PROGRESS:
+            # Transaction still in flight — block new checkouts.
+            return False
+
+        if ps_status in self._PAYSTACK_TERMINAL_DEAD:
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            return True
+
+        # Unknown status — fail closed rather than assuming dead.
+        logger.warning(
+            "Unexpected Paystack status %r for session %s "
+            "reference=%s — failing closed",
+            ps_status,
+            session_id,
+            reference,
+        )
+        return False
+
+    async def cancel_checkout(
+        self,
+        paystack_reference: str,
+        estate_id: str,
+    ) -> dict[str, Any]:
+        """Cancel a pending checkout session.
+
+        Verifies with Paystack before cancelling to avoid cancelling
+        a session that was actually paid.
+
+        Args:
+            paystack_reference: The GP-<session_id> reference.
+            estate_id: The caller's estate (for ownership check).
+
+        Returns:
+            Dict with reference, old status, and new status.
+
+        Raises:
+            HTTPException: 404 if not found; 403 if wrong estate;
+                409 if not pending or already paid at Paystack.
+        """
+        session = await self.repo.get_checkout_session_by_reference(
+            paystack_reference
+        )
+        if not session:
+            raise HTTPException(
+                status_code=404, detail="Checkout session not found"
+            )
+
+        if str(session["estate_id"]) != estate_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to this estate",
+            )
+
+        if session["status"] != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Session is already '{session['status']}' "
+                    "and cannot be cancelled."
+                ),
+            )
+
+        # Verify with Paystack — if the payment actually succeeded,
+        # refuse to cancel. Fail closed: if we can't verify, don't
+        # cancel (except for 404 which means Paystack never saw it).
+        try:
+            txn = await self._paystack.verify_transaction(paystack_reference)
+            ps_status = (txn.get("status") or "").lower()
+
+            if ps_status == "success":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This transaction has already been paid "
+                        "at Paystack. It cannot be cancelled."
+                    ),
+                )
+
+            # Only allow cancellation for known dead statuses.
+            # In-progress and unknown statuses are blocked.
+            if ps_status not in self._PAYSTACK_TERMINAL_DEAD:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Payment is still being processed. "
+                        "Please wait before cancelling."
+                    ),
+                )
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                raise
+            # 404 = Paystack never saw this transaction; safe to cancel.
+            # Any other error (502, timeout) = fail closed.
+            if exc.status_code != 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Unable to verify transaction status with "
+                        "Paystack. Please try again later."
+                    ),
+                ) from exc
+
+        await self.repo.update_checkout_session(
+            str(session["id"]), {"status": "cancelled"}
+        )
+
+        return {
+            "paystack_reference": paystack_reference,
+            "previous_status": "pending",
+            "status": "cancelled",
+        }
+
     async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
         """
         Produce a checkout quote for an estate subscription purchase.
@@ -967,12 +1153,16 @@ class CheckoutService:
             idempotency_key, user_id=current_user_id
         )
         if existing:
-            if existing["status"] in ("failed", "expired"):
+            if existing["status"] in (
+                "failed",
+                "expired",
+                "cancelled",
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail=(
                         "A session for this idempotency key has already "
-                        "failed or expired. Use a new key to retry."
+                        f"{existing['status']}. Use a new key to retry."
                     ),
                 )
             # Verify request body matches — catch client bugs reusing
@@ -994,14 +1184,8 @@ class CheckoutService:
             request["estate_id"]
         )
         if pending:
-            # Auto-expire stale sessions so they don't block forever
-            created_at = pending.get("created_at")
-            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
-            if created_at and self._is_session_expired(created_at, ttl):
-                await self.repo.update_checkout_session(
-                    str(pending["id"]), {"status": "expired"}
-                )
-            else:
+            resolved = await self._resolve_pending_session(pending)
+            if not resolved:
                 raise HTTPException(
                     status_code=409,
                     detail=(
