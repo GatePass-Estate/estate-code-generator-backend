@@ -421,25 +421,43 @@ async def _send(subject: str, recipient: str, body: str) -> None:
 
 
 async def send_login_new_device_email(
-    email: str, first_name: str, ip_address: str, device_name: str
+    email: str,
+    first_name: str,
+    ip_address: str,
+    device_name: str,
+    is_2fa_pending: bool = False,
 ) -> None:
     context = await _device_location_time_block(ip_address, device_name)
-    details = (
-        "We noticed a new sign-in to your GatePass account."
-        f"<br><br>{context}<br><br>"
-        "If this was you, no action is needed. "
-        "If you don't recognise this activity, change your password "
-        "immediately and contact your administrator."
-    )
+    if is_2fa_pending:
+        subject = "Login attempt on your GatePass account"
+        heading = "Login Attempt Detected"
+        details = (
+            "Someone attempted to sign in to your GatePass account "
+            "from a new device."
+            f"<br><br>{context}<br><br>"
+            "If this was you, no action is needed. "
+            "If you don't recognise this activity, change your "
+            "password immediately and contact your administrator."
+        )
+    else:
+        subject = "New sign-in to your GatePass account"
+        heading = "New Sign-In Detected"
+        details = (
+            "We noticed a new sign-in to your GatePass account."
+            f"<br><br>{context}<br><br>"
+            "If this was you, no action is needed. "
+            "If you don't recognise this activity, change your "
+            "password immediately and contact your administrator."
+        )
     body = _build_email(
-        heading="New Sign-In Detected",
+        heading=heading,
         first_name=first_name,
         instruction=details,
         instruction_is_html=True,
         button_label="Secure My Account",
         button_href=f"{_FRONTEND_BASE_URL}/settings/security",
     )
-    await _send("New sign-in to your GatePass account", email, body)
+    await _send(subject, email, body)
 
 
 async def send_password_changed_email(
@@ -927,6 +945,7 @@ async def dispatch_email(
             first_name=first_name,
             ip_address=metadata.get("ip_address", "unknown"),
             device_name=metadata.get("device_name", "unknown device"),
+            is_2fa_pending=bool(metadata.get("is_2fa_pending")),
         )
     elif notification_type == NotificationType.PASSWORD_CHANGED:
         await send_password_changed_email(

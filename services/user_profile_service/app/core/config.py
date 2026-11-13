@@ -39,13 +39,13 @@ class Settings(BaseSettings):
     SESSION_EXPIRE_DAYS: int = int(os.getenv("SESSION_EXPIRE_DAYS", 30))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
     TOTP_ENCRYPTION_KEY: str = os.getenv("TOTP_ENCRYPTION_KEY", "")
-    # Days before a 2FA-verified session on the same IP is no longer "familiar"
-    TWO_FA_FAMILIAR_IP_DAYS: int = int(
-        os.getenv("TWO_FA_FAMILIAR_IP_DAYS", 30)
-    )
-    # Days before 2FA is forced again regardless of IP familiarity
+    # Days before 2FA is forced again regardless of device trust
     TWO_FA_FORCE_REAUTH_DAYS: int = int(
         os.getenv("TWO_FA_FORCE_REAUTH_DAYS", 60)
+    )
+    # Days before a trusted device token expires (fixed, not sliding)
+    TRUSTED_DEVICE_EXPIRY_DAYS: int = int(
+        os.getenv("TRUSTED_DEVICE_EXPIRY_DAYS", 90)
     )
     # Hours a resident must wait between admin reminders on a pending request
     EDIT_REQUEST_REMIND_COOLDOWN_HOURS: int = int(

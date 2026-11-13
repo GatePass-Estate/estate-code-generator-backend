@@ -24,6 +24,7 @@ class SessionRepository:
         device_name: Optional[str],
         expires_at: datetime,
         is_2fa_verified: bool = False,
+        trusted_device_id: Optional[str] = None,
     ) -> dict:
         """Creates a new session record in the db-service."""
         now = datetime.now(timezone.utc)
@@ -35,6 +36,8 @@ class SessionRepository:
             "expires_at": expires_at.isoformat(),
             "is_2fa_verified": is_2fa_verified,
         }
+        if trusted_device_id:
+            payload["trusted_device_id"] = trusted_device_id
         response = await self.client.async_post(
             self.sessions_endpoint, json_data=payload
         )

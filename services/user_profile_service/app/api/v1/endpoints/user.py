@@ -29,6 +29,8 @@ from app.libs.notify import fire_notify, fire_notify_critical
 from app.repositories.admin_management import AdminRepository
 from app.repositories.estate import EstateRepository
 from app.repositories.guest import GuestRepository
+from app.repositories.session import SessionRepository
+from app.repositories.trusted_device import TrustedDeviceRepository
 from app.repositories.household import HouseholdRepository
 from app.repositories.schedule import (
     SCHEDULED_USER_CLOSURES_KEY,
@@ -423,12 +425,18 @@ async def reset_password(
     http_request: Request,
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_user_service),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
     """Resets the password for an active account
     (no current password required)."""
     ip = get_client_ip(http_request)
     device = get_device_name(http_request)
     result, user_id = await service.reset_password(payload)
+    # Revoke all trusted devices + all sessions (user isn't logged in)
+    td_repo = TrustedDeviceRepository(ahttp_client)
+    s_repo = SessionRepository(ahttp_client)
+    await td_repo.revoke_all_for_user(user_id)
+    await s_repo.delete_all_sessions_for_user(user_id)
     background_tasks.add_task(
         fire_notify,
         {
@@ -471,22 +479,29 @@ async def update_password(
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_user_service),
     current_user: dict = Depends(get_current_user),
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
 ):
     require_owner(
         current_user,
         payload.user_id,
-        detail="You are not authorized to update this user's password.",
+        detail=("You are not authorized to update this " "user's password."),
     )
     result = await service.update_password(payload)
+    # Revoke all trusted devices + all sessions except current
+    user_id = str(payload.user_id)
+    td_repo = TrustedDeviceRepository(ahttp_client)
+    await td_repo.revoke_all_for_user(user_id)
+    s_repo = SessionRepository(ahttp_client)
+    await s_repo.delete_all_sessions_for_user(user_id)
     background_tasks.add_task(
         fire_notify,
         {
             "type": "PASSWORD_CHANGED",
             "title": "Password changed",
             "body": "Your account password has been changed.",
-            "recipient_user_ids": [str(payload.user_id)],
+            "recipient_user_ids": [user_id],
             "metadata": {
-                "ip_address": get_client_ip(http_request) or "",
+                "ip_address": (get_client_ip(http_request) or ""),
                 "device_name": get_device_name(http_request),
             },
         },

@@ -61,6 +61,9 @@ from app.api.v1.endpoints.user_profile.sessions import (
 from app.api.v1.endpoints.user_profile.totp_recovery_codes import (
     router as totprecoverycodes_router,
 )
+from app.api.v1.endpoints.user_profile.trusted_devices import (
+    router as trusteddevices_router,
+)
 from app.api.v1.endpoints.user_profile.user_documents import (
     router as userdocuments_router,
 )
@@ -231,6 +234,12 @@ api_router.include_router(
     userdocuments_router,
     prefix="/userprofile/userdocuments",
     tags=["UserDocuments"],
+)
+
+api_router.include_router(
+    trusteddevices_router,
+    prefix="/userprofile/trusted_devices",
+    tags=["TrustedDevices"],
 )
 
 api_router.include_router(

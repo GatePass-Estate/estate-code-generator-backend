@@ -36,3 +36,8 @@ class Sessions(BaseModelDB):
     is_2fa_verified = Column(Boolean, default=False, nullable=False)
     biometric_token_hash = Column(Text, nullable=True)
     refresh_token_hash = Column(Text, nullable=True)
+    trusted_device_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.trusted_devices.id", ondelete="SET NULL"),
+        nullable=True,
+    )

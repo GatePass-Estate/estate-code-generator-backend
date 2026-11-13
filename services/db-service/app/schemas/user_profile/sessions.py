@@ -39,9 +39,18 @@ class CreateRequest(BaseModel):
     is_2fa_verified: bool = Field(
         False, description="Whether 2FA was completed"
     )
+    trusted_device_id: Optional[UUID4] = Field(
+        None, description="Linked trusted device ID"
+    )
 
     @field_serializer("user_id")
     def serialize_user_id(self, value: UUID4) -> str:
+        return str(value) if value else None
+
+    @field_serializer("trusted_device_id")
+    def serialize_trusted_device_id(
+        self, value: Optional[UUID4]
+    ) -> Optional[str]:
         return str(value) if value else None
 
     model_config = model_config
@@ -77,6 +86,9 @@ class UpdateRequest(BaseModel):
     )
     expires_at: Optional[datetime] = Field(
         None, description="Extended session expiry time"
+    )
+    trusted_device_id: Optional[str] = Field(
+        None, description="Linked trusted device ID"
     )
 
     model_config = model_config
@@ -116,9 +128,18 @@ class GetResponse(SharedModel):
     refresh_token_hash: Optional[str] = Field(
         None, description="SHA-256 hex hash of the refresh token jti"
     )
+    trusted_device_id: Optional[UUID4] = Field(
+        None, description="Linked trusted device ID"
+    )
 
     @field_serializer("user_id")
     def serialize_user_id(self, value: UUID4) -> str:
+        return str(value) if value else None
+
+    @field_serializer("trusted_device_id")
+    def serialize_trusted_device_id(
+        self, value: Optional[UUID4]
+    ) -> Optional[str]:
         return str(value) if value else None
 
 

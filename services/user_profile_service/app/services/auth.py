@@ -12,6 +12,7 @@ from app.libs.auth_helpers import session_expires_at
 from app.libs.notify import fire_notify
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
+from app.repositories.trusted_device import TrustedDeviceRepository
 from app.schemas.auth import (
     BiometricEnableResponse,
     BiometricLoginResponse,
@@ -39,6 +40,13 @@ def _generate_biometric_token() -> tuple[str, str]:
     Only the hash is persisted on the backend.
     """
     token = secrets.token_urlsafe(32)
+    hash_ = hashlib.sha256(token.encode()).hexdigest()
+    return token, hash_
+
+
+def _generate_device_token() -> tuple[str, str]:
+    """Return (raw_token, sha256_hash)."""
+    token = secrets.token_urlsafe(64)
     hash_ = hashlib.sha256(token.encode()).hexdigest()
     return token, hash_
 
@@ -91,10 +99,12 @@ class AuthService:
         user_service,  # UserService — imported lazily to avoid circular deps
         session_repo: SessionRepository,
         totp_recovery_repo: TotpRecoveryCodesRepository,
+        trusted_device_repo: TrustedDeviceRepository,
     ):
         self.user_service = user_service
         self.session_repo = session_repo
         self.totp_recovery_repo = totp_recovery_repo
+        self.trusted_device_repo = trusted_device_repo
 
     # ------------------------------------------------------------------
     # Token helpers
@@ -112,6 +122,51 @@ class AuthService:
         return access_token, refresh_token
 
     # ------------------------------------------------------------------
+    # Device trust helpers
+    # ------------------------------------------------------------------
+
+    async def _check_device_trust(
+        self, user_id: str, device_token_raw: str | None
+    ) -> dict | None:
+        """Hash the token and look up trusted_devices.
+
+        Returns the device row dict or None.
+        """
+        if not device_token_raw:
+            return None
+        token_hash = hashlib.sha256(device_token_raw.encode()).hexdigest()
+        device = await self.trusted_device_repo.get_by_token_hash(token_hash)
+        if not device:
+            return None
+        if device.get("is_revoked") or device.get("is_deleted"):
+            return None
+        expires_at = datetime.fromisoformat(device["expires_at"])
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            return None
+        if str(device.get("user_id")) != user_id:
+            return None
+        return device
+
+    async def _issue_device_token(
+        self, user_id: str, ip: str | None, device_label: str | None
+    ) -> tuple[str, str]:
+        """Create trusted_devices row, return (raw_token, device_id)."""
+        raw_token, token_hash = _generate_device_token()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(days=settings.TRUSTED_DEVICE_EXPIRY_DAYS)
+        result = await self.trusted_device_repo.create_device(
+            user_id=user_id,
+            token_hash=token_hash,
+            device_label=device_label,
+            ip_address=ip,
+            last_seen_at=now.isoformat(),
+            expires_at=expires_at.isoformat(),
+        )
+        return raw_token, result["id"]
+
+    # ------------------------------------------------------------------
     # Login flows
     # ------------------------------------------------------------------
 
@@ -122,6 +177,7 @@ class AuthService:
         estate_id: str | None,
         ip: str | None,
         device: str | None,
+        device_token_raw: str | None = None,
     ):
         from app.services.token import (
             generate_2fa_pending_token,
@@ -155,20 +211,15 @@ class AuthService:
                     detail="This estate has been deactivated.",
                 )
 
+        # Check device trust (replaces IP familiarity)
+        trusted_device = await self._check_device_trust(
+            str(user["id"]), device_token_raw
+        )
+
         if user.get("totp_enabled"):
             now = datetime.now(timezone.utc)
-            familiar_cutoff = now - timedelta(
-                days=settings.TWO_FA_FAMILIAR_IP_DAYS
-            )
             force_reauth_cutoff = now - timedelta(
                 days=settings.TWO_FA_FORCE_REAUTH_DAYS
-            )
-
-            familiar = await self.session_repo.search_sessions(
-                user_id=str(user["id"]),
-                ip_address=ip,
-                is_2fa_verified=True,
-                last_active_after=familiar_cutoff,
             )
 
             last_2fa_raw = user.get("last_2fa_verified_at")
@@ -176,7 +227,29 @@ class AuthService:
                 datetime.fromisoformat(last_2fa_raw) < force_reauth_cutoff
             )
 
-            if not familiar.get("items") or reauth_needed:
+            if not trusted_device or reauth_needed:
+                # New device or force-reauth — require 2FA
+                # Send notification now so user is warned even if
+                # the attacker can't complete 2FA.  Wording says
+                # "attempt" because 2FA hasn't been passed yet.
+                asyncio.create_task(
+                    fire_notify(
+                        {
+                            "type": "LOGIN_NEW_DEVICE",
+                            "title": "Login attempt",
+                            "body": (
+                                "A login attempt was made on your "
+                                "account from a new device."
+                            ),
+                            "recipient_user_ids": [str(user["id"])],
+                            "metadata": {
+                                "ip_address": ip or "",
+                                "device_name": device,
+                                "is_2fa_pending": True,
+                            },
+                        }
+                    )
+                )
                 two_fa_token = generate_2fa_pending_token(user["id"])
                 return LoginResponse(
                     success=True,
@@ -187,16 +260,7 @@ class AuthService:
             is_2fa_verified = True
             is_new_device = False
         else:
-            # Check whether this IP has been seen before for non-2FA users
-            familiar_cutoff = datetime.now(timezone.utc) - timedelta(
-                days=settings.TWO_FA_FAMILIAR_IP_DAYS
-            )
-            familiar = await self.session_repo.search_sessions(
-                user_id=str(user["id"]),
-                ip_address=ip,
-                last_active_after=familiar_cutoff,
-            )
-            is_new_device = not familiar.get("items")
+            is_new_device = not trusted_device
             is_2fa_verified = False
 
         # Check TOS BEFORE creating a session to avoid orphaned sessions.
@@ -209,12 +273,30 @@ class AuthService:
                 requires_tos_acceptance=True,
             )
 
+        # Link trusted device or issue new one
+        device_token_response = None
+        trusted_device_id = None
+        if trusted_device:
+            trusted_device_id = trusted_device["id"]
+            # Update last_seen_at
+            await self.trusted_device_repo.update_device(
+                trusted_device_id,
+                {"last_seen_at": datetime.now(timezone.utc).isoformat()},
+            )
+        elif is_new_device:
+            raw_token, new_device_id = await self._issue_device_token(
+                str(user["id"]), ip, device
+            )
+            trusted_device_id = new_device_id
+            device_token_response = raw_token
+
         session = await self.session_repo.create_session(
             user_id=str(user["id"]),
             ip_address=ip,
             device_name=device,
             expires_at=session_expires_at(),
             is_2fa_verified=is_2fa_verified,
+            trusted_device_id=trusted_device_id,
         )
 
         if is_new_device:
@@ -246,6 +328,7 @@ class AuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             session_id=session["id"],
+            device_token=device_token_response,
         )
 
     async def verify_2fa(
@@ -280,12 +363,18 @@ class AuthService:
             json_data={"last_2fa_verified_at": now.isoformat()},
         )
 
+        # Device is always new when 2FA was prompted — issue fresh token
+        raw_token, new_device_id = await self._issue_device_token(
+            str(user_id), ip, device
+        )
+
         session = await self.session_repo.create_session(
             user_id=str(user_id),
             ip_address=ip,
             device_name=device,
             expires_at=session_expires_at(),
             is_2fa_verified=True,
+            trusted_device_id=new_device_id,
         )
 
         user_dict = {
@@ -303,6 +392,7 @@ class AuthService:
                 role=user_dict["role"],
                 access_token=tos_token,
                 requires_tos_acceptance=True,
+                device_token=raw_token,
             )
 
         access_token, refresh_token = await self._issue_token_pair(
@@ -314,6 +404,7 @@ class AuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             session_id=session["id"],
+            device_token=raw_token,
         )
 
     async def recover_2fa(
@@ -336,12 +427,21 @@ class AuthService:
             json_data={"last_2fa_verified_at": now.isoformat()},
         )
 
+        # Recovery code use is a revocation trigger
+        await self.trusted_device_repo.revoke_all_for_user(user_dict["id"])
+
+        # Issue fresh device token
+        raw_token, new_device_id = await self._issue_device_token(
+            user_dict["id"], ip, device
+        )
+
         session = await self.session_repo.create_session(
             user_id=user_dict["id"],
             ip_address=ip,
             device_name=device,
             expires_at=session_expires_at(),
             is_2fa_verified=True,
+            trusted_device_id=new_device_id,
         )
 
         if user_dict.get("tos_accepted_version") != settings.TOS_VERSION:
@@ -351,6 +451,7 @@ class AuthService:
                 role=user_dict["role"],
                 access_token=tos_token,
                 requires_tos_acceptance=True,
+                device_token=raw_token,
             )
 
         access_token, refresh_token = await self._issue_token_pair(
@@ -362,6 +463,7 @@ class AuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             session_id=session["id"],
+            device_token=raw_token,
         )
 
     async def accept_tos(
@@ -369,8 +471,26 @@ class AuthService:
         tos_token: str,
         ip: str | None,
         device: str | None,
+        device_token_raw: str | None = None,
     ):
         user = await self.user_service.accept_tos(tos_token)
+
+        # Re-check device trust
+        trusted_device = await self._check_device_trust(
+            user["id"], device_token_raw
+        )
+
+        device_token_response = None
+        trusted_device_id = None
+        if trusted_device:
+            trusted_device_id = trusted_device["id"]
+        else:
+            # New device — issue token
+            raw_token, new_device_id = await self._issue_device_token(
+                user["id"], ip, device
+            )
+            trusted_device_id = new_device_id
+            device_token_response = raw_token
 
         session = await self.session_repo.create_session(
             user_id=user["id"],
@@ -378,6 +498,7 @@ class AuthService:
             device_name=device,
             expires_at=session_expires_at(),
             is_2fa_verified=user.get("totp_enabled", False),
+            trusted_device_id=trusted_device_id,
         )
 
         access_token, refresh_token = await self._issue_token_pair(
@@ -390,6 +511,7 @@ class AuthService:
             refresh_token=refresh_token,
             requires_tos_acceptance=False,
             session_id=session["id"],
+            device_token=device_token_response,
         )
 
     # ------------------------------------------------------------------
@@ -530,11 +652,26 @@ class AuthService:
         result = await self.user_service.setup_2fa(user_id)
         return TwoFASetupResponse(**result)
 
-    async def enable_2fa(self, user_id: str, code: str):
+    async def enable_2fa(
+        self,
+        user_id: str,
+        code: str,
+        ip: str | None = None,
+        device_label: str | None = None,
+    ):
         codes = await self.user_service.enable_2fa(
             user_id, code, self.totp_recovery_repo
         )
-        return TwoFAEnableResponse(recovery_codes=codes)
+        # Revoke all existing trusted devices — tokens issued without 2FA
+        # should not skip 2FA after the user turns it on.
+        await self.trusted_device_repo.revoke_all_for_user(user_id)
+        # Issue fresh device token for current device
+        raw_token, _ = await self._issue_device_token(
+            user_id, ip, device_label
+        )
+        return TwoFAEnableResponse(
+            recovery_codes=codes, device_token=raw_token
+        )
 
     async def disable_2fa(self, user_id: str, code: str) -> None:
         await self.user_service.disable_2fa(
@@ -576,6 +713,7 @@ class AuthService:
         estate_id: str,
         ip: str | None,
         device: str | None,
+        device_token_raw: str | None = None,
     ):
         """
         Exchange a biometric token for a fresh 1-hour access JWT.
@@ -586,17 +724,8 @@ class AuthService:
         3. Fetch the user; confirm estate matches.
         4. If 2FA force-reauth is due, clear the token and signal FE.
         5. Rotate the biometric token and extend session expiry.
-        6. Issue a new access token against the same session.
-
-        Args:
-            biometric_token: Plaintext token from the FE's SecureStore.
-            estate_id: Estate the user is logging into (validated).
-            ip: Client IP address.
-            device: Device name from User-Agent.
-
-        Returns:
-            BiometricLoginResponse with new access_token and rotated
-            biometric_token, or requires_full_reauth=True.
+        6. Check / refresh device trust token.
+        7. Issue a new access token against the same session.
         """
 
         token_hash = hashlib.sha256(biometric_token.encode()).hexdigest()
@@ -654,6 +783,23 @@ class AuthService:
             session["id"], new_hash, session_expires_at()
         )
 
+        # Handle device trust
+        trusted_device = await self._check_device_trust(
+            str(user.id), device_token_raw
+        )
+        device_token_response = None
+        if trusted_device:
+            await self.trusted_device_repo.update_device(
+                trusted_device["id"],
+                {"last_seen_at": now.isoformat()},
+            )
+        else:
+            # Biometric = device proof, issue fresh token silently
+            raw_token, _ = await self._issue_device_token(
+                str(user.id), ip, device
+            )
+            device_token_response = raw_token
+
         user_dict = {
             "id": str(user.id),
             "email": user.email,
@@ -671,6 +817,7 @@ class AuthService:
             refresh_token=refresh_token,
             session_id=session["id"],
             biometric_token=new_token,
+            device_token=device_token_response,
         )
 
     async def disable_biometric(self, session_id: str) -> dict:

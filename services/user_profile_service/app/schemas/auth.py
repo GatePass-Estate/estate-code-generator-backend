@@ -135,6 +135,10 @@ class LoginResponse(BaseModel):
         default=None,
         description="Session ID — when registering an FCM device token",
     )
+    device_token: Optional[str] = Field(
+        default=None,
+        description="Device trust token — store in SecureStore",
+    )
 
     model_config = model_config
 
@@ -181,6 +185,10 @@ class TwoFAEnableResponse(BaseModel):
 
     recovery_codes: List[str] = Field(
         ..., description="One-time recovery codes"
+    )
+    device_token: Optional[str] = Field(
+        default=None,
+        description="Fresh device trust token for the current device",
     )
 
     model_config = model_config
@@ -295,6 +303,10 @@ class BiometricLoginResponse(BaseModel):
             "True when 2FA force-reauth is needed. "
             "FE must fall back to password login."
         ),
+    )
+    device_token: Optional[str] = Field(
+        default=None,
+        description="Device trust token — store in SecureStore",
     )
 
     model_config = model_config
