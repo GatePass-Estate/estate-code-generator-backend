@@ -1,4 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
 
 from app.libs.auth_helpers import (
     get_auth_service,
@@ -38,7 +40,6 @@ from app.services.auth import (
     AuthService,
     get_current_user_unverified as get_current_user,
 )
-from app.services.token import decode_2fa_pending_token
 from app.services.user import UserService
 
 router = APIRouter()
@@ -49,9 +50,10 @@ async def login_user(
     request: LoginRequest,
     http_request: Request,
     auth_service: AuthService = Depends(get_auth_service),
+    x_device_token: Annotated[str | None, Header()] = None,
 ) -> LoginResponse:
     """
-    Authenticates a user. If 2FA is enabled and the IP is unfamiliar,
+    Authenticates a user. If 2FA is enabled and the device is untrusted,
     returns a 2FA-pending token instead of an access token.
     If TOS acceptance is pending, returns a tos_pending token.
     """
@@ -61,6 +63,7 @@ async def login_user(
         estate_id=str(request.estate_id) if request.estate_id else None,
         ip=get_client_ip(http_request),
         device=get_device_name(http_request),
+        device_token_raw=x_device_token,
     )
 
 
@@ -68,36 +71,21 @@ async def login_user(
 async def verify_2fa(
     request: TwoFAVerifyRequest,
     http_request: Request,
-    background_tasks: BackgroundTasks,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> LoginResponse:
     """
     Completes 2FA login by verifying a TOTP code.
     Creates a session (is_2fa_verified=True) and returns an access token.
+    New-device notification was already sent at login() time.
     """
     ip = get_client_ip(http_request)
     device = get_device_name(http_request)
-    result = await auth_service.verify_2fa(
+    return await auth_service.verify_2fa(
         two_fa_token=request.two_fa_token,
         code=request.code,
         ip=ip,
         device=device,
     )
-    try:
-        user_id = decode_2fa_pending_token(request.two_fa_token)
-        background_tasks.add_task(
-            fire_notify,
-            {
-                "type": "LOGIN_NEW_DEVICE",
-                "title": "New device login",
-                "body": "Your account was accessed from a new device.",
-                "recipient_user_ids": [str(user_id)],
-                "metadata": {"ip_address": ip or "", "device_name": device},
-            },
-        )
-    except Exception:
-        pass
-    return result
 
 
 @router.post("/2fa/recover", response_model=LoginResponse)
@@ -110,6 +98,7 @@ async def recover_2fa(
     """
     Logs in using a one-time recovery code. Disables 2FA on the account.
     Creates a session and returns an access token.
+    Revokes all trusted devices before issuing a fresh one.
     """
     ip = get_client_ip(http_request)
     device = get_device_name(http_request)
@@ -120,6 +109,8 @@ async def recover_2fa(
         device=device,
     )
     try:
+        from app.services.token import decode_2fa_pending_token
+
         user_id = decode_2fa_pending_token(request.two_fa_token)
         background_tasks.add_task(
             fire_notify,
@@ -147,6 +138,7 @@ async def accept_tos(
     request: AcceptTosRequest,
     http_request: Request,
     auth_service: AuthService = Depends(get_auth_service),
+    x_device_token: Annotated[str | None, Header()] = None,
 ) -> LoginResponse:
     """
     Accepts the current Terms of Service and returns a full access token.
@@ -156,6 +148,7 @@ async def accept_tos(
         tos_token=request.tos_token,
         ip=get_client_ip(http_request),
         device=get_device_name(http_request),
+        device_token_raw=x_device_token,
     )
 
 
@@ -257,8 +250,13 @@ async def enable_2fa(
     """
     Confirms 2FA setup with a TOTP code and enables it on the account.
     Returns 8 one-time recovery codes — store them securely, shown only once.
+    Revokes all existing trusted devices and issues a fresh one.
     """
-    result = await auth_service.enable_2fa(current_user["id"], request.code)
+    ip = get_client_ip(http_request)
+    device = get_device_name(http_request)
+    result = await auth_service.enable_2fa(
+        current_user["id"], request.code, ip=ip, device_label=device
+    )
     background_tasks.add_task(
         fire_notify,
         {
@@ -267,8 +265,8 @@ async def enable_2fa(
             "body": "2FA has been enabled on your account.",
             "recipient_user_ids": [current_user["id"]],
             "metadata": {
-                "ip_address": get_client_ip(http_request) or "",
-                "device_name": get_device_name(http_request),
+                "ip_address": ip or "",
+                "device_name": device,
             },
         },
     )
@@ -326,8 +324,9 @@ async def enable_biometric(
 ) -> BiometricEnableResponse:
     """
     Generates a biometric token for the current session.
-    The plaintext token is returned once — store it immediately in SecureStore.
-    On subsequent biometric logins, exchange this token for a fresh access token.
+    The plaintext token is returned once — store it immediately
+    in SecureStore. On subsequent biometric logins, exchange this
+    token for a fresh access token.
     """
     return await auth_service.enable_biometric(current_user["session_id"])
 
@@ -337,6 +336,7 @@ async def biometric_login(
     request: BiometricLoginRequest,
     http_request: Request,
     auth_service: AuthService = Depends(get_auth_service),
+    x_device_token: Annotated[str | None, Header()] = None,
 ) -> BiometricLoginResponse:
     """
     Exchanges a biometric token for a fresh access token.
@@ -350,6 +350,7 @@ async def biometric_login(
         estate_id=request.estate_id,
         ip=get_client_ip(http_request),
         device=get_device_name(http_request),
+        device_token_raw=x_device_token,
     )
 
 

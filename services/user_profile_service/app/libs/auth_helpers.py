@@ -11,6 +11,7 @@ from app.repositories.estate import EstateRepository
 from app.repositories.household import HouseholdRepository
 from app.repositories.session import SessionRepository
 from app.repositories.totp_recovery_codes import TotpRecoveryCodesRepository
+from app.repositories.trusted_device import TrustedDeviceRepository
 from app.repositories.user import UserRepository
 from app.services.user import UserService
 
@@ -97,13 +98,27 @@ def get_totp_recovery_repo(
     return TotpRecoveryCodesRepository(ahttp_client)
 
 
+def get_trusted_device_repo(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> TrustedDeviceRepository:
+    return TrustedDeviceRepository(ahttp_client)
+
+
 def get_auth_service(
     user_service: UserService = Depends(get_user_service),
     session_repo: SessionRepository = Depends(get_session_repo),
     totp_recovery_repo: TotpRecoveryCodesRepository = Depends(
         get_totp_recovery_repo
     ),
+    trusted_device_repo: TrustedDeviceRepository = Depends(
+        get_trusted_device_repo
+    ),
 ):
     from app.services.auth import AuthService
 
-    return AuthService(user_service, session_repo, totp_recovery_repo)
+    return AuthService(
+        user_service,
+        session_repo,
+        totp_recovery_repo,
+        trusted_device_repo,
+    )
