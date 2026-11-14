@@ -18,6 +18,7 @@ from app.schemas.user import (
     DeleteUserResponse,
     SearchUserRequest,
     ListUserResponse,
+    RoleSummary,
     SetPasswordRequest,
     SetPasswordResponse,
     UpdatePasswordRequest,
@@ -311,6 +312,31 @@ class UserService:
                     user.household_name = household_map.get(
                         str(user.household_id)
                     )
+
+        # Populate role summary if estate_id is available
+        if request.estate_id:
+            try:
+                status_str = (
+                    str(request.status).lower()
+                    if request.status is not None
+                    else "all"
+                )
+                role_counts = await self._get_role_counts(
+                    estate_id=str(request.estate_id),
+                    status=status_str,
+                    from_date=request.from_date,
+                    to_date=request.to_date,
+                )
+                result.role_summary = RoleSummary(
+                    root=role_counts.get("root", 0),
+                    primary_admin=role_counts.get("primary_admin", 0),
+                    admin=role_counts.get("admin", 0),
+                    resident=role_counts.get("resident", 0),
+                    security=role_counts.get("security", 0),
+                    guest=role_counts.get("guest", 0),
+                )
+            except Exception as e:
+                logger.error(f"Failed to calculate role summary: {e}")
 
         return result
 
@@ -675,11 +701,6 @@ class UserService:
                 from_date=from_date,
                 to_date=to_date,
             )
-
-            # Import RoleSummary
-            from app.schemas.user import RoleSummary
-
-            # Add role summary to response
             response.role_summary = RoleSummary(
                 root=role_counts.get("root", 0),
                 primary_admin=role_counts.get("primary_admin", 0),
@@ -690,9 +711,6 @@ class UserService:
             )
         except Exception as e:
             # If role summary calculation fails, log but continue
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to calculate role summary: {e}")
             # Leave role_summary as None
 
