@@ -87,6 +87,32 @@ async def update(
 
 
 @router.delete(
+    "/user/{user_id}",
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        200: {"description": "Revoked all trusted devices for the user"},
+    },
+    description="Revoke all trusted devices for a user",
+)
+async def revoke_all_for_user(
+    user_id: UUID4,
+    service: Service = Depends(get_service),
+) -> dict:
+    try:
+        await service.revoke_all_for_user(user_id=user_id)
+        return {"revoked": True}
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while revoking all "
+            "trusted devices for the user"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.delete(
     "/{id}",
     response_model=DeleteResponse,
     status_code=status.HTTP_200_OK,
@@ -108,32 +134,6 @@ async def delete(
     except Exception as e:
         logger.exception(
             "An unexpected error happened while deleting the item"
-        )
-        raise HTTPException(
-            status_code=500, detail="Internal server error"
-        ) from e
-
-
-@router.delete(
-    "/user/{user_id}",
-    status_code=status.HTTP_200_OK,
-    responses={
-        500: {"description": "Internal server error"},
-        200: {"description": "Revoked all trusted devices for the user"},
-    },
-    description="Revoke all trusted devices for a user",
-)
-async def revoke_all_for_user(
-    user_id: UUID4,
-    service: Service = Depends(get_service),
-) -> dict:
-    try:
-        await service.revoke_all_for_user(user_id=user_id)
-        return {"revoked": True}
-    except Exception as e:
-        logger.exception(
-            "An unexpected error happened while revoking all "
-            "trusted devices for the user"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"

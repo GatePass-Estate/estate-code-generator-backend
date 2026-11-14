@@ -411,12 +411,17 @@ class UsersRepository:
                     field_value = field_value.value
 
                 if isinstance(field_value, str):
-                    # Normalize both column and input
-                    # for case-insensitive matching
-                    # Cast column to text for enum types before applying lower
-                    query = query.where(
-                        func.lower(cast(column, String)) == field_value.lower()
-                    )
+                    # Case-insensitive partial matching for text fields;
+                    # exact match for enum columns (role, gender, etc.)
+                    if key in ("first_name", "last_name", "email"):
+                        query = query.where(
+                            cast(column, String).ilike(f"%{field_value}%")
+                        )
+                    else:
+                        query = query.where(
+                            func.lower(cast(column, String))
+                            == field_value.lower()
+                        )
                 else:
                     query = query.where(column == field_value)
 
