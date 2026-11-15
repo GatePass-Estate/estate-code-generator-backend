@@ -44,9 +44,16 @@ class TrustedDeviceRepository:
         return response
 
     async def get_by_token_hash(self, token_hash: str) -> Optional[dict]:
-        """Look up a trusted device by its token hash."""
+        """Look up a trusted device by its token hash.
+
+        Returns None on any failure so callers treat it as a
+        new / untrusted device rather than blocking login.
+        """
         url = f"{self.endpoint}/by-token-hash?hash={token_hash}"
-        return await self.client.async_get(url)
+        try:
+            return await self.client.async_get(url)
+        except HTTPException:
+            return None
 
     async def update_device(
         self, device_id: str, data: dict
