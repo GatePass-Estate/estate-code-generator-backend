@@ -170,7 +170,7 @@ gatepass-461616-332b2d1bd5c1.json
 secrets/
 services/ai_service/secrets/
 
-**data**
+data/
 
 # Generated spatial-anomaly finetune/eval reports (local runs)
 services/ai_service/reports/
