@@ -690,7 +690,21 @@ class CheckoutService:
             return False
 
         if ps_status in self._PAYSTACK_IN_PROGRESS:
-            # Transaction still in flight — block new checkouts.
+            # Transaction still in flight — block unless past TTL.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack status %r but session %s reference=%s "
+                    "is past TTL — expired",
+                    ps_status,
+                    session_id,
+                    reference,
+                )
+                return True
             return False
 
         if ps_status in self._PAYSTACK_TERMINAL_DEAD:
@@ -699,9 +713,23 @@ class CheckoutService:
             )
             return True
 
-        # Unknown status — fail closed rather than assuming dead.
+        # Unknown status — expire if past TTL, otherwise fail closed.
+        created_at = pending.get("created_at")
+        ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+        if created_at and self._is_session_expired(created_at, ttl):
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            logger.warning(
+                "Unknown Paystack status %r for stale session %s "
+                "reference=%s — expired by TTL",
+                ps_status,
+                session_id,
+                reference,
+            )
+            return True
         logger.warning(
-            "Unexpected Paystack status %r for session %s "
+            "Unknown Paystack status %r for session %s "
             "reference=%s — failing closed",
             ps_status,
             session_id,
