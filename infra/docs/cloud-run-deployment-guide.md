@@ -235,6 +235,8 @@ USER_PROFILE_CRON_URL: "https://user-profile-service-<PROJECT_NUMBER>.europe-wes
 REVENUE_CRON_URL: "https://revenue-service-<PROJECT_NUMBER>.europe-west1.run.app/api/v1/internal/cron/daily"
 CRON_HOUR: "0"
 REVENUE_CRON_HOUR: "2"
+REVENUE_RETRY_CHARGES_CRON_URL: "https://revenue-service-<PROJECT_NUMBER>.europe-west1.run.app/api/v1/internal/cron/retry-charges"
+REVENUE_RETRY_CHARGES_INTERVAL_MINUTES: "60"
 ```
 
 **code-service.yaml:**
@@ -300,6 +302,7 @@ PRE_EXPIRY_WARNING_DAYS: "1"
 CHECKOUT_TOKEN_EXPIRY_SECONDS: "7200"
 REVENUE_TRANSIENT_RETRY_ATTEMPTS: "3"
 REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS: "0.2"
+CHARGE_RETRY_INTERVALS_HOURS: "1,24,72,144"
 ESTATE_TYPE_HOUSING_MULTIPLIER: "1.0"
 ESTATE_TYPE_CORPORATE_MULTIPLIER: "3.0"
 ```
@@ -754,7 +757,58 @@ done
 
 ---
 
-## 15. Updating Environment Variables
+## 15. Cloud Scheduler (Cron Jobs)
+
+In production, **Google Cloud Scheduler** triggers maintenance cron endpoints. In dev/staging, the cache-service runs equivalent in-process loops.
+
+### 15a. Create the scheduler jobs
+
+```bash
+# Daily: user-profile session cleanup (midnight UTC)
+gcloud scheduler jobs create http user-profile-daily-cron \
+  --location=europe-west1 \
+  --schedule="0 0 * * *" \
+  --uri="https://api.gatepassng.com/user/api/v1/internal/cron/daily" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<INTERNAL_API_KEY>" \
+  --project=gatepass-6d009
+
+# Daily: revenue expiry checks (2 AM UTC)
+gcloud scheduler jobs create http revenue-daily-expiry \
+  --location=europe-west1 \
+  --schedule="0 2 * * *" \
+  --uri="https://api.gatepassng.com/revenue/api/v1/internal/cron/daily" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<INTERNAL_API_KEY>" \
+  --project=gatepass-6d009
+
+# Hourly: charge retry processing for failed subscription renewals
+gcloud scheduler jobs create http revenue-retry-charges \
+  --location=europe-west1 \
+  --schedule="0 * * * *" \
+  --uri="https://api.gatepassng.com/revenue/api/v1/internal/cron/retry-charges" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<INTERNAL_API_KEY>" \
+  --project=gatepass-6d009
+```
+
+### 15b. Manage scheduler jobs
+
+```bash
+# List all jobs
+gcloud scheduler jobs list --location=europe-west1 --project=gatepass-6d009
+
+# Manually trigger a job (e.g. for testing)
+gcloud scheduler jobs run revenue-retry-charges --location=europe-west1 --project=gatepass-6d009
+
+# Pause/resume a job
+gcloud scheduler jobs pause revenue-retry-charges --location=europe-west1 --project=gatepass-6d009
+gcloud scheduler jobs resume revenue-retry-charges --location=europe-west1 --project=gatepass-6d009
+```
+
+---
+
+## 16. Updating Environment Variables
 
 1. Edit the local YAML file:
 
@@ -774,7 +828,7 @@ gcloud secrets versions add code-service-env \
 
 ---
 
-## 16. Env Checker Script
+## 17. Env Checker Script
 
 Run locally before pushing to validate env files:
 
@@ -794,7 +848,7 @@ The env checker also runs automatically as the first step in every Cloud Build d
 
 ---
 
-## 17. Useful Commands
+## 18. Useful Commands
 
 Check service status:
 
