@@ -46,10 +46,10 @@ def paid_feature_access_valid(
     """
     Whether a paid AI grant is still usable for access checks.
 
-    - ``active``: allowed through ``expires_at + grace_days`` so renewals can
-      retry before the cron marks the grant expired.
-    - ``cancelled`` / ``past_due`` / other non-expired statuses: allowed only
-      until ``expires_at`` (no grace).
+    - ``active`` / ``past_due``: allowed through ``expires_at + grace_days``
+      so Paystack renewal retries can complete before access is cut.
+    - ``cancelled`` / other non-expired statuses: allowed only until
+      ``expires_at`` (no grace — user chose to cancel).
     - Missing/unparseable ``expires_at``: treated as still valid.
     """
     exp = _parse_utc_datetime(expires_at)
@@ -58,7 +58,7 @@ def paid_feature_access_valid(
 
     current = _as_utc(now or datetime.now(tz=timezone.utc))
     normalized = (status or "").lower()
-    if normalized == "active":
+    if normalized in ("active", "past_due"):
         return exp + timedelta(days=max(0, grace_days)) > current
     return exp > current
 

@@ -105,6 +105,20 @@ class GrantSyncRollback:
 
         for grant_id in reversed(self.created_grant_ids):
             try:
+                # Mark expired before soft-deleting so the row never
+                # lingers with status="active" + is_deleted=true.
+                await retry_transient(
+                    lambda gid=grant_id: repo.update_estate_ai_feature(
+                        gid, {"status": "expired", "auto_renew": False}
+                    ),
+                    attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
+                    base_delay_seconds=(
+                        settings.REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS
+                    ),
+                    operation_name=(
+                        f"rollback_grant_expire:{grant_id}:{self.operation}"
+                    ),
+                )
                 await retry_transient(
                     lambda gid=grant_id: repo.delete_estate_ai_feature(gid),
                     attempts=settings.REVENUE_TRANSIENT_RETRY_ATTEMPTS,
@@ -231,6 +245,7 @@ async def sync_tier_ai_grants(
     period_end: datetime | None,
     extra_feature_keys: list[str] | None = None,
     paystack: PaystackClient | None = None,
+    excess_grant_status: str = "cancelled",
 ) -> None:
     """
     Upsert estate_ai_feature rows for tier.included_ai_features (+ extras).
@@ -242,6 +257,12 @@ async def sync_tier_ai_grants(
     same feature, the standalone Paystack subscription is disabled (best-
     effort) and the standalone grant is marked cancelled. The tier grant takes
     over access going forward.
+
+    Args:
+        excess_grant_status: Status to apply to tier grants whose feature is
+            no longer in the new tier.  Defaults to ``"cancelled"`` for tier
+            changes; callers should pass ``"expired"`` when the subscription
+            itself has expired.
 
     Idempotent: safe to retry with the same inputs after a partial failure.
     Rolls back grant rows created/updated in this call if a later write fails.
@@ -356,7 +377,7 @@ async def sync_tier_ai_grants(
                 created = await repo.create_estate_ai_feature(payload)
                 rollback.record_create(str(created["id"]))
 
-        # Cancel tier_bundle grants for features no longer in the new tier.
+        # Remove tier_bundle grants for features no longer in the new tier.
         # Safe on upgrade (no excess grants). Handles downgrade at period end.
         for grant in existing:
             if str(grant.get("source") or "") != "subscription_tier":
@@ -368,12 +389,13 @@ async def sync_tier_ai_grants(
             rollback.record_update(grant)
             await repo.update_estate_ai_feature(
                 str(grant["id"]),
-                {"status": "cancelled", "auto_renew": False},
+                {"status": excess_grant_status, "auto_renew": False},
             )
             logger.info(
-                "Cancelled excess tier grant grant_id=%s "
+                "Set excess tier grant to %s grant_id=%s "
                 "ai_feature_id=%s estate_id=%s — feature not in "
                 "new tier tier_id=%s",
+                excess_grant_status,
                 grant["id"],
                 grant.get("ai_feature_id"),
                 estate_id,

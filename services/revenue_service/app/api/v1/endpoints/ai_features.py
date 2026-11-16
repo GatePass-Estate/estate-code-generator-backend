@@ -185,6 +185,33 @@ async def cancel_ai_feature(
         ) from e
 
 
+@router.post("/estate/{estate_id}/reactivate")
+async def reactivate_ai_feature(
+    estate_id: str,
+    request: AiFeatureKeyRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: EntitlementService = Depends(get_service),
+):
+    """Undo cancellation of a standalone AI feature (no billing extension)."""
+    require_roles(current_user["role"], _PRIMARY_ADMIN_ROLES)
+    require_estate_membership(current_user, estate_id)
+    try:
+        return await service.reactivate_ai_feature(
+            estate_id, request.feature_key
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "AI reactivate failed estate_id=%s feature_key=%s",
+            estate_id,
+            request.feature_key,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
 @router.post(
     "/estate/{estate_id}/activate",
     dependencies=[Depends(require_internal_key)],

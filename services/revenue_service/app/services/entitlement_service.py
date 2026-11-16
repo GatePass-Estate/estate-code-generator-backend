@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 
 MAX_ACTIVE_USERS_KEY = "max_active_users"
 
+# Standardized purchase-state labels returned to the FE.
+_GRANT_STATUS_TO_PURCHASE_STATE: dict[str, str] = {
+    "active": "purchased",
+    "cancelled": "cancelled",
+    "past_due": "past_due",
+    "expired": "not_purchased",
+}
+
+
+def _purchase_state(status: str | None) -> str:
+    """Map a raw grant status to a FE-friendly purchase state."""
+    if not status:
+        return "not_purchased"
+    return _GRANT_STATUS_TO_PURCHASE_STATE.get(status.lower(), status)
+
 
 class EntitlementService:
     """Business logic for estate entitlements and AI feature grants."""
@@ -214,11 +229,11 @@ class EntitlementService:
         Check whether an estate may use an AI feature grant.
 
         Free grants skip expiry. Paid grants stay allowed while installed
-        until access ends (or status ``expired``). For ``active`` grants,
-        access continues through ``expires_at + RENEWAL_GRACE_PERIOD_DAYS``
-        while auto-renew retries run. ``cancelled`` and ``past_due`` keep
-        access only until ``expires_at`` (no grace). Uninstalled grants are
-        always denied.
+        until access ends (or status ``expired``). For ``active`` and
+        ``past_due`` grants, access continues through
+        ``expires_at + RENEWAL_GRACE_PERIOD_DAYS`` while Paystack retries
+        run. ``cancelled`` keeps access only until ``expires_at`` (no
+        grace — user chose to cancel). Uninstalled grants are always denied.
 
         Args:
             estate_id: Estate UUID string.
@@ -244,32 +259,34 @@ class EntitlementService:
             (g for g in grants if str(g.get("ai_feature_id")) == feature_id),
             None,
         )
+        feature_name = feature.get("name")
         if not grant:
             return {
                 "estate_id": estate_id,
                 "feature_key": feature_key,
+                "name": feature_name,
                 "allowed": False,
                 "is_free": catalog_is_free,
-                "status": None,
+                "status": "not_purchased",
                 "expires_at": None,
                 "is_installed": False,
             }
 
         is_installed = bool(grant.get("is_installed"))
         is_free = bool(grant.get("is_free", catalog_is_free))
-        status = (grant.get("status") or "").lower()
+        raw_status = (grant.get("status") or "").lower()
         expires_at = grant.get("expires_at")
 
         if not is_installed:
             allowed = False
         elif is_free:
             allowed = True
-        elif status == "expired":
+        elif raw_status == "expired":
             allowed = False
         else:
-            # active: expires_at + grace; cancelled/past_due: expires_at only.
+            # active/past_due: expires_at + grace; cancelled: expires_at only.
             allowed = paid_feature_access_valid(
-                status=status,
+                status=raw_status,
                 expires_at=expires_at,
                 grace_days=settings.RENEWAL_GRACE_PERIOD_DAYS,
             )
@@ -277,9 +294,10 @@ class EntitlementService:
         return {
             "estate_id": estate_id,
             "feature_key": feature_key,
+            "name": feature_name,
             "allowed": allowed,
             "is_free": is_free,
-            "status": status,
+            "status": _purchase_state(raw_status),
             "expires_at": expires_at,
             "is_installed": is_installed,
         }
@@ -306,20 +324,23 @@ class EntitlementService:
             fid = str(g.get("ai_feature_id"))
             key = id_to_key.get(fid)
             catalog_deleted = key is None
+            cat_row = catalog.get(key or "", {})
             features.append(
                 {
                     **g,
                     "feature_key": key,
+                    "name": cat_row.get("name")
+                    if not catalog_deleted
+                    else None,
                     "catalog_deleted": catalog_deleted,
+                    "status": _purchase_state(g.get("status")),
                     "is_free": bool(
                         g.get("is_free")
                         if g.get("is_free") is not None
                         else (
                             False
                             if catalog_deleted
-                            else catalog.get(key or "", {}).get(
-                                "is_free", False
-                            )
+                            else cat_row.get("is_free", False)
                         )
                     ),
                 }
@@ -485,6 +506,104 @@ class EntitlementService:
         )
         logger.info(
             "Cancelled standalone AI grant estate_id=%s "
+            "feature_key=%s grant_id=%s",
+            estate_id,
+            feature_key,
+            grant["id"],
+        )
+        return {
+            "estate_id": estate_id,
+            "feature_key": feature_key,
+            "grant": updated,
+        }
+
+    async def reactivate_ai_feature(
+        self, estate_id: str, feature_key: str
+    ) -> dict[str, Any]:
+        """
+        Undo a cancellation for a standalone AI feature.
+
+        Re-enables ``auto_renew`` and sets status back to ``active`` without
+        extending ``expires_at``.  Re-enables the Paystack subscription so
+        auto-renewal fires at the end of the current billing cycle.
+        """
+        catalog = await self.repo.get_ai_feature_map()
+        feature = catalog.get(feature_key)
+        if not feature:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown feature_key '{feature_key}'"
+            )
+        feature_id = str(feature["id"])
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant = next(
+            (
+                g
+                for g in grants
+                if str(g.get("ai_feature_id")) == feature_id
+                and (g.get("source") or "").lower() == "standalone_purchase"
+                and (g.get("status") or "").lower() == "cancelled"
+            ),
+            None,
+        )
+        if not grant:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No cancelled standalone AI grant for "
+                    f"feature_key '{feature_key}'"
+                ),
+            )
+
+        # Check the grant hasn't expired yet.
+        expires_at_raw = grant.get("expires_at")
+        if expires_at_raw:
+            expires_at = datetime.fromisoformat(
+                str(expires_at_raw).replace("Z", "+00:00")
+            )
+            if expires_at <= datetime.now(tz=timezone.utc):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This grant has already expired — "
+                        "a new purchase is required"
+                    ),
+                )
+
+        # Re-enable the Paystack subscription (best-effort).
+        sub_code = grant.get("paystack_subscription_code")
+        if sub_code and self._paystack:
+            try:
+                await self._paystack.enable_subscription(sub_code)
+                logger.info(
+                    "Re-enabled Paystack AI subscription "
+                    "estate_id=%s grant_id=%s subscription_code=%s",
+                    estate_id,
+                    grant["id"],
+                    sub_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to re-enable Paystack AI subscription "
+                    "estate_id=%s grant_id=%s subscription_code=%s "
+                    "— proceeding with DB reactivation",
+                    estate_id,
+                    grant["id"],
+                    sub_code,
+                )
+        elif sub_code and not self._paystack:
+            logger.warning(
+                "reactivate_ai_feature: no Paystack client — cannot "
+                "re-enable subscription_code=%s for grant_id=%s",
+                sub_code,
+                grant["id"],
+            )
+
+        updated = await self.repo.update_estate_ai_feature(
+            str(grant["id"]),
+            {"auto_renew": True, "status": "active"},
+        )
+        logger.info(
+            "Reactivated standalone AI grant estate_id=%s "
             "feature_key=%s grant_id=%s",
             estate_id,
             feature_key,

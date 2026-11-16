@@ -480,10 +480,13 @@ class DbRevenueRepository:
     async def search_stale_ai_grants(
         self, *, expires_at_before: str
     ) -> list[dict]:
-        """Fetch cancelled/past_due non-free AI grants past their expires_at.
-        Used for stale-status cleanup (#12)."""
+        """Fetch cancelled non-free AI grants past their expires_at.
+
+        ``past_due`` is handled by the grace-aware pass in the expiry
+        service so Paystack has time to retry the charge.
+        """
         results: list[dict] = []
-        for status in ("cancelled", "past_due"):
+        for status in ("cancelled",):
             items = await self._paginate_all(
                 self.estate_ai_feature,
                 {
@@ -531,13 +534,25 @@ class DbRevenueRepository:
         return items[0] if items else None
 
     async def get_pending_checkout_for_estate(
-        self, estate_id: str
+        self,
+        estate_id: str,
+        *,
+        checkout_kind: str | None = None,
     ) -> dict | None:
-        """Return the newest pending checkout session for an estate."""
-        items = await self._search(
-            self.payment_checkout_session,
-            {"estate_id": estate_id, "status": "pending", "limit": 1},
-        )
+        """Return the newest pending checkout session for an estate.
+
+        When *checkout_kind* is given the search is scoped so that,
+        e.g., a pending AI checkout does not block a subscription
+        checkout.
+        """
+        params: dict = {
+            "estate_id": estate_id,
+            "status": "pending",
+            "limit": 1,
+        }
+        if checkout_kind:
+            params["checkout_kind"] = checkout_kind
+        items = await self._search(self.payment_checkout_session, params)
         return items[0] if items else None
 
     async def get_checkout_session_by_reference(

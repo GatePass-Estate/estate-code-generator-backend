@@ -64,9 +64,18 @@ class Settings(BaseSettings):
     )
 
     # Pending checkout sessions older than this are treated as expired
-    # (default 1 hour).
+    # (default 1 hour).  Used for sessions where money may be moving
+    # (Paystack status ongoing/processing/queued).
     CHECKOUT_SESSION_TTL_SECONDS: int = int(
         os.getenv("CHECKOUT_SESSION_TTL_SECONDS", "3600")
+    )
+
+    # Shorter TTL for idle sessions where no payment attempt was made
+    # (Paystack status pending/abandoned) or verify failed.  Default
+    # 5 minutes — long enough for slow redirects, short enough that
+    # users aren't stuck after closing the popup.
+    CHECKOUT_IDLE_TTL_SECONDS: int = int(
+        os.getenv("CHECKOUT_IDLE_TTL_SECONDS", "300")
     )
 
     # Applied to feature_unit_price rows (except VAT) before quote math.

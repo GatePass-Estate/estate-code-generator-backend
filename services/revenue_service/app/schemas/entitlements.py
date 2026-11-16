@@ -39,6 +39,7 @@ class AiFeatureCheckResponse(BaseModel):
 
     estate_id: str
     feature_key: str
+    name: str | None = None
     allowed: bool
     is_free: bool = False
     status: str | None = None

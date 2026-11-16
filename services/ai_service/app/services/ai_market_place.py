@@ -123,16 +123,24 @@ def _grant_map(grants: list[dict]) -> dict[str, dict]:
     return mapped
 
 
+_GRANT_STATUS_TO_PURCHASE_STATE = {
+    "active": "purchased",
+    "cancelled": "cancelled",
+    "past_due": "past_due",
+    "expired": "not_purchased",
+}
+
+
 def _tier_status(grant: dict | None) -> str:
-    """Map an estate grant to a marketplace tier status label."""
+    """Map an estate grant to a marketplace purchase-state label.
+
+    Returns one of: not_purchased, purchased, cancelled, past_due.
+    Install state is conveyed separately via ``is_installed``.
+    """
     if not grant:
         return "not_purchased"
-    if grant.get("is_installed"):
-        return "installed"
     status = (grant.get("status") or "").lower()
-    if status == "active":
-        return "subscribed"
-    return status or "subscribed"
+    return _GRANT_STATUS_TO_PURCHASE_STATE.get(status, status)
 
 
 _PAYMENT_MODE_BY_SOURCE = {

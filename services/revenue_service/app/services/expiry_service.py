@@ -33,10 +33,11 @@ class ExpiryService:
         now = datetime.now(tz=timezone.utc)
         grace_cutoff = now - timedelta(days=settings.RENEWAL_GRACE_PERIOD_DAYS)
 
-        # Fetch all active/trialing whose period has ended (period_end < now).
+        # Fetch active/trialing/past_due whose period has ended.
+        # All three get a grace window so Paystack retries can land.
         # Split in Python: in_grace vs past_grace.
         all_ended_active = await self.repo.search_subscriptions(
-            statuses=["active", "trialing"],
+            statuses=["active", "trialing", "past_due"],
             period_end_before=now.isoformat(),
         )
 
@@ -49,9 +50,9 @@ class ExpiryService:
             else:
                 past_grace.append(sub)
 
-        # past_due/cancelled: no grace, expire immediately
+        # cancelled: no grace, expire immediately (user chose to cancel)
         immediate = await self.repo.search_subscriptions(
-            statuses=["past_due", "cancelled"],
+            statuses=["cancelled"],
             period_end_before=now.isoformat(),
         )
 
@@ -156,9 +157,9 @@ class ExpiryService:
                     "over_cap_locked": over_cap,
                 }
             )
-            # Cancel tier-included AI grants from the expired tier.
+            # Expire tier-included AI grants from the expired tier.
             # Access tier has no included AI features, so sync will
-            # cancel all existing subscription_tier grants.
+            # expire all existing subscription_tier grants.
             try:
                 await sync_tier_ai_grants(
                     self.repo,
@@ -166,6 +167,7 @@ class ExpiryService:
                     subscription_id=str(new_sub["id"]),
                     tier=access_tier,
                     period_end=None,
+                    excess_grant_status="expired",
                 )
             except Exception:
                 logger.exception(
@@ -198,15 +200,20 @@ class ExpiryService:
         now = datetime.now(tz=timezone.utc)
         grace_cutoff = now - timedelta(days=settings.RENEWAL_GRACE_PERIOD_DAYS)
         now_iso = now.isoformat()
-        # Pass A — active grants whose expires_at < now
-        all_active_expired = await self.repo.search_ai_grants(
-            status="active",
-            is_free=False,
-            expires_at_before=now_iso,
-        )
+        # Pass A — active and past_due grants whose expires_at < now.
+        # Both statuses get the grace window so Paystack can retry charges.
+        grace_eligible: list[dict] = []
+        for status in ("active", "past_due"):
+            grace_eligible.extend(
+                await self.repo.search_ai_grants(
+                    status=status,
+                    is_free=False,
+                    expires_at_before=now_iso,
+                )
+            )
         in_grace: list[dict] = []
         past_grace: list[dict] = []
-        for grant in all_active_expired:
+        for grant in grace_eligible:
             expires_at = _parse_dt(str(grant.get("expires_at") or ""))
             if expires_at is not None and expires_at >= grace_cutoff:
                 in_grace.append(grant)
@@ -226,8 +233,8 @@ class ExpiryService:
             await _notify_ai_grant_expired(grant)
             count += 1
 
-        # Pass B — stale cleanup: cancelled/past_due past their expires_at.
-        # No grace for these statuses — expire as soon as expires_at passes.
+        # Pass B — stale cleanup: cancelled grants past their expires_at.
+        # No grace for cancelled — user chose to cancel.
         stale = await self.repo.search_stale_ai_grants(
             expires_at_before=now_iso,
         )
