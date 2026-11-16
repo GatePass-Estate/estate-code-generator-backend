@@ -497,6 +497,10 @@ class CheckoutService:
         self._paystack = PaystackClient(
             secret_key=settings.PAYSTACK_SECRET_KEY
         )
+        # Set by _resolve_pending_session when Paystack confirms
+        # a payment but the webhook hasn't arrived yet.  Used by
+        # the caller to include the reference in the 409 response.
+        self._last_resolved_paid_reference: str | None = None
 
     @staticmethod
     def _estate_multiplier(estate_type: str | None) -> float:
@@ -617,10 +621,14 @@ class CheckoutService:
             seconds=ttl_seconds
         )
 
-    # Paystack statuses that mean the transaction is still in flight.
-    _PAYSTACK_IN_PROGRESS = frozenset(
-        {"ongoing", "pending", "processing", "queued"}
-    )
+    # Paystack statuses where money may actually be moving (user entered
+    # OTP, bank processing, etc.).  These deserve the full TTL.
+    _PAYSTACK_MONEY_IN_FLIGHT = frozenset({"ongoing", "processing", "queued"})
+    # Transaction initialized but no payment attempt — safe to expire
+    # quickly or allow cancellation.
+    _PAYSTACK_IDLE = frozenset({"pending"})
+    # Union of the above — anything Paystack considers "not terminal".
+    _PAYSTACK_IN_PROGRESS = _PAYSTACK_MONEY_IN_FLIGHT | _PAYSTACK_IDLE
     # Paystack statuses that mean the transaction is dead.
     _PAYSTACK_TERMINAL_DEAD = frozenset({"abandoned", "failed", "reversed"})
 
@@ -651,18 +659,17 @@ class CheckoutService:
         try:
             txn = await self._paystack.verify_transaction(reference)
         except HTTPException:
-            # Verify failed — check TTL as a last resort.
-            # If the session is stale enough, expire it. Otherwise
-            # fail closed so the caller gets a 409.
+            # Verify failed — use the shorter idle TTL since we can't
+            # confirm money is moving.
             created_at = pending.get("created_at")
-            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+            ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
             if created_at and self._is_session_expired(created_at, ttl):
                 await self.repo.update_checkout_session(
                     session_id, {"status": "expired"}
                 )
                 logger.warning(
                     "Paystack verify failed for stale session %s "
-                    "reference=%s — expired by TTL",
+                    "reference=%s — expired by idle TTL",
                     session_id,
                     reference,
                 )
@@ -681,6 +688,7 @@ class CheckoutService:
             # Payment went through but webhook hasn't arrived yet.
             # Don't expire — the webhook will fulfil it. Block new
             # checkouts so we don't risk a double charge.
+            self._last_resolved_paid_reference = reference
             logger.warning(
                 "Pending session %s reference=%s is paid at Paystack "
                 "but webhook has not arrived — blocking new checkout",
@@ -689,8 +697,9 @@ class CheckoutService:
             )
             return False
 
-        if ps_status in self._PAYSTACK_IN_PROGRESS:
-            # Transaction still in flight — block unless past TTL.
+        if ps_status in self._PAYSTACK_MONEY_IN_FLIGHT:
+            # Money may be moving (OTP, bank transfer, direct debit).
+            # Use the full TTL to give the transaction time to settle.
             created_at = pending.get("created_at")
             ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
             if created_at and self._is_session_expired(created_at, ttl):
@@ -707,22 +716,41 @@ class CheckoutService:
                 return True
             return False
 
+        if ps_status in self._PAYSTACK_IDLE:
+            # Initialized but user never entered payment details
+            # (e.g. closed the popup).  Use the shorter idle TTL.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack status %r — session %s reference=%s "
+                    "expired by idle TTL",
+                    ps_status,
+                    session_id,
+                    reference,
+                )
+                return True
+            return False
+
         if ps_status in self._PAYSTACK_TERMINAL_DEAD:
             await self.repo.update_checkout_session(
                 session_id, {"status": "expired"}
             )
             return True
 
-        # Unknown status — expire if past TTL, otherwise fail closed.
+        # Unknown status — use idle TTL, otherwise fail closed.
         created_at = pending.get("created_at")
-        ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+        ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
         if created_at and self._is_session_expired(created_at, ttl):
             await self.repo.update_checkout_session(
                 session_id, {"status": "expired"}
             )
             logger.warning(
                 "Unknown Paystack status %r for stale session %s "
-                "reference=%s — expired by TTL",
+                "reference=%s — expired by idle TTL",
                 ps_status,
                 session_id,
                 reference,
@@ -797,9 +825,12 @@ class CheckoutService:
                     ),
                 )
 
-            # Only allow cancellation for known dead statuses.
-            # In-progress and unknown statuses are blocked.
-            if ps_status not in self._PAYSTACK_TERMINAL_DEAD:
+            # Allow cancellation for dead transactions and idle ones
+            # (pending = initialized but user never entered payment
+            # details, e.g. closed the popup).  Block only when money
+            # may actually be moving (ongoing/processing/queued).
+            _cancellable = self._PAYSTACK_TERMINAL_DEAD | self._PAYSTACK_IDLE
+            if ps_status not in _cancellable:
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -1098,8 +1129,14 @@ class CheckoutService:
     ) -> None:
         """Raise 409 if any requested feature key already has a live grant.
 
-        A grant is considered live when its status is 'active' and either
-        expires_at is absent or still in the future.
+        A grant is considered live when:
+        - status is 'active' and expires_at is absent or in the future, OR
+        - status is 'cancelled' (standalone) and expires_at is still in the
+          future beyond the grace period — the user should reactivate instead
+          of re-purchasing.
+
+        Cancelled grants whose expires_at has passed (or is within the grace
+        window) are allowed through so the user can make a fresh purchase.
         """
         if not ai_feature_keys:
             return
@@ -1108,7 +1145,9 @@ class CheckoutService:
         grants = await self.repo.list_estate_ai_features(estate_id)
         grant_by_feature_id = {str(g.get("ai_feature_id")): g for g in grants}
         now = datetime.now(tz=timezone.utc)
-        conflicting: list[str] = []
+        grace_days = settings.RENEWAL_GRACE_PERIOD_DAYS
+        active_conflicts: list[str] = []
+        reactivatable: list[str] = []
         for key in ai_feature_keys:
             feature_id = key_to_feature_id.get(key)
             if not feature_id:
@@ -1117,26 +1156,55 @@ class CheckoutService:
             if not grant:
                 continue
             status = (grant.get("status") or "").lower()
-            if status != "active":
-                continue
+            source = (grant.get("source") or "").lower()
             expires_raw = grant.get("expires_at")
-            if expires_raw:
+
+            if status == "active":
+                if expires_raw:
+                    expires_at = datetime.fromisoformat(
+                        str(expires_raw).replace("Z", "+00:00")
+                    )
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    if expires_at <= now:
+                        continue
+                active_conflicts.append(key)
+
+            elif (
+                status == "cancelled"
+                and source == "standalone_purchase"
+                and expires_raw
+            ):
                 expires_at = datetime.fromisoformat(
                     str(expires_raw).replace("Z", "+00:00")
                 )
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
-                if expires_at <= now:
+                grace_cutoff = expires_at - timedelta(days=grace_days)
+                if now >= grace_cutoff:
+                    # Expired or within grace window — allow new purchase.
                     continue
-            conflicting.append(key)
-        if conflicting:
+                reactivatable.append(key)
+
+        if active_conflicts:
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "Estate already has an active grant for: "
-                    f"{', '.join(conflicting)}. "
+                    f"{', '.join(active_conflicts)}. "
                     "Wait for expiry, cancel the existing grant, or "
                     "upgrade to a higher tier."
+                ),
+            )
+        if reactivatable:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "These features were cancelled but are still within "
+                    "their billing period: "
+                    f"{', '.join(reactivatable)}. "
+                    "Use the reactivate endpoint to undo the "
+                    "cancellation instead of purchasing again."
                 ),
             )
 
@@ -1207,24 +1275,35 @@ class CheckoutService:
             # pending or paid: return cached response (idempotent)
             return self._build_cached_response(existing)
 
-        # 3. Business-level guard: one pending checkout per estate
+        # 3. Business-level guard: one pending checkout per estate+kind.
+        #    Different checkout kinds (e.g. AI vs subscription) don't
+        #    block each other — only same-kind conflicts matter.
+        kind = request["checkout_kind"]
+        self._last_resolved_paid_reference = None
         pending = await self.repo.get_pending_checkout_for_estate(
-            request["estate_id"]
+            request["estate_id"], checkout_kind=kind
         )
         if pending:
             resolved = await self._resolve_pending_session(pending)
             if not resolved:
+                detail = (
+                    "This estate already has a pending checkout session. "
+                    "Complete or wait for it to expire before starting "
+                    "a new one."
+                )
+                paid_ref = self._last_resolved_paid_reference
+                if paid_ref:
+                    detail = (
+                        "Your previous payment was successful and is "
+                        "being processed. Reference: "
+                        f"{paid_ref}"
+                    )
                 raise HTTPException(
                     status_code=409,
-                    detail=(
-                        "This estate already has a pending checkout session. "
-                        "Complete or wait for it to expire before starting "
-                        "a new one."
-                    ),
+                    detail=detail,
                 )
 
         # 4. Resolve handler for this checkout kind
-        kind = request["checkout_kind"]
         handler_cls = _HANDLERS.get(kind)
         if not handler_cls:
             raise HTTPException(

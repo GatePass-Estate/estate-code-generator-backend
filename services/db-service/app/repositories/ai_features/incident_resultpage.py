@@ -22,6 +22,7 @@ from app.schemas.ai_features.incident_resultpage import (
     ReporterUserType,
     SearchRequest,
 )
+
 from app.schemas.user_profile.users import UserRole
 
 logger = logging.getLogger(__name__)

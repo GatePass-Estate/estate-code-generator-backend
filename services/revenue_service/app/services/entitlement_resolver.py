@@ -13,8 +13,10 @@ PAID_ACCESS_STATUSES = frozenset(
 )
 # Narrow set used by some callers that only want "healthy" billing rows.
 ACTIVE_STATUSES = frozenset({"active", "trialing"})
-# Statuses that receive a grace-period extension before falling back to Access.
-_GRACE_STATUSES = frozenset({"active", "trialing"})
+# Statuses that receive a grace-period extension before falling
+# back to Access. past_due gets grace so Paystack retry attempts
+# can complete before access is cut.
+_GRACE_STATUSES = frozenset({"active", "trialing", "past_due"})
 
 
 def _access_entitlements(
@@ -67,11 +69,11 @@ def uses_access_fallback(
     Happens when there is no subscription, status is outside the paid-access
     set, the billing period has ended, or the tier row is missing.
 
-    ``active``/``trialing`` subscriptions retain paid entitlements through
-    ``period_end + RENEWAL_GRACE_PERIOD_DAYS`` so estates keep access while
-    Paystack retries payment — matching the same grace logic used for AI
-    grants. ``cancelled`` and ``past_due`` receive no grace (access runs to
-    period_end exactly).
+    ``active``/``trialing``/``past_due`` subscriptions retain paid entitlements
+    through ``period_end + RENEWAL_GRACE_PERIOD_DAYS`` so estates keep access
+    while Paystack retries payment — matching the same grace logic used for AI
+    grants. ``cancelled`` receives no grace (access runs to period_end
+    exactly — user chose to cancel).
     """
     if not subscription:
         return True
@@ -102,8 +104,9 @@ def resolve_entitlements(
     2. If tier is_custom → estate_subscription.entitlements snapshot.
     3. Else → subscription_tier.entitlements.
 
-    ``cancelled`` and ``past_due`` keep paid entitlements until ``period_end``
-    (cancel turns off auto-renew but does not cut access early).
+    ``cancelled`` keeps paid entitlements until ``period_end`` (cancel turns
+    off auto-renew but does not cut access early). ``past_due`` keeps paid
+    entitlements through ``period_end + grace`` so Paystack retries can land.
 
     Args:
         subscription: Active estate subscription row, or None.

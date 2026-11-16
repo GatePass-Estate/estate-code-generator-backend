@@ -133,6 +133,10 @@ class CreateRequest(IncidentReportBase):
             raise ValueError(
                 "Provide either a category or a custom_category," " not both."
             )
+        # Ensure custom-category reports are tagged with "other" so that
+        # filtering by category=other naturally includes them.
+        if has_custom and not has_category:
+            self.category = [IncidentCategory.OTHER]
         return self
 
 

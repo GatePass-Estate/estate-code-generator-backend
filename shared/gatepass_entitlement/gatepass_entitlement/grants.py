@@ -28,10 +28,12 @@ def _parse_utc(raw: Any) -> datetime | None:
 def grant_is_entitled(grant: dict | None) -> bool:
     """True if the grant currently entitles the estate to the feature.
 
-    Free grants skip expiry. ``expired`` is never entitled. ``active`` stays
-    valid through ``expires_at`` plus a renewal grace window. ``cancelled``
-    and ``past_due`` stay valid only until ``expires_at``. Install state is
-    ignored: list ``purchased`` is billing entitlement, not ``is_installed``.
+    Free grants skip expiry. ``expired`` is never entitled. ``active`` and
+    ``past_due`` stay valid through ``expires_at`` plus a renewal grace
+    window (Paystack may still be retrying the charge). ``cancelled`` stays
+    valid only until ``expires_at`` (no grace — user chose to cancel).
+    Install state is ignored: list ``purchased`` is billing entitlement,
+    not ``is_installed``.
     """
     if not grant:
         return False
@@ -44,7 +46,7 @@ def grant_is_entitled(grant: dict | None) -> bool:
     if expires_at is None:
         return True
     now = datetime.now(tz=timezone.utc)
-    if status == "active":
+    if status in ("active", "past_due"):
         grace = timedelta(days=_RENEWAL_GRACE_PERIOD_DAYS)
         return expires_at + grace > now
     return expires_at > now

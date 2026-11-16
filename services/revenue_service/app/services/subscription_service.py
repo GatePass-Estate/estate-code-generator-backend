@@ -436,7 +436,7 @@ class SubscriptionService:
 
         existing = await self.repo.get_active_subscription(estate_id)
         prior_state = dict(existing) if existing else None
-        created_new = False
+        retired_access = False
         payload = {
             "estate_id": estate_id,
             "tier_id": tier["id"],
@@ -453,15 +453,41 @@ class SubscriptionService:
         }
 
         if existing:
-            subscription = await self.repo.update_estate_subscription(
-                str(existing["id"]), payload
+            existing_tier_id = str(existing.get("tier_id") or "")
+            existing_tier = (
+                await self.repo.get_tier_by_id(existing_tier_id)
+                if existing_tier_id
+                else None
             )
-            subscription_id = str(existing["id"])
+            is_access_tier = (
+                existing_tier and existing_tier.get("slug") == "access"
+            )
+            if is_access_tier:
+                # Retire the access-tier row and create a fresh paid row
+                # so there is a clear audit trail per subscription period.
+                await self.repo.update_estate_subscription(
+                    str(existing["id"]),
+                    {
+                        "status": "expired",
+                        "period_end": paid_at.isoformat(),
+                        "cancelled_at": paid_at.isoformat(),
+                    },
+                )
+                retired_access = True
+                created = await self.repo.create_estate_subscription(payload)
+                subscription_id = str(created["id"])
+                subscription = created
+            else:
+                # Existing paid subscription — update in place (e.g. renewal
+                # retry, re-purchase after cancellation).
+                subscription = await self.repo.update_estate_subscription(
+                    str(existing["id"]), payload
+                )
+                subscription_id = str(existing["id"])
         else:
             created = await self.repo.create_estate_subscription(payload)
             subscription_id = str(created["id"])
             subscription = created
-            created_new = True
 
         try:
             await retry_transient(
@@ -481,33 +507,49 @@ class SubscriptionService:
                 operation_name="activate_sync_tier_ai_grants",
             )
         except Exception as exc:
+            created_new = retired_access or not existing
             logger.exception(
                 "Activate grant sync failed; compensating subscription "
                 "estate_id=%s subscription_id=%s tier_id=%s tier_slug=%s "
-                "created_new=%s",
+                "created_new=%s retired_access=%s",
                 estate_id,
                 subscription_id,
                 tier.get("id"),
                 tier_slug,
                 created_new,
+                retired_access,
             )
             try:
-                await _compensate_subscription_write(
-                    self.repo,
-                    estate_id=estate_id,
-                    subscription_id=subscription_id,
-                    created_new=created_new,
-                    prior_state=prior_state,
-                    operation="activate",
-                )
+                if retired_access:
+                    # Delete the new paid row and restore the access row.
+                    await self.repo.delete_estate_subscription(subscription_id)
+                    await self.repo.update_estate_subscription(
+                        str(existing["id"]),
+                        {
+                            "status": prior_state.get("status", "active"),
+                            "period_end": prior_state.get("period_end"),
+                            "cancelled_at": prior_state.get("cancelled_at"),
+                        },
+                    )
+                else:
+                    await _compensate_subscription_write(
+                        self.repo,
+                        estate_id=estate_id,
+                        subscription_id=subscription_id,
+                        created_new=created_new,
+                        prior_state=prior_state,
+                        operation="activate",
+                    )
             except Exception as compensation_exc:
                 logger.exception(
                     "Activate compensation failed estate_id=%s "
-                    "subscription_id=%s tier_id=%s created_new=%s",
+                    "subscription_id=%s tier_id=%s created_new=%s "
+                    "retired_access=%s",
                     estate_id,
                     subscription_id,
                     tier.get("id"),
                     created_new,
+                    retired_access,
                 )
                 raise HTTPException(
                     status_code=502,

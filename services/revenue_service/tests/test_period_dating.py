@@ -76,14 +76,24 @@ def test_cancelled_paid_feature_has_no_grace():
     )
 
 
-def test_past_due_paid_feature_has_no_grace():
+def test_past_due_paid_feature_has_grace():
+    """past_due gets the same grace window as active (Paystack retry window)."""
     expires = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    # 1 hour after expires_at but within 7-day grace → still valid
     now = expires + timedelta(hours=1)
-    assert not paid_feature_access_valid(
+    assert paid_feature_access_valid(
         status="past_due",
         expires_at=expires.isoformat(),
         grace_days=7,
         now=now,
+    )
+    # Past the 7-day grace window → no longer valid
+    now_past_grace = expires + timedelta(days=7, hours=1)
+    assert not paid_feature_access_valid(
+        status="past_due",
+        expires_at=expires.isoformat(),
+        grace_days=7,
+        now=now_past_grace,
     )
 
 
