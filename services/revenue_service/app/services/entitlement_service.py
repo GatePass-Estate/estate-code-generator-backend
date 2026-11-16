@@ -524,14 +524,17 @@ class EntitlementService:
         Undo a cancellation for a standalone AI feature.
 
         Re-enables ``auto_renew`` and sets status back to ``active`` without
-        extending ``expires_at``.  Re-enables the Paystack subscription so
-        auto-renewal fires at the end of the current billing cycle.
+        extending ``expires_at``.  Creates a **new** Paystack subscription
+        (starting at ``expires_at``) because Paystack does not allow
+        re-enabling a cancelled subscription.  The old subscription code is
+        replaced with the new one on the grant row.
         """
         catalog = await self.repo.get_ai_feature_map()
         feature = catalog.get(feature_key)
         if not feature:
             raise HTTPException(
-                status_code=404, detail=f"Unknown feature_key '{feature_key}'"
+                status_code=404,
+                detail=f"Unknown feature_key '{feature_key}'",
             )
         feature_id = str(feature["id"])
         grants = await self.repo.list_estate_ai_features(estate_id)
@@ -569,45 +572,97 @@ class EntitlementService:
                     ),
                 )
 
-        # Re-enable the Paystack subscription (best-effort).
-        sub_code = grant.get("paystack_subscription_code")
-        if sub_code and self._paystack:
+        # Create a new Paystack subscription starting at expires_at.
+        # Paystack does not allow re-enabling a disabled subscription,
+        # so we fetch the old one's customer/authorization/plan data
+        # and create a fresh subscription deferred to the next cycle.
+        old_sub_code = grant.get("paystack_subscription_code")
+        new_sub_code: str | None = None
+        plan_code = feature.get("paystack_plan_code") or ""
+
+        if old_sub_code and self._paystack:
             try:
-                await self._paystack.enable_subscription(sub_code)
-                logger.info(
-                    "Re-enabled Paystack AI subscription "
-                    "estate_id=%s grant_id=%s subscription_code=%s",
-                    estate_id,
-                    grant["id"],
-                    sub_code,
+                sub_data = await self._paystack.fetch_subscription(
+                    old_sub_code
                 )
+                customer_email = (sub_data.get("customer") or {}).get(
+                    "email", ""
+                )
+                auth_code = (sub_data.get("authorization") or {}).get(
+                    "authorization_code", ""
+                )
+                if not plan_code:
+                    plan_code = (sub_data.get("plan") or {}).get(
+                        "plan_code", ""
+                    )
+
+                if customer_email and auth_code and plan_code:
+                    start = (
+                        expires_at_raw.isoformat()
+                        if hasattr(expires_at_raw, "isoformat")
+                        else str(expires_at_raw)
+                    )
+                    new_data = await self._paystack.create_subscription(
+                        customer_email=customer_email,
+                        plan_code=plan_code,
+                        authorization_code=auth_code,
+                        start_date=start,
+                    )
+                    new_sub_code = new_data.get("subscription_code")
+                    logger.info(
+                        "Created new Paystack subscription for "
+                        "reactivation estate_id=%s grant_id=%s "
+                        "old=%s new=%s",
+                        estate_id,
+                        grant["id"],
+                        old_sub_code,
+                        new_sub_code,
+                    )
+                else:
+                    logger.warning(
+                        "reactivate_ai_feature: missing Paystack "
+                        "data for new subscription — "
+                        "customer_email=%s auth_code=%s "
+                        "plan_code=%s grant_id=%s",
+                        bool(customer_email),
+                        bool(auth_code),
+                        bool(plan_code),
+                        grant["id"],
+                    )
             except Exception:
                 logger.exception(
-                    "Failed to re-enable Paystack AI subscription "
-                    "estate_id=%s grant_id=%s subscription_code=%s "
+                    "Failed to create new Paystack subscription "
+                    "for reactivation estate_id=%s grant_id=%s "
+                    "old_subscription_code=%s "
                     "— proceeding with DB reactivation",
                     estate_id,
                     grant["id"],
-                    sub_code,
+                    old_sub_code,
                 )
-        elif sub_code and not self._paystack:
+        elif old_sub_code and not self._paystack:
             logger.warning(
-                "reactivate_ai_feature: no Paystack client — cannot "
-                "re-enable subscription_code=%s for grant_id=%s",
-                sub_code,
+                "reactivate_ai_feature: no Paystack client — "
+                "cannot create new subscription for grant_id=%s",
                 grant["id"],
             )
 
+        patch: dict[str, Any] = {
+            "auto_renew": True,
+            "status": "active",
+        }
+        if new_sub_code:
+            patch["paystack_subscription_code"] = new_sub_code
+
         updated = await self.repo.update_estate_ai_feature(
-            str(grant["id"]),
-            {"auto_renew": True, "status": "active"},
+            str(grant["id"]), patch
         )
         logger.info(
             "Reactivated standalone AI grant estate_id=%s "
-            "feature_key=%s grant_id=%s",
+            "feature_key=%s grant_id=%s new_subscription_code=%s",
             estate_id,
             feature_key,
             grant["id"],
+            new_sub_code,
         )
         return {
             "estate_id": estate_id,

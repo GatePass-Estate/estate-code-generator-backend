@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -39,6 +40,7 @@ class DbRevenueRepository:
         )
         self.payment_event = f"{base}api/v1/revenue/paymentevent"
         self.payment_transaction = f"{base}api/v1/revenue/paymenttransaction"
+        self.payment_charge_retry = f"{base}api/v1/revenue/paymentchargeretry"
 
     async def _search(
         self, endpoint: str, params: dict[str, Any]
@@ -629,3 +631,78 @@ class DbRevenueRepository:
                 detail="Failed to create payment transaction",
             )
         return response
+
+    # ------------------------------------------------------------------ #
+    # Payment charge retry (self-managed retry queue)
+    # ------------------------------------------------------------------ #
+
+    async def create_payment_charge_retry(self, payload: dict) -> dict:
+        """POST a new payment_charge_retry row."""
+        response = await self.client.async_post(
+            self.payment_charge_retry, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment charge retry",
+            )
+        return response
+
+    async def update_payment_charge_retry(
+        self, retry_id: str, payload: dict
+    ) -> dict:
+        """PATCH a payment_charge_retry by id."""
+        url = f"{self.payment_charge_retry}/{retry_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to update payment charge retry",
+            )
+        return response
+
+    async def get_charge_retry_by_billing_period_key(
+        self, key: str
+    ) -> dict | None:
+        """Return a retry schedule by billing_period_key, or None."""
+        items = await self._search(
+            self.payment_charge_retry,
+            {"billing_period_key": key, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def search_pending_retries_due(self, now_iso: str) -> list[dict]:
+        """Fetch pending retries where next_retry_at <= now."""
+        return await self._paginate_all(
+            self.payment_charge_retry,
+            {
+                "status": "pending",
+                "next_retry_at_before": now_iso,
+            },
+        )
+
+    async def cancel_pending_retries_for_target(
+        self, target_type: str, target_id: str
+    ) -> int:
+        """Cancel all pending retries for a target. Returns count."""
+        items = await self._search(
+            self.payment_charge_retry,
+            {
+                "target_type": target_type,
+                "target_id": target_id,
+                "status": "pending",
+                "limit": 100,
+            },
+        )
+        cancelled = 0
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        for item in items:
+            try:
+                await self.update_payment_charge_retry(
+                    str(item["id"]),
+                    {"status": "cancelled", "resolved_at": now_iso},
+                )
+                cancelled += 1
+            except Exception:
+                logger.warning("Failed to cancel retry id=%s", item.get("id"))
+        return cancelled

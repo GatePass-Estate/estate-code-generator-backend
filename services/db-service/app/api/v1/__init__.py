@@ -98,6 +98,9 @@ from app.api.v1.endpoints.revenue.payment_checkout_session import (
 from app.api.v1.endpoints.revenue.payment_event import (
     router as paymentevent_router,
 )
+from app.api.v1.endpoints.revenue.payment_charge_retry import (
+    router as paymentchargeretry_router,
+)
 from app.api.v1.endpoints.revenue.payment_transaction import (
     router as paymenttransaction_router,
 )
@@ -306,6 +309,12 @@ api_router.include_router(
     paymentevent_router,
     prefix="/revenue/paymentevent",
     tags=["PaymentEvent"],
+)
+
+api_router.include_router(
+    paymentchargeretry_router,
+    prefix="/revenue/paymentchargeretry",
+    tags=["PaymentChargeRetry"],
 )
 
 api_router.include_router(

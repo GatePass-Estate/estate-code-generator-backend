@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from gatepass_scheduler import scheduled_http_job
+from gatepass_scheduler import interval_http_job, scheduled_http_job
 
 from app.api.v1 import api_router
 from app.core.config import settings
@@ -40,6 +40,18 @@ async def lifespan(app: FastAPI):
                 )
             )
         )
+        tasks.append(
+            asyncio.create_task(
+                interval_http_job(
+                    url=settings.REVENUE_RETRY_CHARGES_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    interval_minutes=(
+                        settings.REVENUE_RETRY_CHARGES_INTERVAL_MINUTES
+                    ),
+                    name="revenue-retry-charges",
+                )
+            )
+        )
         logger.info(
             "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
             settings.CRON_HOUR,
@@ -47,6 +59,10 @@ async def lifespan(app: FastAPI):
         logger.info(
             "Scheduler started: revenue-daily-expiry at %02d:00 UTC",
             settings.REVENUE_CRON_HOUR,
+        )
+        logger.info(
+            "Scheduler started: revenue-retry-charges every %d minutes",
+            settings.REVENUE_RETRY_CHARGES_INTERVAL_MINUTES,
         )
     else:
         logger.info(
