@@ -2064,6 +2064,37 @@ socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<8)"]
 
 [[package]]
+name = "resend"
+version = "2.53.2"
+description = "Resend Python SDK"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "resend-2.53.2-py3-none-any.whl", hash = "sha256:e0416b6559b972a5b877acf21e3bbd4b59098f19093a72ecc26e40407d19f452"},
+    {file = "resend-2.53.2.tar.gz", hash = "sha256:4904f79fe129344edb612beb5653b5755dfe63c73ea5d0c96842d2869da36e28"},
+]
+
+[package.dependencies]
+requests = ">=2.33.0"
+typing_extensions = ">=4.4.0"
+
+[package.extras]
+async = ["httpx (>=0.25.1)"]
+
+[[package]]
+name = "sendbyte"
+version = "0.3.0"
+description = "SendByte Python SDK: the email API for Africa."
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "sendbyte-0.3.0-py3-none-any.whl", hash = "sha256:f82d23140107109d4013861311d578203951db9c77c45afe6efa4456794c675a"},
+    {file = "sendbyte-0.3.0.tar.gz", hash = "sha256:6d40a0267cba7b1dd68716a6ed7d2549f49dbae0aa7075ffc8e53ff1ebf3767e"},
+]
+
+[[package]]
 name = "starlette"
 version = "1.3.1"
 description = "The little ASGI library that shines."
@@ -2424,4 +2455,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "c2919b06c3df5c6e9e04ef2f88d56f999b46386d72a8cbf9301ba9c845d116f3"
+content-hash = "3fd9fdf3ed65ed7f957e69b19bb279d9d480b21bdea35707c3e1d19ab9b2b30a"

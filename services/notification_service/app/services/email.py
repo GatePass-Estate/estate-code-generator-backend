@@ -341,7 +341,7 @@ def _build_email(
 
 async def _send_via_sendbyte(subject: str, recipient: str, body: str) -> None:
     """Send email via Sendbyte (primary provider)."""
-    await _sendbyte.emails.send(
+    await _sendbyte.send_email(
         from_=_API_EMAIL_FROM,
         to=recipient,
         subject=subject,
