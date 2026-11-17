@@ -815,6 +815,19 @@ class WebhookService:
             period_months,
         )
 
+        # Cancel any pending self-managed retries for this subscription.
+        try:
+            await self.repo.cancel_pending_retries_for_target(
+                "estate_subscription", str(subscription["id"])
+            )
+        except Exception:
+            logger.exception(
+                "Failed to cancel pending retries after renewal "
+                "estate_id=%s — retries may fire but will be "
+                "idempotent",
+                estate_id,
+            )
+
     async def _handle_ai_grant_renewal(
         self, data: dict[str, Any], ai_grant: dict[str, Any]
     ) -> None:
@@ -881,6 +894,18 @@ class WebhookService:
             new_expires_at.isoformat(),
         )
 
+        # Cancel any pending self-managed retries for this grant.
+        try:
+            await self.repo.cancel_pending_retries_for_target(
+                "ai_grant", str(ai_grant["id"])
+            )
+        except Exception:
+            logger.exception(
+                "Failed to cancel pending retries after AI grant "
+                "renewal grant_id=%s",
+                ai_grant["id"],
+            )
+
     async def _handle_subscription_create(self, data: dict[str, Any]) -> None:
         """
         Confirmation that Paystack created the recurring subscription.
@@ -922,6 +947,7 @@ class WebhookService:
         """Mark a standalone AI grant past_due when mid-cycle payment fails."""
         now = datetime.now(tz=timezone.utc)
         expires_at_raw = ai_grant.get("expires_at")
+        in_grace = False
         if expires_at_raw:
             expires_at = datetime.fromisoformat(
                 str(expires_at_raw).replace("Z", "+00:00")
@@ -929,40 +955,53 @@ class WebhookService:
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if now >= expires_at:
+                in_grace = True
                 logger.info(
                     "invoice.payment_failed in grace window for AI grant "
                     "grant_id=%s — no status change",
                     ai_grant["id"],
                 )
-                return
 
         estate_id = str(ai_grant["estate_id"])
-        await self.repo.update_estate_ai_feature(
-            str(ai_grant["id"]), {"status": "past_due"}
-        )
-        logger.info(
-            "invoice.payment_failed mid-cycle: set AI grant past_due "
-            "grant_id=%s estate_id=%s",
-            ai_grant["id"],
-            estate_id,
-        )
-        await fire_notify(
-            {
-                "type": "AI_GRANT_PAYMENT_FAILED",
-                "title": "AI feature payment failed",
-                "body": (
-                    "Your automatic renewal payment for an AI feature "
-                    "failed. Your access continues until the current "
-                    "period ends — please update your payment method "
-                    "to avoid losing access."
-                ),
-                "fan_out": {
-                    "estate_id": estate_id,
-                    "roles": ["primary_admin"],
-                },
-                "metadata": {"estate_id": estate_id},
-            }
-        )
+
+        if not in_grace:
+            await self.repo.update_estate_ai_feature(
+                str(ai_grant["id"]), {"status": "past_due"}
+            )
+            logger.info(
+                "invoice.payment_failed mid-cycle: set AI grant past_due "
+                "grant_id=%s estate_id=%s",
+                ai_grant["id"],
+                estate_id,
+            )
+            await fire_notify(
+                {
+                    "type": "AI_GRANT_PAYMENT_FAILED",
+                    "title": "AI feature payment failed",
+                    "body": (
+                        "Your automatic renewal payment for an AI feature "
+                        "failed. Your access continues until the current "
+                        "period ends — please update your payment method "
+                        "to avoid losing access."
+                    ),
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["primary_admin"],
+                    },
+                    "metadata": {"estate_id": estate_id},
+                }
+            )
+
+        # Schedule self-managed charge retries (best-effort).
+        sub_code = ai_grant.get("paystack_subscription_code", "")
+        if sub_code and expires_at_raw:
+            await self._create_retry_schedule(
+                estate_id=estate_id,
+                target_type="ai_grant",
+                target_id=str(ai_grant["id"]),
+                period_end_iso=str(expires_at_raw),
+                paystack_subscription_code=sub_code,
+            )
 
     async def _handle_subscription_disable(self, data: dict[str, Any]) -> None:
         """
@@ -1121,6 +1160,114 @@ class WebhookService:
                 "estate_id=%s subscription_id=%s",
                 estate_id,
                 subscription["id"],
+            )
+
+        # Schedule self-managed charge retries (best-effort).
+        sub_code = paystack_sub_code or subscription.get(
+            "paystack_subscription_code", ""
+        )
+        if sub_code:
+            await self._create_retry_schedule(
+                estate_id=estate_id,
+                target_type="estate_subscription",
+                target_id=str(subscription["id"]),
+                period_end_iso=str(period_end_raw),
+                paystack_subscription_code=sub_code,
+            )
+
+    async def _create_retry_schedule(
+        self,
+        *,
+        estate_id: str,
+        target_type: str,
+        target_id: str,
+        period_end_iso: str,
+        paystack_subscription_code: str,
+    ) -> None:
+        """
+        Best-effort creation of a charge retry schedule after a failed
+        invoice.  Fetches the Paystack subscription to snapshot the
+        authorization code, email, and plan amount, then inserts a
+        ``payment_charge_retry`` row with the first retry scheduled.
+
+        Failures are logged but never propagated — the subscription is
+        already ``past_due`` and the existing grace-period expiry flow
+        is the safety net.
+        """
+        billing_period_key = f"{target_type}:{target_id}:{period_end_iso}"
+        try:
+            existing = await self.repo.get_charge_retry_by_billing_period_key(
+                billing_period_key
+            )
+            if existing:
+                logger.info(
+                    "Retry schedule already exists for %s — skipping",
+                    billing_period_key,
+                )
+                return
+
+            sub_data = await self._paystack.fetch_subscription(
+                paystack_subscription_code
+            )
+            auth_code = (sub_data.get("authorization") or {}).get(
+                "authorization_code", ""
+            )
+            customer_email = (sub_data.get("customer") or {}).get("email", "")
+            amount_kobo = int((sub_data.get("plan") or {}).get("amount", 0))
+
+            if not auth_code or not customer_email or not amount_kobo:
+                logger.warning(
+                    "Cannot create retry schedule — missing Paystack data "
+                    "auth_code=%s email=%s amount=%s subscription_code=%s",
+                    bool(auth_code),
+                    bool(customer_email),
+                    amount_kobo,
+                    paystack_subscription_code,
+                )
+                return
+
+            schedule_raw = settings.CHARGE_RETRY_INTERVALS_HOURS
+            schedule = [
+                int(h.strip()) for h in schedule_raw.split(",") if h.strip()
+            ]
+            if not schedule:
+                logger.warning("CHARGE_RETRY_INTERVALS_HOURS is empty")
+                return
+
+            now = datetime.now(tz=timezone.utc)
+            next_retry_at = now + timedelta(hours=schedule[0])
+
+            await self.repo.create_payment_charge_retry(
+                {
+                    "estate_id": estate_id,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "paystack_subscription_code": paystack_subscription_code,
+                    "billing_period_key": billing_period_key,
+                    "amount_kobo": amount_kobo,
+                    "currency_code": (
+                        (sub_data.get("plan") or {}).get("currency", "NGN")
+                    ),
+                    "authorization_code": auth_code,
+                    "customer_email": customer_email,
+                    "status": "pending",
+                    "attempt_number": 0,
+                    "max_attempts": len(schedule),
+                    "next_retry_at": next_retry_at.isoformat(),
+                }
+            )
+            logger.info(
+                "Created charge retry schedule key=%s max_attempts=%d "
+                "first_retry=%s",
+                billing_period_key,
+                len(schedule),
+                next_retry_at.isoformat(),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to create retry schedule for %s — "
+                "grace-period expiry will handle fallback",
+                billing_period_key,
             )
 
     async def _handle_refund(self, data: dict[str, Any]) -> None:

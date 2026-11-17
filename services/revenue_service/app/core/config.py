@@ -46,6 +46,12 @@ class Settings(BaseSettings):
         os.getenv("REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS", "0.2")
     )
 
+    # Charge retry schedule: comma-separated hours from initial failure.
+    # Default [1, 24, 72, 144] = 1h, 1d, 3d, 6d — fits within 7-day grace.
+    CHARGE_RETRY_INTERVALS_HOURS: str = os.getenv(
+        "CHARGE_RETRY_INTERVALS_HOURS", "1,24,72,144"
+    )
+
     PAYSTACK_SECRET_KEY: str = os.getenv("PAYSTACK_SECRET_KEY", "")
     PAYSTACK_PUBLIC_KEY: str = os.getenv("PAYSTACK_PUBLIC_KEY", "")
     PAYSTACK_BASE_URL: str = os.getenv(

@@ -86,6 +86,16 @@ class ExpiryService:
                         sub_code,
                         sub.get("estate_id"),
                     )
+            # Cancel any lingering charge retries.
+            try:
+                await self.repo.cancel_pending_retries_for_target(
+                    "estate_subscription", str(sub["id"])
+                )
+            except Exception:
+                logger.warning(
+                    "Cron: failed to cancel retries sub_id=%s",
+                    sub.get("id"),
+                )
             try:
                 await self._expire_one(sub, access_tier, max_users)
                 await _notify_subscription_expired(sub["estate_id"])
@@ -226,6 +236,16 @@ class ExpiryService:
         count = 0
         for grant in past_grace:
             await self._disable_grant_paystack(grant)
+            # Cancel any lingering charge retries.
+            try:
+                await self.repo.cancel_pending_retries_for_target(
+                    "ai_grant", str(grant["id"])
+                )
+            except Exception:
+                logger.warning(
+                    "Cron: failed to cancel retries grant_id=%s",
+                    grant.get("id"),
+                )
             await self.repo.update_estate_ai_feature(
                 str(grant["id"]),
                 {"status": "expired", "is_installed": False},

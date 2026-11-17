@@ -56,3 +56,47 @@ async def scheduled_http_job(
                 )
         except Exception:
             logger.exception("[%s] HTTP call failed", name)
+
+
+async def interval_http_job(
+    url: str,
+    internal_api_key: str,
+    interval_minutes: int = 60,
+    name: str = "job",
+) -> None:
+    """
+    Runs an HTTP POST to `url` every `interval_minutes` minutes.
+
+    Designed to run as a long-lived asyncio task (e.g. via
+    asyncio.create_task inside a FastAPI lifespan). Failures are logged
+    but do not stop the loop — the next run will still be scheduled.
+
+    Args:
+        url: Full URL to POST to.
+        internal_api_key: Value sent as the X-Internal-Key header.
+        interval_minutes: Minutes between each run. Defaults to 60.
+        name: Human-readable label used in log messages.
+    """
+    while True:
+        logger.info(
+            "[%s] Running now, next run in %d minutes",
+            name,
+            interval_minutes,
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    url,
+                    headers={"X-Internal-Key": internal_api_key},
+                )
+                logger.info(
+                    "[%s] Completed: HTTP %s — %s",
+                    name,
+                    response.status_code,
+                    response.text[:200],
+                )
+        except Exception:
+            logger.exception("[%s] HTTP call failed", name)
+
+        await asyncio.sleep(interval_minutes * 60)

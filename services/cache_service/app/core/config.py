@@ -58,6 +58,15 @@ class Settings(BaseSettings):
         "http://revenue-service:9037/api/v1/internal/cron/daily",
     )
     REVENUE_CRON_HOUR: int = int(os.getenv("REVENUE_CRON_HOUR", "2"))
+    # Full URL of the revenue-service charge retry cron endpoint
+    REVENUE_RETRY_CHARGES_CRON_URL: str = os.getenv(
+        "REVENUE_RETRY_CHARGES_CRON_URL",
+        "http://revenue-service:9037/api/v1/internal/cron/retry-charges",
+    )
+    # Interval in minutes between charge retry cron runs
+    REVENUE_RETRY_CHARGES_INTERVAL_MINUTES: int = int(
+        os.getenv("REVENUE_RETRY_CHARGES_INTERVAL_MINUTES", "60")
+    )
 
     @field_validator("REDIS_URL", mode="before")
     def assemble_db_url(cls, v, info: ValidationInfo):

@@ -458,68 +458,139 @@ class PaystackClient:
                     status_code=502, detail="Paystack unreachable"
                 ) from exc
 
-    async def disable_subscription(self, subscription_code: str) -> None:
+    async def charge_authorization(
+        self,
+        *,
+        authorization_code: str,
+        email: str,
+        amount_kobo: int,
+        reference: str,
+        currency: str = "NGN",
+    ) -> dict:
         """
-        Disable a Paystack recurring subscription so no further charges fire.
+        Charge a reusable authorization (card token) directly.
 
-        Paystack requires the ``email_token`` from the subscription record to
-        authorise the disable call, so we fetch the subscription first.
+        Used by the self-managed retry queue to retry failed subscription
+        renewals outside of Paystack's own subscription billing cycle.
 
         Args:
-            subscription_code: The ``SUB_xxx`` code stored on the estate
-                subscription row.
+            authorization_code: Reusable ``AUTH_xxx`` token.
+            email: Customer email associated with the authorization.
+            amount_kobo: Charge amount in the smallest currency unit.
+            reference: Unique idempotent transaction reference.
+            currency: ISO currency code (default ``NGN``).
+
+        Returns:
+            Paystack transaction data dict.  ``data["status"]`` is
+            ``"success"`` on a successful charge, or ``"failed"`` when
+            the card is declined.  The caller must inspect the status;
+            this method does **not** raise on a declined charge.
+
+        Raises:
+            HTTPException: 502 only on Paystack envelope errors
+                (``body["status"] == false``) or network failures.
+        """
+        payload = {
+            "authorization_code": authorization_code,
+            "email": email,
+            "amount": amount_kobo,
+            "reference": reference,
+            "currency": currency,
+        }
+        url = (
+            f"{settings.PAYSTACK_BASE_URL}" "/transaction/charge_authorization"
+        )
+        timeout = settings.PAYSTACK_TIMEOUT_SECONDS
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                resp = await client.post(
+                    url, json=payload, headers=self._auth_headers()
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                if not body.get("status"):
+                    logger.error(
+                        "Paystack charge_authorization envelope error "
+                        "reference=%s message=%s",
+                        reference,
+                        body.get("message"),
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "Paystack error: "
+                            f"{body.get('message', 'unknown')}"
+                        ),
+                    )
+                return body.get("data") or {}
+            except HTTPException:
+                raise
+            except httpx.HTTPStatusError as exc:
+                logger.exception(
+                    "Paystack charge_authorization HTTP error "
+                    "reference=%s status=%s body=%s",
+                    reference,
+                    exc.response.status_code,
+                    exc.response.text,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Paystack charge_authorization failed",
+                ) from exc
+            except httpx.RequestError as exc:
+                logger.exception(
+                    "Paystack charge_authorization network error "
+                    "reference=%s",
+                    reference,
+                )
+                raise HTTPException(
+                    status_code=502, detail="Paystack unreachable"
+                ) from exc
+
+    async def fetch_subscription(self, subscription_code: str) -> dict:
+        """
+        Fetch a Paystack subscription record.
+
+        Args:
+            subscription_code: The ``SUB_xxx`` code.
+
+        Returns:
+            Paystack subscription data dict (contains ``email_token``,
+            ``customer``, ``authorization``, ``plan``, etc.).
 
         Raises:
             HTTPException: 502 on Paystack error or network failure.
         """
+        url = (
+            f"{settings.PAYSTACK_BASE_URL}"
+            f"/subscription/{subscription_code}"
+        )
         timeout = settings.PAYSTACK_TIMEOUT_SECONDS
         async with httpx.AsyncClient(timeout=timeout) as client:
-            # Step 1 — fetch subscription to get email_token.
-            fetch_url = (
-                f"{settings.PAYSTACK_BASE_URL}"
-                f"/subscription/{subscription_code}"
-            )
             try:
-                fetch_resp = await client.get(
-                    fetch_url, headers=self._auth_headers()
-                )
-                fetch_resp.raise_for_status()
-                fetch_body = fetch_resp.json()
-                if not fetch_body.get("status"):
+                resp = await client.get(url, headers=self._auth_headers())
+                resp.raise_for_status()
+                body = resp.json()
+                if not body.get("status"):
                     logger.error(
-                        "Paystack fetch subscription status=false "
+                        "Paystack fetch_subscription status=false "
                         "subscription_code=%s message=%s",
                         subscription_code,
-                        fetch_body.get("message"),
+                        body.get("message"),
                     )
                     raise HTTPException(
                         status_code=502,
                         detail=(
                             "Paystack error fetching subscription: "
-                            f"{fetch_body.get('message', 'unknown')}"
+                            f"{body.get('message', 'unknown')}"
                         ),
                     )
-                email_token: str | None = (fetch_body.get("data") or {}).get(
-                    "email_token"
-                )
-                if not email_token:
-                    logger.error(
-                        "Paystack subscription fetch missing email_token "
-                        "subscription_code=%s",
-                        subscription_code,
-                    )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Paystack subscription response missing "
-                            "email_token; cannot disable"
-                        ),
-                    )
+                return body.get("data") or {}
             except HTTPException:
                 raise
             except httpx.HTTPStatusError as exc:
                 logger.exception(
-                    "Paystack fetch subscription HTTP error "
+                    "Paystack fetch_subscription HTTP error "
                     "subscription_code=%s status=%s",
                     subscription_code,
                     exc.response.status_code,
@@ -530,7 +601,7 @@ class PaystackClient:
                 ) from exc
             except httpx.RequestError as exc:
                 logger.exception(
-                    "Paystack fetch subscription network error "
+                    "Paystack fetch_subscription network error "
                     "subscription_code=%s",
                     subscription_code,
                 )
@@ -538,7 +609,35 @@ class PaystackClient:
                     status_code=502, detail="Paystack unreachable"
                 ) from exc
 
-            # Step 2 — disable the subscription.
+    async def disable_subscription(self, subscription_code: str) -> None:
+        """
+        Disable a Paystack recurring subscription so no further charges fire.
+
+        Args:
+            subscription_code: The ``SUB_xxx`` code stored on the estate
+                subscription row.
+
+        Raises:
+            HTTPException: 502 on Paystack error or network failure.
+        """
+        sub_data = await self.fetch_subscription(subscription_code)
+        email_token: str | None = sub_data.get("email_token")
+        if not email_token:
+            logger.error(
+                "Paystack subscription missing email_token "
+                "subscription_code=%s",
+                subscription_code,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Paystack subscription response missing "
+                    "email_token; cannot disable"
+                ),
+            )
+
+        timeout = settings.PAYSTACK_TIMEOUT_SECONDS
+        async with httpx.AsyncClient(timeout=timeout) as client:
             disable_url = f"{settings.PAYSTACK_BASE_URL}/subscription/disable"
             try:
                 resp = await client.post(
@@ -581,135 +680,6 @@ class PaystackClient:
             except httpx.RequestError as exc:
                 logger.exception(
                     "Paystack disable_subscription network error "
-                    "subscription_code=%s",
-                    subscription_code,
-                )
-                raise HTTPException(
-                    status_code=502, detail="Paystack unreachable"
-                ) from exc
-
-    async def enable_subscription(self, subscription_code: str) -> None:
-        """
-        Re-enable a previously disabled Paystack subscription.
-
-        Uses the same fetch-then-POST pattern as ``disable_subscription``
-        but hits the ``/subscription/enable`` endpoint.
-
-        Args:
-            subscription_code: The ``SUB_xxx`` code stored on the grant row.
-
-        Raises:
-            HTTPException: 502 on Paystack error or network failure.
-        """
-        timeout = settings.PAYSTACK_TIMEOUT_SECONDS
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # Step 1 — fetch subscription to get email_token.
-            fetch_url = (
-                f"{settings.PAYSTACK_BASE_URL}"
-                f"/subscription/{subscription_code}"
-            )
-            try:
-                fetch_resp = await client.get(
-                    fetch_url, headers=self._auth_headers()
-                )
-                fetch_resp.raise_for_status()
-                fetch_body = fetch_resp.json()
-                if not fetch_body.get("status"):
-                    logger.error(
-                        "Paystack fetch subscription status=false "
-                        "subscription_code=%s message=%s",
-                        subscription_code,
-                        fetch_body.get("message"),
-                    )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Paystack error fetching subscription: "
-                            f"{fetch_body.get('message', 'unknown')}"
-                        ),
-                    )
-                email_token: str | None = (fetch_body.get("data") or {}).get(
-                    "email_token"
-                )
-                if not email_token:
-                    logger.error(
-                        "Paystack subscription fetch missing email_token "
-                        "subscription_code=%s",
-                        subscription_code,
-                    )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Paystack subscription response missing "
-                            "email_token; cannot enable"
-                        ),
-                    )
-            except HTTPException:
-                raise
-            except httpx.HTTPStatusError as exc:
-                logger.exception(
-                    "Paystack fetch subscription HTTP error "
-                    "subscription_code=%s status=%s",
-                    subscription_code,
-                    exc.response.status_code,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail="Paystack subscription fetch failed",
-                ) from exc
-            except httpx.RequestError as exc:
-                logger.exception(
-                    "Paystack fetch subscription network error "
-                    "subscription_code=%s",
-                    subscription_code,
-                )
-                raise HTTPException(
-                    status_code=502, detail="Paystack unreachable"
-                ) from exc
-
-            # Step 2 — enable the subscription.
-            enable_url = f"{settings.PAYSTACK_BASE_URL}/subscription/enable"
-            try:
-                resp = await client.post(
-                    enable_url,
-                    json={
-                        "code": subscription_code,
-                        "token": email_token,
-                    },
-                    headers=self._auth_headers(),
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                if not body.get("status"):
-                    logger.error(
-                        "Paystack enable_subscription status=false "
-                        "subscription_code=%s message=%s",
-                        subscription_code,
-                        body.get("message"),
-                    )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Paystack error: "
-                            f"{body.get('message', 'unknown')}"
-                        ),
-                    )
-            except HTTPException:
-                raise
-            except httpx.HTTPStatusError as exc:
-                logger.exception(
-                    "Paystack enable_subscription HTTP error "
-                    "subscription_code=%s status=%s",
-                    subscription_code,
-                    exc.response.status_code,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail="Paystack enable subscription failed",
-                ) from exc
-            except httpx.RequestError as exc:
-                logger.exception(
-                    "Paystack enable_subscription network error "
                     "subscription_code=%s",
                     subscription_code,
                 )

@@ -203,9 +203,9 @@ gcloud sql instances clone gatepass-db gatepass-db-restored \
 
 ## Scheduled Jobs (Cron)
 
-Daily maintenance tasks (session cleanup, subscription expiry checks) are triggered by **Google Cloud Scheduler** in production. Two jobs POST to internal cron endpoints through the Load Balancer using the `X-Internal-Key` header.
+Maintenance tasks are triggered by **Google Cloud Scheduler** in production. Each job POSTs to an internal cron endpoint through the Load Balancer using the `X-Internal-Key` header. There are two daily jobs (session cleanup, subscription/AI grant expiry) and one hourly job (charge retry processing for failed subscription renewals).
 
-In dev/staging, the cache-service runs equivalent in-process `asyncio` loops instead (controlled by `APP_ENV`).
+In dev/staging, the cache-service runs equivalent in-process `asyncio` loops instead (controlled by `APP_ENV`). See the [Cloud Run Deployment Guide](cloud-run-deployment-guide.md) for setup details.
 
 ## Monolith Consolidation (Cost Optimization)
 
