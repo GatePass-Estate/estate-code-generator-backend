@@ -89,7 +89,7 @@ class Settings(BaseSettings):
         os.getenv("ESTATE_TYPE_HOUSING_MULTIPLIER", "1.0")
     )
     ESTATE_TYPE_CORPORATE_MULTIPLIER: float = float(
-        os.getenv("ESTATE_TYPE_CORPORATE_MULTIPLIER", "3.0")
+        os.getenv("ESTATE_TYPE_CORPORATE_MULTIPLIER", "2.0")
     )
 
 

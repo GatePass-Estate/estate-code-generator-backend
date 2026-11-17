@@ -354,6 +354,16 @@ gcloud scheduler jobs create http revenue-daily-expiry \
   --headers="X-Internal-Key=<YOUR_INTERNAL_API_KEY>" \
   --attempt-deadline=300s \
   --project=gatepass-6d009
+
+# Revenue charge retry — every hour
+gcloud scheduler jobs create http revenue-retry-charges \
+  --location=europe-west1 \
+  --schedule="0 * * * *" \
+  --uri="https://api.gatepassng.com/revenue/api/v1/internal/cron/retry-charges" \
+  --http-method=POST \
+  --headers="X-Internal-Key=<YOUR_INTERNAL_API_KEY>" \
+  --attempt-deadline=300s \
+  --project=gatepass-6d009
 ```
 
 To test:
@@ -361,6 +371,7 @@ To test:
 ```bash
 gcloud scheduler jobs run user-profile-daily-cron --location=europe-west1 --project=gatepass-6d009
 gcloud scheduler jobs run revenue-daily-expiry --location=europe-west1 --project=gatepass-6d009
+gcloud scheduler jobs run revenue-retry-charges --location=europe-west1 --project=gatepass-6d009
 ```
 
 To update the schedule or API key later:
