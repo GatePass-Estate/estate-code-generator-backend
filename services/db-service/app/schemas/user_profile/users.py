@@ -22,6 +22,8 @@ __all__ = [
     "GetResponse",
     "SearchRequest",
     "ListResponse",
+    "RoleCountItem",
+    "RoleCountsResponse",
 ]
 
 
@@ -105,6 +107,16 @@ class UserBase(BaseModel):
 
     tos_accepted_version: str | None = Field(
         default=None, description="TOS version the user has accepted"
+    )
+    totp_secret: str | None = Field(
+        default=None, description="Fernet-encrypted TOTP secret"
+    )
+    totp_enabled: bool | None = Field(
+        default=False, description="Whether TOTP 2FA is active"
+    )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
     )
 
     model_config = model_config
@@ -210,6 +222,32 @@ class UpdateRequest(BaseModel):
     tos_accepted_version: str | None = Field(
         default=None, description="TOS version the user has accepted"
     )
+    totp_secret: str | None = Field(
+        default=None, description="Fernet-encrypted TOTP secret"
+    )
+    totp_enabled: bool | None = Field(
+        default=None, description="Whether TOTP 2FA is active"
+    )
+    last_2fa_verified_at: datetime | None = Field(
+        default=None,
+        description="When the user last completed a TOTP challenge",
+    )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description=(
+            "ID of the user who closed this account"
+            " (self-closure or admin-initiated)"
+        ),
+    )
+
+    @field_serializer("deactivated_by")
+    def serialize_deactivated_by(self, value: UUID4) -> Optional[str]:
+        return str(value) if value else None
+
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the account was closed",
+    )
 
     model_config = model_config
 
@@ -262,7 +300,21 @@ class GetResponse(SharedModel, UserBase):
         household_id (UUID): Reference to the household.
         role (UserRole): User role (enum).
         status (bool): Active/inactive status.
+        deactivated_by (UUID): Who closed the account.
+        deactivated_at (datetime): When the account was closed.
     """
+
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description=(
+            "ID of the user who closed this account"
+            " (self-closure or admin-initiated)"
+        ),
+    )
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the account was closed",
+    )
 
 
 class SearchRequest(BaseSearchRequest):
@@ -304,7 +356,9 @@ class SearchRequest(BaseSearchRequest):
     household_id: Optional[UUID4] = Field(
         None, description="Reference to the household"
     )
-    role: Optional[UserRole] = Field(None, description="User role")
+    roles: Optional[List[UserRole]] = Field(
+        None, description="Filter by role(s)"
+    )
     status: Optional[bool] = Field(None, description="Active/inactive status")
 
 
@@ -321,3 +375,18 @@ class ListResponse(BaseListResponse):
     """
 
     items: List[GetResponse] = Field(..., description="List of user records")
+
+
+class RoleCountItem(BaseModel):
+    role: str = Field(..., description="User role value")
+    count: int = Field(..., description="Number of users with this role")
+
+    model_config = model_config
+
+
+class RoleCountsResponse(BaseModel):
+    items: List[RoleCountItem] = Field(
+        ..., description="Role counts for the estate"
+    )
+
+    model_config = model_config

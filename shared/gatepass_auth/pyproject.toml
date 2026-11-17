@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "gatepass-auth"
+version = "0.1.0"
+description = "Shared FastAPI authentication dependency for GatePass services"
+authors = ["GatePass"]
+packages = [{ include = "gatepass_auth" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = ">=0.115.4"
+pyjwt = ">=2.9.0"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

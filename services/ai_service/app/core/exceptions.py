@@ -1,5 +1,16 @@
 """Domain errors surfaced as HTTP errors from the AI service API."""
 
+from gatepass_entitlement import EntitlementDeniedError
+
+__all__ = [
+    "EntitlementDeniedError",
+    "FeatureStoreError",
+    "IncidentReportError",
+    "LogHistoryError",
+    "ResultPageError",
+    "VolumeForecastError",
+]
+
 
 class LogHistoryError(Exception):
     """Raised when log rows cannot be loaded for analysis (fail-closed)."""
@@ -25,6 +36,25 @@ class FeatureStoreError(Exception):
 
     def __init__(self, message: str, *, status_code: int = 502) -> None:
         """Attach ``message`` and optional HTTP status for API error mapping."""
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+class VolumeForecastError(Exception):
+    """Raised when validation-volume fetch or ARIMA preconditions fail."""
+
+    def __init__(self, message: str, *, status_code: int = 422) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+class ResultPageError(Exception):
+    """Raised when result-page data cannot be loaded from db-service."""
+
+    def __init__(self, message: str, *, status_code: int = 502) -> None:
+        """Store ``message`` and the HTTP status to surface to the client."""
         super().__init__(message)
         self.status_code = status_code
         self.message = message

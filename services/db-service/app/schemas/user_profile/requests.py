@@ -36,6 +36,7 @@ class RequestType(str, Enum):
     EMAIL_CHANGE = "email_change"
     GENDER_CHANGE = "gender_change"
     VACATE_RESIDENCE = "vacate_residence"
+    ID_CHANGE = "id_change"
 
 
 class Status(str, Enum):
@@ -169,6 +170,10 @@ class UpdateRequest(BaseModel):
 
     reviewed_by: UUID4 | None = Field(
         default=None, description="User who reviewed the request"
+    )
+    last_reminded_at: datetime | None = Field(
+        default=None,
+        description="When the user last sent a reminder to admins",
     )
 
     @field_serializer("estate_id")

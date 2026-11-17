@@ -1,7 +1,9 @@
 import logging
 from typing import Dict, Optional, Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from fastapi import HTTPException
+
+from gatepass_rbac import get_role_permissions as fetch_role_permissions
 
 from app.libs.http_handler import AsyncHttpHandler
 from app.schemas.user import (
@@ -196,6 +198,10 @@ class UserRepository:
             payload["role"] = data.role.value
         if data.household_id is not None:
             payload["household_id"] = str(data.household_id)
+        if data.deactivated_by is not None:
+            payload["deactivated_by"] = str(data.deactivated_by)
+        if data.deactivated_at is not None:
+            payload["deactivated_at"] = data.deactivated_at.isoformat()
 
         url = f"{self.users_endpoint}/{user_id}"
         response = await self.client.async_patch(url, json_data=payload)
@@ -245,11 +251,17 @@ class UserRepository:
             created_at=response["created_at"],
             updated_at=response.get("updated_at"),
             is_deleted=response.get("is_deleted", False),
+            tos_accepted_version=response.get("tos_accepted_version"),
+            totp_secret=response.get("totp_secret"),
+            totp_enabled=response.get("totp_enabled", False),
+            last_2fa_verified_at=response.get("last_2fa_verified_at"),
         )
 
     async def get_user_by_email(self, email: str) -> GetUserResponse | None:
         """
         Retrieves a single user by email from the db-service.
+        Returns the first match regardless of estate or status.
+        Use get_user_by_email_and_estate for scoped lookups.
 
         Args:
             email: The user email to search for.
@@ -257,7 +269,47 @@ class UserRepository:
         Returns:
             GetUserResponse containing the user data or None if not found.
         """
-        url = f"{self.users_endpoint}/search?email={email}"
+        url = f"{self.users_endpoint}/search?email={quote(email, safe='')}"
+        response = await self.client.async_get(url)
+
+        if response and response.get("items"):
+            user_data = response["items"][0]
+            return GetUserResponse(
+                id=user_data["id"],
+                first_name=user_data["first_name"],
+                last_name=user_data["last_name"],
+                email=user_data["email"],
+                home_address=user_data["home_address"],
+                phone_number=user_data.get("phone_number"),
+                gender=user_data["gender"],
+                role=user_data["role"],
+                estate_id=user_data["estate_id"],
+                household_id=user_data.get("household_id"),
+                status=user_data["status"],
+                created_at=user_data["created_at"],
+                updated_at=user_data.get("updated_at"),
+                is_deleted=user_data.get("is_deleted", False),
+            )
+        return None
+
+    async def get_user_by_email_and_estate(
+        self, email: str, estate_id: str, active_only: bool = True
+    ) -> GetUserResponse | None:
+        """
+        Retrieves the active user for a given (email, estate_id) pair.
+
+        Args:
+            email: The user email to search for.
+            estate_id: The estate to scope the lookup to.
+            active_only: If True, only returns records with status=True.
+
+        Returns:
+            GetUserResponse or None if not found.
+        """
+        params = f"email={quote(email, safe='')}&estate_id={estate_id}"
+        if active_only:
+            params += "&status=true"
+        url = f"{self.users_endpoint}/search?{params}"
         response = await self.client.async_get(url)
 
         if response and response.get("items"):
@@ -331,8 +383,8 @@ class UserRepository:
             params["email"] = request.email
         if request.gender:
             params["gender"] = request.gender.value
-        if request.role:
-            params["role"] = request.role.value
+        if request.roles:
+            params["roles"] = [r.value for r in request.roles]
         if request.estate_id:
             params["estate_id"] = str(request.estate_id)
         if request.household_id:
@@ -351,7 +403,7 @@ class UserRepository:
         # Build URL with query parameters
         base_url = f"{self.users_endpoint}/search"
         if params:
-            query_string = urlencode(params)
+            query_string = urlencode(params, doseq=True)
             url = f"{base_url}?{query_string}"
         else:
             url = base_url
@@ -383,6 +435,9 @@ class UserRepository:
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
                 is_deleted=item.get("is_deleted", False),
+                tos_accepted_version=item.get("tos_accepted_version"),
+                totp_enabled=item.get("totp_enabled", False),
+                last_2fa_verified_at=item.get("last_2fa_verified_at"),
             )
             for item in response.get("items", [])
         ]
@@ -411,14 +466,15 @@ class UserRepository:
         return await self.search_users(request)
 
     async def authenticate_user(
-        self, email: str, password: str
+        self, email: str, password: str, estate_id: Optional[str] = None
     ) -> GetUserResponse:
         """
-        Authenticates a user by email and password.
+        Authenticates a user by email, password, and estate.
 
         Args:
             email: User's email.
             password: User's password.
+            estate_id: Estate to scope the lookup to. None for root login.
 
         Returns:
             GetUserResponse: User data if authentication succeeds.
@@ -426,8 +482,13 @@ class UserRepository:
         Raises:
             HTTPException: If authentication fails.
         """
-
-        url = f"{self.users_endpoint}/search?email={email}"
+        if estate_id:
+            url = (
+                f"{self.users_endpoint}/search"
+                f"?email={quote(email, safe='')}&estate_id={estate_id}&status=true"
+            )
+        else:
+            url = f"{self.users_endpoint}/search?email={quote(email, safe='')}&status=true"
         response = await self.client.async_get(url)
 
         if not response or not response.get("items"):
@@ -458,6 +519,8 @@ class UserRepository:
             updated_at=user_data.get("updated_at"),
             is_deleted=user_data.get("is_deleted", False),
             tos_accepted_version=user_data.get("tos_accepted_version"),
+            totp_enabled=user_data.get("totp_enabled", False),
+            last_2fa_verified_at=user_data.get("last_2fa_verified_at"),
         )
 
         return user
@@ -559,17 +622,23 @@ class UserRepository:
             return True
         return False
 
-    async def check_email_exists(self, email: str) -> bool:
+    async def check_active_email_exists(
+        self, email: str, estate_id: str
+    ) -> bool:
         """
-        Checks if an email is already registered.
+        Checks if an active (status=True) account already exists for the
+        given (email, estate_id) pair.
 
         Args:
             email: The email to check.
+            estate_id: The estate to scope the check to.
 
         Returns:
-            True if email exists, False otherwise.
+            True if an active account exists, False otherwise.
         """
-        user = await self.get_user_by_email(email)
+        user = await self.get_user_by_email_and_estate(
+            email, estate_id, active_only=True
+        )
         return user is not None
 
     async def update_user_field(
@@ -623,16 +692,4 @@ class UserRepository:
         Raises:
             HTTPException: If retrieval fails.
         """
-        url = (
-            f"{self.base_url}api/v1/userprofile/rolepermission/"
-            f"search?role_name={role}"
-        )
-        response = await self.client.async_get(url)
-
-        if not response or not response.get("items"):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Permissions not found for role '{role}'.",
-            )
-
-        return response.get("items")[0]
+        return await fetch_role_permissions(self.client, role)

@@ -1,4 +1,10 @@
-"""Feature-store column mapping and cohort helpers (no HTTP)."""
+"""
+Feature-store column mapping and historical-vector helpers (no HTTP).
+
+Bridges db-service ``core.logfeatureengineering`` JSON columns to sklearn
+detector inputs. Schema enforcement (exact active-key match) prevents legacy
+rows from polluting reference matrices after finetuning migrations.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +12,15 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.core.feature_config import active_feature_set_for_scope
 from app.domain.scopes import AnalysisScope
+from app.core.spatial_anomaly_trace import trace
 
 logger = logging.getLogger(__name__)
 
 # ``AnalysisScope`` -> JSON column on ``core.logfeatureengineering``.
 FEATURE_JSON_COLUMN: dict[AnalysisScope, str] = {
+    AnalysisScope.TEMPORAL: "features_temporal",
     AnalysisScope.VISITOR: "features_visitor_specific",
     AnalysisScope.RESIDENT: "features_resident_specific",
     AnalysisScope.SECURITY: "features_security_specific",
@@ -66,3 +75,57 @@ def historical_vectors_for_scope(
             continue
         vectors.append({str(k): float(v) for k, v in blob.items()})
     return vectors
+
+
+def filter_vectors_by_active_keys(
+    vectors: list[dict[str, float]],
+    active_keys: frozenset[str],
+) -> tuple[list[dict[str, float]], int]:
+    """
+    Keep only vectors whose keys **exactly** match ``active_keys``.
+
+    Partial or legacy schemas (e.g. rows still carrying retired
+    ``time_since_last_visit`` keys) are excluded rather than zero-imputed.
+    sklearn preprocessing would otherwise union all keys and dilute distances.
+
+    Returns:
+        ``(matched_vectors, excluded_count)``
+    """
+    if not active_keys:
+        return [], len(vectors)
+    matched: list[dict[str, float]] = []
+    excluded = 0
+    for vector in vectors:
+        if frozenset(vector.keys()) == active_keys:
+            matched.append(vector)
+        else:
+            excluded += 1
+    if excluded:
+        logger.debug(
+            "Excluded %s historical vector(s) with schema mismatch "
+            "(expected keys=%s)",
+            excluded,
+            sorted(active_keys),
+        )
+    return matched, excluded
+
+
+def historical_vectors_for_scope_matching_active(
+    stored_items: list[dict[str, Any]],
+    scope: AnalysisScope,
+) -> tuple[list[dict[str, float]], int]:
+    """
+    Load scope vectors and retain only rows matching the active feature schema.
+    """
+    raw = historical_vectors_for_scope(stored_items, scope)
+    active = active_feature_set_for_scope(scope)
+    matched, excluded = filter_vectors_by_active_keys(raw, active)
+    trace(
+        f"history-filter:{scope.value}",
+        "schema-matched historical vectors",
+        raw_vectors_count=len(raw),
+        matched_count=len(matched),
+        excluded_schema_mismatch_count=excluded,
+        expected_keys=sorted(active),
+    )
+    return matched, excluded

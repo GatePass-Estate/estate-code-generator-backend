@@ -1,6 +1,15 @@
 import logging
 
-from sqlalchemy import Column, String, Enum, Boolean, ForeignKey
+from sqlalchemy import (
+    Column,
+    DateTime,
+    String,
+    Enum,
+    Boolean,
+    ForeignKey,
+    Index,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import BaseModelDB
 from app.schemas.user_profile.users import UserRole, Gender
@@ -21,7 +30,7 @@ class Users(BaseModelDB):
             deleted.
         first_name (str): First name of the user.
         last_name (str): Last name of the user.
-        email (str): Unique email for authentication.
+        email (str): Email address.
         phone_number (str): Optional phone number.
         home_address (str): Home address.
         password (str): Hashed password.
@@ -32,11 +41,28 @@ class Users(BaseModelDB):
     """
 
     __tablename__ = "users"
-    __table_args__ = {"schema": "core"}
+    __table_args__ = (
+        Index(
+            "uq_users_active_email_estate",
+            "email",
+            "estate_id",
+            unique=True,
+            postgresql_where=text("status = TRUE AND is_deleted = FALSE"),
+        ),
+        Index(
+            "uq_users_active_email_no_estate",
+            "email",
+            unique=True,
+            postgresql_where=text(
+                "estate_id IS NULL AND status = TRUE AND is_deleted = FALSE"
+            ),
+        ),
+        {"schema": "core"},
+    )
 
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
-    email = Column(String, unique=True, nullable=False)
+    email = Column(String, nullable=False)
     phone_number = Column(String, nullable=True)
     home_address = Column(String, nullable=False)
     password = Column(String, nullable=False)
@@ -56,3 +82,12 @@ class Users(BaseModelDB):
     )
     status = Column(Boolean, default=False)
     tos_accepted_version = Column(String, nullable=True)
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=True)
+    last_2fa_verified_at = Column(DateTime(timezone=True), nullable=True)
+    deactivated_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.users.id"),
+        nullable=True,
+    )
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)

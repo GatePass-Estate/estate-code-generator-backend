@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "gatepass-rbac"
+version = "0.1.0"
+description = "Shared RBAC and membership checks for GatePass services"
+authors = ["GatePass"]
+packages = [{ include = "gatepass_rbac" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = ">=0.115.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,96 @@
+"""Application settings loaded from environment / .env.localdocker."""
+
+import os
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+_FRONTEND_URLS = {
+    "dev": "http://localhost:8081",
+    "staging": "https://staging.gatepassng.com",
+    "production": "https://app.gatepassng.com",
+}
+
+
+class Settings(BaseSettings):
+    """Runtime configuration for the revenue service."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env.localdocker", extra="ignore"
+    )
+
+    APP_NAME: str = "revenue-service"
+    APP_VERSION: str = "0.0.1"
+    APP_DESCRIPTION: str = "Revenue Service for GatePass"
+    APP_ENV: str = _APP_ENV
+    ENV: str = os.getenv("ENV", "local")
+
+    DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL", "")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
+
+    RENEWAL_GRACE_PERIOD_DAYS: int = int(
+        os.getenv("RENEWAL_GRACE_PERIOD_DAYS", "7")
+    )
+    PRE_EXPIRY_WARNING_DAYS: int = int(
+        os.getenv("PRE_EXPIRY_WARNING_DAYS", "1")
+    )
+
+    # Bounded retries for grant sync + compensation across db-service calls.
+    REVENUE_TRANSIENT_RETRY_ATTEMPTS: int = int(
+        os.getenv("REVENUE_TRANSIENT_RETRY_ATTEMPTS", "3")
+    )
+    REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS: float = float(
+        os.getenv("REVENUE_TRANSIENT_RETRY_BASE_DELAY_SECONDS", "0.2")
+    )
+
+    # Charge retry schedule: comma-separated hours from initial failure.
+    # Default [1, 24, 72, 144] = 1h, 1d, 3d, 6d — fits within 7-day grace.
+    CHARGE_RETRY_INTERVALS_HOURS: str = os.getenv(
+        "CHARGE_RETRY_INTERVALS_HOURS", "1,24,72,144"
+    )
+
+    PAYSTACK_SECRET_KEY: str = os.getenv("PAYSTACK_SECRET_KEY", "")
+    PAYSTACK_PUBLIC_KEY: str = os.getenv("PAYSTACK_PUBLIC_KEY", "")
+    PAYSTACK_BASE_URL: str = os.getenv(
+        "PAYSTACK_BASE_URL", "https://api.paystack.co"
+    )
+    PAYSTACK_TIMEOUT_SECONDS: float = float(
+        os.getenv("PAYSTACK_TIMEOUT_SECONDS", "30.0")
+    )
+    PAYSTACK_CALLBACK_URL: str = os.getenv(
+        "PAYSTACK_CALLBACK_URL",
+        f"{_FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS['dev'])}/payment/callback",
+    )
+
+    CHECKOUT_TOKEN_EXPIRY_SECONDS: int = int(
+        os.getenv("CHECKOUT_TOKEN_EXPIRY_SECONDS", "7200")
+    )
+
+    # Pending checkout sessions older than this are treated as expired
+    # (default 1 hour).  Used for sessions where money may be moving
+    # (Paystack status ongoing/processing/queued).
+    CHECKOUT_SESSION_TTL_SECONDS: int = int(
+        os.getenv("CHECKOUT_SESSION_TTL_SECONDS", "3600")
+    )
+
+    # Shorter TTL for idle sessions where no payment attempt was made
+    # (Paystack status pending/abandoned) or verify failed.  Default
+    # 5 minutes — long enough for slow redirects, short enough that
+    # users aren't stuck after closing the popup.
+    CHECKOUT_IDLE_TTL_SECONDS: int = int(
+        os.getenv("CHECKOUT_IDLE_TTL_SECONDS", "300")
+    )
+
+    # Applied to feature_unit_price rows (except VAT) before quote math.
+    ESTATE_TYPE_HOUSING_MULTIPLIER: float = float(
+        os.getenv("ESTATE_TYPE_HOUSING_MULTIPLIER", "1.0")
+    )
+    ESTATE_TYPE_CORPORATE_MULTIPLIER: float = float(
+        os.getenv("ESTATE_TYPE_CORPORATE_MULTIPLIER", "2.0")
+    )
+
+
+settings = Settings()

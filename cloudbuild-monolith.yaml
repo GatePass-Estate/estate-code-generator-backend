@@ -1,0 +1,93 @@
+steps:
+  # ── Pull merged env file from Secret Manager ──
+  - id: fetch-secrets
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        mkdir -p infra/cloudrun-env
+        gcloud secrets versions access latest --secret="gatepass-monolith-env" --project=${_PROJECT_ID} > infra/cloudrun-env/gatepass-monolith.yaml
+        echo "Fetched gatepass-monolith-env"
+
+  # ── Build monolith image ──
+  - id: build-monolith
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - infra/monolith/Dockerfile
+      - --platform
+      - linux/amd64
+      - -t
+      - ${_REGISTRY}/gatepass-monolith:${SHORT_SHA}
+      - .
+    waitFor: ['-']
+
+  # ── Push image ──
+  - id: push-monolith
+    name: gcr.io/cloud-builders/docker
+    args: [push, '${_REGISTRY}/gatepass-monolith:${SHORT_SHA}']
+    waitFor: [build-monolith]
+
+  # ── Run database migrations ──
+  - id: migrate-db
+    name: '${_REGISTRY}/gatepass-monolith:${SHORT_SHA}'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # Download and start Cloud SQL Auth Proxy
+        curl -so /tmp/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.3/cloud-sql-proxy.linux.amd64
+        chmod +x /tmp/cloud-sql-proxy
+        /tmp/cloud-sql-proxy ${_PROJECT_ID}:${_REGION}:gatepass-db --port=5432 &
+        PROXY_PID=$$!
+        sleep 3
+
+        # Parse DB credentials from fetched env file
+        export POSTGRES_USER=$(grep '^POSTGRES_USER:' /workspace/infra/cloudrun-env/gatepass-monolith.yaml | sed 's/^POSTGRES_USER: *"//;s/"$$//')
+        export POSTGRES_PASSWORD=$(grep '^POSTGRES_PASSWORD:' /workspace/infra/cloudrun-env/gatepass-monolith.yaml | sed 's/^POSTGRES_PASSWORD: *"//;s/"$$//')
+        export POSTGRES_DB=$(grep '^POSTGRES_DB:' /workspace/infra/cloudrun-env/gatepass-monolith.yaml | sed 's/^POSTGRES_DB: *"//;s/"$$//')
+        export DB_HOST=127.0.0.1
+        export DB_PORT=5432
+
+        # Run migrations from the db-service directory
+        cd /src/db-service
+        alembic upgrade head
+
+        # Cleanup
+        kill $$PROXY_PID
+    waitFor: [push-monolith, fetch-secrets]
+
+  # ── Deploy monolith to Cloud Run ──
+  - id: deploy-monolith
+    name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - gatepass-monolith
+      - --image=${_REGISTRY}/gatepass-monolith:${SHORT_SHA}
+      - --region=${_REGION}
+      - --env-vars-file=infra/cloudrun-env/gatepass-monolith.yaml
+      - --min-instances=1
+      - --max-instances=5
+      - --memory=2Gi
+      - --cpu=2
+      - --port=8080
+      - --timeout=300
+      - --no-cpu-throttling
+      - --allow-unauthenticated
+      - --add-cloudsql-instances=${_PROJECT_ID}:${_REGION}:gatepass-db
+      - --service-account=db-service-sa@${_PROJECT_ID}.iam.gserviceaccount.com
+      - --quiet
+    waitFor: [migrate-db]
+
+substitutions:
+  _REGION: europe-west1
+  _PROJECT_ID: gatepass-6d009
+  _REGISTRY: europe-west1-docker.pkg.dev/gatepass-6d009/gatepass-repo
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

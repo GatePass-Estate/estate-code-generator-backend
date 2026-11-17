@@ -21,6 +21,8 @@ class VisitorLog(BaseModelDB):
         is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
             deleted.
         user_id (UUID): Reference to the visited resident.
+        estate_id (UUID): Reference to the estate.
+        resident_fullname (str): Full name of the visited resident.
         visitor_fullname (str): Full name of the visitor.
         relationship_with_resident (Relationship): Relation: family, partner,
             friend, delivery, taxi, technician
@@ -36,6 +38,15 @@ class VisitorLog(BaseModelDB):
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("core.users.id"),
+        nullable=False,
+    )
+    estate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("core.estates.id"),
+        nullable=False,
+    )
+    resident_fullname = Column(
+        type_=String,
         nullable=False,
     )
     visitor_fullname = Column(

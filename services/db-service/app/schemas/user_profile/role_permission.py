@@ -61,6 +61,30 @@ class RolePermissionBase(BaseModel):
     can_add_household_member: bool = Field(
         ..., description="Can add household member"
     )
+    can_view_other_user_documents: bool = Field(
+        ..., description="May view other users' documents"
+    )
+    can_view_other_user_documents_in_other_estate: bool = Field(
+        ..., description="May view documents across estates"
+    )
+    can_download_other_user_documents: bool = Field(
+        ..., description="May download other users' documents"
+    )
+    can_download_other_user_documents_in_other_estate: bool = Field(
+        ..., description="May download documents across estates"
+    )
+    can_view_other_user_logs: bool = Field(
+        ..., description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: bool = Field(
+        ..., description="May view logs across estates"
+    )
+    can_deactivate_user: bool = Field(
+        ..., description="Can force-close a user account"
+    )
+    can_create_broadcast: bool = Field(
+        ..., description="Can create and send broadcasts"
+    )
 
     model_config = model_config
 
@@ -138,6 +162,30 @@ class UpdateRequest(BaseModel):
     )
     can_add_household_member: bool | None = Field(
         default=None, description="Can add household member"
+    )
+    can_view_other_user_documents: bool | None = Field(
+        default=None, description="May view other users' documents"
+    )
+    can_view_other_user_documents_in_other_estate: bool | None = Field(
+        default=None, description="May view documents across estates"
+    )
+    can_download_other_user_documents: bool | None = Field(
+        default=None, description="May download other users' documents"
+    )
+    can_download_other_user_documents_in_other_estate: bool | None = Field(
+        default=None, description="May download documents across estates"
+    )
+    can_view_other_user_logs: bool | None = Field(
+        default=None, description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: bool | None = Field(
+        default=None, description="May view logs across estates"
+    )
+    can_deactivate_user: bool | None = Field(
+        default=None, description="Can force-close a user account"
+    )
+    can_create_broadcast: bool | None = Field(
+        default=None, description="Can create and send broadcasts"
     )
 
     model_config = model_config
@@ -221,6 +269,30 @@ class SearchRequest(BaseSearchRequest):
     )
     can_add_household_member: Optional[bool] = Field(
         ..., description="Can add household member"
+    )
+    can_view_other_user_documents: Optional[bool] = Field(
+        default=None, description="May view other users' documents"
+    )
+    can_view_other_user_documents_in_other_estate: Optional[bool] = Field(
+        default=None, description="May view documents across estates"
+    )
+    can_download_other_user_documents: Optional[bool] = Field(
+        default=None, description="May download other users' documents"
+    )
+    can_download_other_user_documents_in_other_estate: Optional[bool] = Field(
+        default=None, description="May download documents across estates"
+    )
+    can_view_other_user_logs: Optional[bool] = Field(
+        default=None, description="May view other users' access/visitor logs"
+    )
+    can_view_other_user_logs_in_other_estate: Optional[bool] = Field(
+        default=None, description="May view logs across estates"
+    )
+    can_deactivate_user: Optional[bool] = Field(
+        default=None, description="Can force-close a user account"
+    )
+    can_create_broadcast: Optional[bool] = Field(
+        default=None, description="Can create and send broadcasts"
     )
 
 

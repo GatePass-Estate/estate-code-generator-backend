@@ -16,7 +16,8 @@ class AsyncRedisClient:
 
     async def init(self) -> None:
         self._client = redis.from_url(
-            settings.REDIS_URL, decode_responses=True
+            settings.REDIS_URL,
+            decode_responses=True,
         )
 
     async def close(self) -> None:

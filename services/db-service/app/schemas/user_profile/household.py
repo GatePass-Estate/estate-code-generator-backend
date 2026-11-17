@@ -28,8 +28,8 @@ class HouseholdBase(BaseModel):
 
     Attributes:
         estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        name (str): Display name of the household.
+        head_user_id (UUID): Optional head/lead of the household.
     """
 
     estate_id: UUID4 = Field(..., description="Estate the household is in")
@@ -38,33 +38,33 @@ class HouseholdBase(BaseModel):
     def serialize_estate_id(self, value: UUID4) -> str:
         return str(value)
 
-    primary_resident_id: UUID4 = Field(
-        ..., description="Lead resident in household"
+    name: str = Field(..., description="Display name of the household")
+
+    head_user_id: Optional[UUID4] = Field(
+        default=None, description="Head/lead of the household"
     )
 
-    @field_serializer("primary_resident_id")
-    def serialize_primary_resident_id(self, value: UUID4) -> str:
-        return str(value)
-
-    max_members: int = Field(..., description="Max allowed residents")
+    @field_serializer("head_user_id")
+    def serialize_head_user_id(self, value: Optional[UUID4]) -> Optional[str]:
+        return str(value) if value else None
 
     model_config = model_config
 
 
 class CreateRequest(HouseholdBase):
     """
-    Base request model to CREATE an household record.
+    Request model to CREATE a household record.
 
     Attributes:
         estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        name (str): Display name of the household.
+        head_user_id (UUID): Optional head/lead of the household.
     """
 
 
 class CreateResponse(BaseModel):
     """
-    Base response model to CREATE a request.
+    Response model after CREATE.
 
     Attributes:
         id (UUID): Unique identifier for the created household.
@@ -85,47 +85,34 @@ class CreateResponse(BaseModel):
 
 class UpdateRequest(BaseModel):
     """
-    Base request model to UPDATE a record. All fields are optional and
-    only the fields that need to be updated should be provided.
+    Request model to UPDATE a household record. All fields are optional;
+    only supplied fields are updated.
 
     Attributes:
-        id (UUID): Unique identifier.
-        created_at (DateTime): Created timestamp.
-        updated_at (DateTime): Updated timestamp.
-        estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        name (str): Display name of the household.
+        head_user_id (UUID): Head/lead of the household (None clears it).
     """
 
-    estate_id: UUID4 | None = Field(
-        default=None, description="Estate the household is in"
+    name: Optional[str] = Field(
+        default=None, description="Display name of the household"
+    )
+    head_user_id: Optional[UUID4] = Field(
+        default=None, description="Head/lead of the household"
     )
 
-    @field_serializer("estate_id")
-    def serialize_estate_id(self, value: UUID4) -> str:
-        return str(value)
-
-    primary_resident_id: UUID4 | None = Field(
-        default=None, description="Lead resident in household"
-    )
-
-    @field_serializer("primary_resident_id")
-    def serialize_primary_resident_id(self, value: UUID4) -> str:
-        return str(value)
-
-    max_members: int | None = Field(
-        default=None, description="Max allowed residents"
-    )
+    @field_serializer("head_user_id")
+    def serialize_head_user_id(self, value: Optional[UUID4]) -> Optional[str]:
+        return str(value) if value else None
 
     model_config = model_config
 
 
 class UpdateResponse(CreateResponse):
     """
-    Base response model to UPDATE a record by id.
+    Response model after UPDATE.
 
     Attributes:
-        id (UUID): Unique identifier for the updated user.
+        id (UUID): Unique identifier for the updated household.
         created_at (DateTime): Creation timestamp.
         updated_at (DateTime): Last update timestamp.
     """
@@ -135,11 +122,11 @@ class UpdateResponse(CreateResponse):
 
 class DeleteResponse(BaseModel):
     """
-    Base response model to DELETE a record by id.
+    Response model after DELETE (soft delete).
 
     Attributes:
-        is_deleted: Whether the user was deleted (soft delete).
-        deleted_at: UTC Time when the user was deleted.
+        is_deleted: Whether the household was deleted.
+        deleted_at: UTC timestamp of deletion.
     """
 
     is_deleted: bool = Field(
@@ -151,52 +138,50 @@ class DeleteResponse(BaseModel):
 
 class GetResponse(SharedModel, HouseholdBase):
     """
-    Base response model to GET a record by id.
+    Response model for GET by id.
 
     Attributes:
         estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        name (str): Display name of the household.
+        head_user_id (UUID): Optional head/lead of the household.
     """
 
 
 class SearchRequest(BaseSearchRequest):
     """
-    Request model to GET a list of items that are not archived and filtered
-    according to the provided contraints. Items are returned in a chronological
-    order based on the creation timestamp.
+    Request model to search households with optional filters.
 
     Attributes:
-        from_date: Filter by creation date (from)
-        to_date: Filter by creation date (to)
-        page: Page number for pagination
-        limit: Number of items per page
-        estate_id (UUID): Estate the household is in.
-        primary_resident_id (UUID): Lead resident in household.
-        max_members (int): Max allowed residents.
+        from_date: Filter by creation date (from).
+        to_date: Filter by creation date (to).
+        page: Page number for pagination.
+        limit: Number of items per page.
+        estate_id (UUID): Filter by estate.
+        name (str): Substring match on household name.
+        head_user_id (UUID): Filter by head user.
     """
 
     estate_id: Optional[UUID4] = Field(
-        ..., description="Estate the household is in"
+        default=None, description="Estate the household is in"
     )
-    primary_resident_id: Optional[UUID4] = Field(
-        ..., description="Lead resident in household"
+    name: Optional[str] = Field(
+        default=None,
+        description="Substring match on household name",
     )
-    max_members: Optional[int] = Field(
-        ..., description="Max allowed residents"
+    head_user_id: Optional[UUID4] = Field(
+        default=None, description="Head/lead of the household"
     )
 
 
 class ListResponse(BaseListResponse):
     """
-    Response model to GET the list of all items that are not archived. Items
-    are returned in a chronological order based on the creation timestamp.
+    Response model for paginated household lists.
 
     Attributes:
-        total: Total number of users.
+        total: Total number of households.
         page: Current page number.
         limit: Number of items per page.
-        items: List of user records.
+        items: List of household records.
     """
 
     items: List[GetResponse] = Field(

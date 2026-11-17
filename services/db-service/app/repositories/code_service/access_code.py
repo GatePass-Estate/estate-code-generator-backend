@@ -3,17 +3,22 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from pydantic import UUID4
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import AccessCode as TableModel
+from app.models import ResidentLog as ResidentLogModel
+from app.models import Users as UsersModel
 from app.schemas.code_service.access_code import (
     CreateRequest,
     CreateResponse,
     DeleteResponse,
     GetResponse,
+    HistoryItemResponse,
+    HistoryListResponse,
+    HistorySearchRequest,
     ListResponse,
     SearchRequest,
     UpdateRequest,
@@ -358,28 +363,26 @@ class AccessCodeRepository:
             raise DatabaseError(message) from e
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        include_deleted: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter access-code rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-            page: The page number to retrieve.
-            limit: The max number of items per page.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
+        When ``include_deleted`` is False (the default), soft-deleted rows are
+        excluded. ``ascending`` controls ``created_at`` sort direction. The
+        code-service BFF uses ``include_deleted=True`` with ``ascending=True``
+        and ``hashed_code`` to fetch the genesis row for code-level resident
+        history.
         """
-        # Create a query to get all records from the database.
-        query = select(TableModel).where(
-            TableModel.is_deleted == False  # noqa E712
-        )
+        query = select(TableModel)
+        if not include_deleted:
+            query = query.where(TableModel.is_deleted == False)  # noqa E712
 
         # Apply filters
         for key, info in request.model_fields.items():
@@ -404,8 +407,11 @@ class AccessCodeRepository:
                 else:
                     query = query.where(column == field_value)
 
-        # Order the records by the created_at timestamp in descending order.
-        order_by = (TableModel.created_at.desc(),)
+        order_by = (
+            (TableModel.created_at.asc(),)
+            if ascending
+            else (TableModel.created_at.desc(),)
+        )
         try:
             return await self._list(
                 query=query,
@@ -415,5 +421,133 @@ class AccessCodeRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    @staticmethod
+    def _apply_history_filters(
+        query: Select,
+        request: HistorySearchRequest,
+    ) -> Select:
+        if request.user_id is not None:
+            query = query.where(TableModel.user_id == request.user_id)
+        if request.estate_id is not None:
+            query = query.where(TableModel.estate_id == request.estate_id)
+        if request.from_date is not None:
+            query = query.where(TableModel.created_at >= request.from_date)
+        if request.to_date is not None:
+            query = query.where(TableModel.created_at <= request.to_date)
+        return query
+
+    async def history_search(
+        self,
+        request: HistorySearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        *,
+        ascending: bool = False,
+    ) -> HistoryListResponse:
+        """
+        First-level resident access-code history in one query.
+
+        Reads ``accesscode`` rows (each row is already unique), joins
+        ``users`` for ``full_name``, and left-correlates ``residentlog`` for
+        ``usage_count`` plus the latest validation metadata. ``code_deleted``
+        is true when the row is soft-deleted or ``valid_until`` has passed.
+        """
+        log_match = (
+            func.lower(ResidentLogModel.hashed_code)
+            == func.lower(TableModel.hashed_code),
+            ResidentLogModel.is_deleted == False,  # noqa: E712
+        )
+        usage_count = (
+            select(func.count(ResidentLogModel.id))
+            .where(*log_match)
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        latest_security_id = (
+            select(ResidentLogModel.security_id)
+            .where(*log_match)
+            .order_by(ResidentLogModel.access_time.desc())
+            .limit(1)
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        latest_access_time = (
+            select(ResidentLogModel.access_time)
+            .where(*log_match)
+            .order_by(ResidentLogModel.access_time.desc())
+            .limit(1)
+            .correlate(TableModel)
+            .scalar_subquery()
+        )
+        full_name = func.trim(
+            func.concat(
+                func.coalesce(UsersModel.first_name, ""),
+                " ",
+                func.coalesce(UsersModel.last_name, ""),
+            )
+        )
+
+        filtered = self._apply_history_filters(
+            select(TableModel).join(
+                UsersModel, TableModel.user_id == UsersModel.id
+            ),
+            request,
+        )
+        count_query = select(func.count()).select_from(filtered.subquery())
+        order_column = (
+            TableModel.created_at.asc()
+            if ascending
+            else TableModel.created_at.desc()
+        )
+        records_query = (
+            self._apply_history_filters(
+                select(
+                    TableModel.id,
+                    TableModel.created_at,
+                    TableModel.updated_at,
+                    TableModel.user_id,
+                    TableModel.estate_id,
+                    TableModel.hashed_code,
+                    or_(
+                        TableModel.is_deleted.is_(True),
+                        TableModel.valid_until < datetime.now(timezone.utc),
+                    ).label("code_deleted"),
+                    full_name.label("full_name"),
+                    func.coalesce(usage_count, 0).label("usage_count"),
+                    func.coalesce(
+                        latest_security_id, TableModel.user_id
+                    ).label("security_id"),
+                    func.coalesce(
+                        latest_access_time, TableModel.created_at
+                    ).label("access_time"),
+                ).join(UsersModel, TableModel.user_id == UsersModel.id),
+                request,
+            )
+            .order_by(order_column)
+            .limit(limit)
+            .offset((page - 1) * limit)
+        )
+        try:
+            total = await self.session.scalar(count_query)
+            rows = (await self.session.execute(records_query)).all()
+            items = [
+                HistoryItemResponse.model_validate(dict(row._mapping))
+                for row in rows
+            ]
+            return HistoryListResponse(
+                items=items,
+                total=total,
+                page=page,
+                limit=limit,
+            )
+        except SQLAlchemyError as e:
+            message = "Database error in retrieving access-code history"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = "Unexpected error in retrieving access-code history"
             logger.exception(message)
             raise DatabaseError(message) from e

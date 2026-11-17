@@ -13,6 +13,9 @@ _DEFAULT_SCOPES: dict[AnomalyType, tuple[AnalysisScope, ...]] = {
     AnomalyType.RESIDENT: tuple(
         s for s in AnalysisScope if s != AnalysisScope.VISITOR
     ),
+    # Temporal-only mode; merges both streams into one series (see the temporal
+    # orchestrator) rather than running per-scope feature engineering.
+    AnomalyType.COMBINED: tuple(AnalysisScope),
 }
 
 

@@ -178,12 +178,19 @@ async def search(
     to_date: datetime.datetime | None = None,
     page: int = 1,
     limit: int = 10,
+    unique: bool = False,
+    ascending: bool = False,
     service: Service = Depends(get_service),
 ) -> ListResponse:
     """
-    Searches for items constrained to the criteria given.
-    It searches for all the items matching the criteria given and are not
-    archived. The list is sorted by the created_at field in descending.
+    Search resident-log rows matching the given criteria.
+
+    Passing ``unique=true`` collapses to one row per ``hashed_code`` with
+    ``usage_count`` and ``code_deleted`` (from the earliest ``accesscode`` row
+    per hash: soft-deleted or past ``valid_until``). The code-service BFF uses
+    ``accesscode/history/search`` for first-level resident history; this
+    endpoint remains for second-level validation lists and unique metadata
+    enrichment. Default order is newest first.
 
     Arguments:
         from_date: The creation date (from).
@@ -195,16 +202,24 @@ async def search(
         hashed_code: Resident's generated access code.
         security_id: Security personnel who validated the access.
         access_time: Timestamp of resident access validation.
+        unique: Collapse to one entry per unique access code.
+        ascending: Order ascending by time when True.
 
     Returns:
-        A chronologically sorted LIST model containing a list of items.
+        A paginated list sorted by ``created_at``.
 
     Raises:
         HTTPException: If there is an internal server error
     """
     try:
         request = SearchRequest(**vars())
-        return await service.search(request=request, page=page, limit=limit)
+        return await service.search(
+            request=request,
+            page=page,
+            limit=limit,
+            unique=unique,
+            ascending=ascending,
+        )
     except Exception as e:
         logger.exception(
             "An unexpected error happened while searching for matches"

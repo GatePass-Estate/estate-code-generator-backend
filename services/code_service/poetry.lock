@@ -261,6 +261,80 @@ all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>
 standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "jinja2 (>=3.1.5)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
+name = "gatepass-auth"
+version = "0.1.0"
+description = "Shared FastAPI authentication dependency for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+pyjwt = ">=2.9.0"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_auth"
+
+[[package]]
+name = "gatepass-entitlement"
+version = "0.1.0"
+description = "Shared revenue-service entitlement checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+pydantic-settings = ">=2.6.1"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_entitlement"
+
+[[package]]
+name = "gatepass-notify"
+version = "0.1.0"
+description = "Shared notification helper for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+httpx = ">=0.27.2"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_notify"
+
+[[package]]
+name = "gatepass-rbac"
+version = "0.1.0"
+description = "Shared RBAC and membership checks for GatePass services"
+optional = false
+python-versions = "^3.11"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+fastapi = ">=0.115.4"
+
+[package.source]
+type = "directory"
+url = "../../shared/gatepass_rbac"
+
+[[package]]
 name = "greenlet"
 version = "3.1.1"
 description = "Lightweight in-process concurrent programming"
@@ -1317,4 +1391,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "19084f6d8dbed23782bc7783159deb47838effd6971641ea4999983bd7807743"
+content-hash = "d75992df62d0486e2ba6b30c3b18b6b318830b4a8f3c118baca9836d9fbb706b"

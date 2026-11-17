@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
 
@@ -12,7 +12,8 @@ from app.schemas.base import (
 )
 
 __all__ = [
-    "Audience",
+    "BroadcastCategory",
+    "BroadcastPriority",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -24,18 +25,20 @@ __all__ = [
 ]
 
 
-class Audience(str, Enum):
-    """
-    Audience for the broadcast
-    """
+AudienceRole = Literal[
+    "resident", "security", "admin", "primary_admin", "root"
+]
 
-    ALL = "all"
-    ROOT = "root"
-    PRIMARY_ADMIN = "primary_admin"
-    ADMIN = "admin"
-    RESIDENT = "resident"
-    SECURITY = "security"
-    GUEST = "guest"
+
+class BroadcastCategory(str, Enum):
+    BROADCAST = "BROADCAST"
+    AD = "AD"
+
+
+class BroadcastPriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
 
 
 class BroadcastBase(BaseModel):
@@ -43,11 +46,13 @@ class BroadcastBase(BaseModel):
     Base broadcast model containing common fields.
 
     Attributes:
-        estate_id (UUID): Broadcast estate.
+        estate_id (UUID): Broadcast estate (NULL for root broadcasts).
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
         message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        audience (List[str]): Role-based audience (e.g. ["resident"]).
+        priority (BroadcastPriority): Delivery priority — LOW, MEDIUM, or HIGH.
+        sender_name (str): Optional custom sender display name.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -59,7 +64,18 @@ class BroadcastBase(BaseModel):
     title: str = Field(..., description="Broadcast title")
     message: str = Field(..., description="Full Broadcast message")
 
-    audience: Audience = Field(..., description="Audience for the broadcast")
+    audience: List[AudienceRole] = Field(
+        ..., description="Role-based audience list"
+    )
+    category: BroadcastCategory = Field(
+        BroadcastCategory.BROADCAST, description="Broadcast category"
+    )
+    priority: BroadcastPriority = Field(
+        BroadcastPriority.LOW, description="Delivery priority"
+    )
+    sender_name: str | None = Field(
+        None, description="Optional custom sender display name"
+    )
     attachment_url: str | None = Field(
         None, description="Optional URL of the attachment"
     )
@@ -88,7 +104,9 @@ class CreateRequest(BroadcastBase):
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
         message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        audience (List[str]): Role-based audience list.
+        priority (str): Delivery priority — LOW, MEDIUM, or HIGH.
+        sender_name (str): Optional custom sender display name.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -122,14 +140,13 @@ class UpdateRequest(BaseModel):
     only the fields that need to be updated should be provided.
 
     Attributes:
-        id (UUID): Unique identifier for each broadcast.
-        created_at (DateTime): Created timestamp.
-        updated_at (DateTime): Updated timestamp.
         estate_id (UUID): Broadcast estate.
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
         message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        audience (List[str]): Role-based audience list.
+        priority (BroadcastPriority): Delivery priority.
+        sender_name (str): Optional custom sender display name.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -147,8 +164,17 @@ class UpdateRequest(BaseModel):
         default=None, description="Full Broadcast message"
     )
 
-    audience: Audience | None = Field(
-        default=None, description="Audience for the broadcast"
+    audience: List[AudienceRole] | None = Field(
+        default=None, description="Role-based audience list"
+    )
+    category: BroadcastCategory | None = Field(
+        default=None, description="Broadcast category"
+    )
+    priority: BroadcastPriority | None = Field(
+        default=None, description="Delivery priority"
+    )
+    sender_name: str | None = Field(
+        default=None, description="Optional custom sender display name"
     )
     attachment_url: str | None = Field(
         default=None, description="Optional URL of the attachment"
@@ -212,7 +238,7 @@ class GetResponse(SharedModel, BroadcastBase):
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
         message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        audience (List[str]): Role-based audience list.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -234,7 +260,7 @@ class SearchRequest(BaseSearchRequest):
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
         message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        audience (List[str]): Role-based audience list.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -252,8 +278,14 @@ class SearchRequest(BaseSearchRequest):
         default=None, description="Full Broadcast message"
     )
 
-    audience: Optional[Audience] = Field(
-        default=None, description="Audience for the broadcast"
+    audience: Optional[List[AudienceRole]] = Field(
+        default=None, description="Role-based audience list"
+    )
+    category: Optional[BroadcastCategory] = Field(
+        default=None, description="Broadcast category"
+    )
+    priority: Optional[BroadcastPriority] = Field(
+        default=None, description="Delivery priority"
     )
     attachment_url: Optional[str] = Field(
         default=None, description="Optional URL of the attachment"
@@ -263,6 +295,23 @@ class SearchRequest(BaseSearchRequest):
     )
     expires_at: Optional[datetime] = Field(
         default=None, description="UTC timestamp of expiration"
+    )
+    exclude_expired: Optional[bool] = Field(
+        default=None,
+        description=(
+            "When True, exclude broadcasts whose expires_at is in the past"
+        ),
+    )
+    include_global: Optional[bool] = Field(
+        default=None,
+        description=(
+            "When True, also include broadcasts with estate_id IS NULL "
+            "(platform-wide) alongside the estate_id filter"
+        ),
+    )
+    exclude_dismissed_by_user_id: Optional[UUID4] = Field(
+        default=None,
+        description=("When set, exclude broadcasts dismissed by this user"),
     )
 
 

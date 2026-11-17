@@ -1,6 +1,15 @@
 import os
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+_FRONTEND_URLS = {
+    "dev": "http://localhost:8081",
+    "staging": "https://staging.gatepassng.com",
+    "production": "https://app.gatepassng.com",
+}
 
 
 class Settings(BaseSettings):
@@ -15,24 +24,78 @@ class Settings(BaseSettings):
     APP_NAME: str = "user-profile-service Service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "user-profile-service Service for GatePass"
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     # Configuration for the RDB Database
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL")
-    BASE_URL: str = os.getenv("BASE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
-    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30)
+    )
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = int(
+        os.getenv("REFRESH_TOKEN_EXPIRE_MINUTES", 60)
+    )
+    SESSION_EXPIRE_DAYS: int = int(os.getenv("SESSION_EXPIRE_DAYS", 30))
     TOS_VERSION: str = os.getenv("TOS_VERSION", "1.0.0")
+    TOTP_ENCRYPTION_KEY: str = os.getenv("TOTP_ENCRYPTION_KEY", "")
+    # Days before 2FA is forced again regardless of device trust
+    TWO_FA_FORCE_REAUTH_DAYS: int = int(
+        os.getenv("TWO_FA_FORCE_REAUTH_DAYS", 60)
+    )
+    # Days before a trusted device token expires (fixed, not sliding)
+    TRUSTED_DEVICE_EXPIRY_DAYS: int = int(
+        os.getenv("TRUSTED_DEVICE_EXPIRY_DAYS", 90)
+    )
+    # Hours a resident must wait between admin reminders on a pending request
+    EDIT_REQUEST_REMIND_COOLDOWN_HOURS: int = int(
+        os.getenv("EDIT_REQUEST_REMIND_COOLDOWN_HOURS", 24)
+    )
 
-    # Email / SMTP configuration
-    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME", "")
-    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD", "")
-    MAIL_FROM: str = os.getenv("MAIL_FROM", "")
-    MAIL_FROM_NAME: str = os.getenv("MAIL_FROM_NAME", "GatePass")
-    MAIL_SERVER: str = os.getenv("MAIL_SERVER", "")
-    MAIL_PORT: int = int(os.getenv("MAIL_PORT", 587))
-    MAIL_SSL_TLS: bool = os.getenv("MAIL_SSL_TLS", "false").lower() == "true"
-    MAIL_STARTTLS: bool = os.getenv("MAIL_STARTTLS", "true").lower() == "true"
+    # Cache service
+    CACHE_SERVICE_URL: str = os.getenv("CACHE_SERVICE_URL", "")
+
+    # Notification service
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    SCHEDULE_CLOSE_MAX_DAYS: int = int(
+        os.getenv("SCHEDULE_CLOSE_MAX_DAYS", 30)
+    )
+    NOTIFICATION_MAX_AGE_DAYS: int = int(
+        os.getenv("NOTIFICATION_MAX_AGE_DAYS", 90)
+    )
+    NOTIFICATION_PURGE_MIN_AGE_DAYS: int = int(
+        os.getenv("NOTIFICATION_PURGE_MIN_AGE_DAYS", 90)
+    )
+    FRONTEND_BASE_URL: str = os.getenv(
+        "FRONTEND_BASE_URL",
+        _FRONTEND_URLS.get(_APP_ENV, _FRONTEND_URLS["dev"]),
+    )
+
+    # Revenue / billing entitlements
+    REVENUE_SERVICE_URL: str = os.getenv(
+        "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
+    )
+
+    # GCS user documents (profile picture, ID card)
+    GCS_PROFILE_PICTURE_MAX_BYTES: int = int(
+        os.getenv("GCS_PROFILE_PICTURE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
+    GCS_ID_CARD_MAX_BYTES: int = int(
+        os.getenv("GCS_ID_CARD_MAX_BYTES", str(10 * 1024 * 1024))
+    )
+
+    @model_validator(mode="after")
+    def _validate_token_expiry(self) -> "Settings":
+        if (
+            self.REFRESH_TOKEN_EXPIRE_MINUTES
+            <= self.ACCESS_TOKEN_EXPIRE_MINUTES
+        ):
+            raise ValueError(
+                "REFRESH_TOKEN_EXPIRE_MINUTES must be greater than "
+                "ACCESS_TOKEN_EXPIRE_MINUTES"
+            )
+        return self
 
 
 settings = Settings()

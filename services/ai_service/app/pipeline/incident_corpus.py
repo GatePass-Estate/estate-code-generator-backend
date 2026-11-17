@@ -2,7 +2,7 @@
 Concatenate incident fields into a single document for vectorisation.
 
 Each row becomes one bag-of-words input to TF-IDF (title, enum categories,
-custom category, narrative). See ``INCIDENT_REPORTS.md`` § Document construction.
+custom category, narrative). See ``explainer_docs/INCIDENT_REPORT_SUMMARY_EXPLAINER.md`` (Document construction).
 """
 
 from __future__ import annotations

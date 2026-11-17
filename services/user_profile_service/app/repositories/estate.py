@@ -71,11 +71,13 @@ class EstateRepository:
             id=response["id"],
             name=estate_data["name"],
             location=estate_data["location"],
+            city=estate_data.get("city"),
             lga=estate_data["lga"],
             state=estate_data["state"],
             country=estate_data["country"],
             postal_code=estate_data["postal_code"],
             primary_admin_id=estate_data.get("primary_admin_id"),
+            estate_type=estate_data.get("estate_type"),
             created_at=response["created_at"],
         )
 
@@ -105,6 +107,8 @@ class EstateRepository:
             payload["name"] = estate_data.name
         if estate_data.location is not None:
             payload["location"] = estate_data.location
+        if estate_data.city is not None:
+            payload["city"] = estate_data.city
         if estate_data.lga is not None:
             payload["lga"] = estate_data.lga
         if estate_data.state is not None:
@@ -115,6 +119,8 @@ class EstateRepository:
             payload["postal_code"] = estate_data.postal_code
         if estate_data.primary_admin_id is not None:
             payload["primary_admin_id"] = str(estate_data.primary_admin_id)
+        if estate_data.estate_type is not None:
+            payload["estate_type"] = estate_data.estate_type.value
 
         url = f"{self.estates_endpoint}/{estate_id}"
 
@@ -132,6 +138,24 @@ class EstateRepository:
             created_at=response["created_at"],
             updated_at=response["updated_at"],
         )
+
+    async def patch_estate(self, estate_id: str, data: dict) -> None:
+        """
+        Patches an estate with the given raw data dict.
+        Used for nullable field updates (e.g. clearing primary_admin_id,
+        setting is_active, deactivated_by, deactivated_at).
+
+        Args:
+            estate_id: The estate ID to update.
+            data: Dict of fields to update (null values clear the field).
+        """
+        url = f"{self.estates_endpoint}/{estate_id}"
+        response = await self.client.async_patch(url, json_data=data)
+        if not response:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Estate update failed for ID: {estate_id}",
+            )
 
     async def get_estate_by_id(
         self, estate_id: str
@@ -156,14 +180,17 @@ class EstateRepository:
             id=response["id"],
             name=response["name"],
             location=response["location"],
+            city=response.get("city"),
             lga=response.get("lga"),
             state=response.get("state"),
             country=response.get("country"),
             postal_code=response.get("postal_code"),
             primary_admin_id=response.get("primary_admin_id"),
+            estate_type=response.get("estate_type"),
             created_at=response["created_at"],
             updated_at=response["updated_at"],
             is_deleted=response["is_deleted"],
+            is_active=response.get("is_active", True),
         )
 
     async def delete_estate(self, estate_id: str) -> DeleteEstateResponse:
@@ -218,10 +245,14 @@ class EstateRepository:
         """
         # Build query parameters
         params = {}
+        if request.search_query:
+            params["search_query"] = request.search_query
         if request.name:
             params["name"] = request.name
         if request.location:
             params["location"] = request.location
+        if request.city:
+            params["city"] = request.city
         if request.lga:
             params["lga"] = request.lga
         if request.state:
@@ -232,6 +263,10 @@ class EstateRepository:
             params["postal_code"] = request.postal_code
         if request.primary_admin_id:
             params["primary_admin_id"] = request.primary_admin_id
+        if request.estate_type:
+            params["estate_type"] = request.estate_type.value
+        if request.is_active is not None:
+            params["is_active"] = request.is_active
         if request.from_date:
             params["from_date"] = request.from_date
         if request.to_date:
@@ -263,14 +298,17 @@ class EstateRepository:
                 id=item["id"],
                 name=item["name"],
                 location=item["location"],
+                city=item.get("city"),
                 lga=item.get("lga"),
                 state=item.get("state"),
                 country=item.get("country"),
                 postal_code=item.get("postal_code"),
                 primary_admin_id=item.get("primary_admin_id"),
+                estate_type=item.get("estate_type"),
                 created_at=item["created_at"],
                 updated_at=item.get("updated_at"),
                 is_deleted=item.get("is_deleted", False),
+                is_active=item.get("is_active", True),
             )
             for item in response.get("items", [])
         ]
@@ -297,7 +335,9 @@ class EstateRepository:
             Dict containing estate list with pagination info
             or None if not found.
         """
-        return await self.search_estates(page=page, limit=limit)
+        return await self.search_estates(
+            SearchEstateRequest(page=page, limit=limit)
+        )
 
     async def get_estates_by_admin(
         self, admin_id: str
@@ -311,9 +351,11 @@ class EstateRepository:
         Returns:
             List of estate dictionaries or None if not found.
         """
-        response = await self.search_estates(primary_admin_id=admin_id)
-        if response and "items" in response:
-            return response["items"]
+        response = await self.search_estates(
+            SearchEstateRequest(primary_admin_id=admin_id)
+        )
+        if response and response.items:
+            return response.items
         return []
 
     async def check_estate_exists(self, estate_id: str) -> bool:
@@ -327,6 +369,6 @@ class EstateRepository:
             True if estate exists and is not deleted, False otherwise.
         """
         estate = await self.get_estate_by_id(estate_id)
-        if estate and not estate.get("is_deleted", False):
+        if estate and not estate.is_deleted:
             return True
         return False

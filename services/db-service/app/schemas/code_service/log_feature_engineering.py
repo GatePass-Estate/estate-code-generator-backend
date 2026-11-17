@@ -66,6 +66,7 @@ class StoredFeatureRecord(BaseModel):
     resident_log_id: UUID4 | None = None
     anomaly_type: AnomalyType
     log_kind: LogKind
+    features_temporal: dict[str, Any] | None = None
     features_visitor_specific: dict[str, Any] | None = None
     features_resident_specific: dict[str, Any] | None = None
     features_security_specific: dict[str, Any] | None = None
@@ -95,6 +96,7 @@ class UpsertRequest(BaseModel):
     resident_log_id: UUID4 | None = None
     anomaly_type: AnomalyType
     log_kind: LogKind
+    features_temporal: dict[str, Any] | None = None
     features_visitor_specific: dict[str, Any] | None = None
     features_resident_specific: dict[str, Any] | None = None
     features_security_specific: dict[str, Any] | None = None
@@ -141,8 +143,12 @@ class UpsertRequest(BaseModel):
 
 
 class UpsertResponse(BaseModel):
-    """Echo the stored row id after upsert."""
+    """Echo the stored feature-log id and optional prediction-result id."""
 
     model_config = model_config
 
     id: UUID4
+    prediction_result_id: UUID4 | None = Field(
+        default=None,
+        description="Id of the upserted core.predictionresult row, if any.",
+    )

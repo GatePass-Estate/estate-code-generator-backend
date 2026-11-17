@@ -1,0 +1,47 @@
+import logging
+
+import sqlalchemy as sa
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+
+from app.models.base import BaseModelDB
+
+logger = logging.getLogger(__name__)
+
+
+class PaymentCheckoutSession(BaseModelDB):
+    """
+    Checkout intent with pricing snapshot.
+    """
+
+    __tablename__ = "payment_checkout_session"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "initiated_by_user_id",
+            "idempotency_key",
+            name="uq_checkout_user_idempotency",
+        ),
+        {"schema": "core"},
+    )
+
+    estate_id = Column(
+        UUID(as_uuid=True), ForeignKey("core.estates.id"), nullable=False
+    )
+    initiated_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("core.users.id"), nullable=True
+    )
+    idempotency_key = Column(String, nullable=False)
+    request_hash = Column(String(64), nullable=True)
+    paystack_reference = Column(String, nullable=True, unique=True)
+    status = Column(String, nullable=False, server_default="pending")
+    pricing_snapshot = Column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    amount = Column(BigInteger, nullable=False)
+    currency_code = Column(String, nullable=False)
+    country_code = Column(String, nullable=False)
+    checkout_kind = Column(String, nullable=False)
+    # "metadata" is reserved on Declarative API; map to column name metadata
+    session_metadata = Column("metadata", JSONB, nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)

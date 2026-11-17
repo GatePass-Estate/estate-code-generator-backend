@@ -9,6 +9,12 @@ ENV POETRY_VERSION=2.0.0
 
 WORKDIR /src/service
 
+# Copy the shared package so path deps resolve during poetry lock
+COPY shared/gatepass_auth /shared/gatepass_auth/
+COPY shared/gatepass_entitlement /shared/gatepass_entitlement/
+COPY shared/gatepass_rbac /shared/gatepass_rbac/
+COPY shared/gatepass_llm /shared/gatepass_llm/
+
 COPY services/ai_service/pyproject.toml services/ai_service/poetry.lock services/ai_service/README.md /src/service/
 
 RUN pip install poetry==${POETRY_VERSION} && poetry config virtualenvs.create false
@@ -21,6 +27,6 @@ COPY services/ai_service/app /src/service/app
 
 FROM base AS app
 EXPOSE 9036
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9036"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9036}"]
 
 FROM app

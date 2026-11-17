@@ -11,6 +11,9 @@ ENV POETRY_VERSION=2.0.0
 # Set the working directory in the container
 WORKDIR /src/service
 
+# Copy the shared package so path deps resolve during poetry lock
+COPY shared/gatepass_docs /shared/gatepass_docs/
+
 # Copy the pyproject.toml and lock file to the working directory
 COPY services/db-service/pyproject.toml services/db-service/poetry.lock services/db-service/README.md /src/service/
 
@@ -31,7 +34,7 @@ COPY services/db-service/alembic /src/service/alembic
 # App stage (CHANGE ME TO A MORE COMPLEX ENTRYPOINT)
 FROM base AS app
 EXPOSE 9032
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9032"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-9032}"]
 
 # App is the default stage
 FROM app

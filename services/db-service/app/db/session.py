@@ -21,8 +21,15 @@ class AsyncDBSession:
 
     async def init(self):
         echo = settings.ENV in ["local", "develop"]
+        url = settings.db_url
+        logger.info(
+            "DB target: host=%r port=%r db=%r",
+            url.host,
+            url.port,
+            url.database,
+        )
         self._engine = create_async_engine(
-            settings.DB_CONFIG,
+            url,
             echo=echo,
             future=True,
             pool_size=5,

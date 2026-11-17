@@ -1,0 +1,297 @@
+import logging
+from datetime import datetime, timezone
+
+from fastapi import HTTPException
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler
+from gatepass_entitlement import (
+    EXTENDED_HISTORICAL_RECORD_KEY,
+    resolve_retention_from_date,
+)
+from gatepass_rbac import (
+    deny_roles,
+    get_role_permissions,
+    is_root,
+    resolve_estate_log_scope,
+)
+from app.repositories.resident_log import (
+    ResidentLogRepository as Repository,
+)
+from app.schemas.resident_log import CodeHistoryListResponse, ListResponse
+
+logger = logging.getLogger(__name__)
+
+
+class ResidentLogService:
+    """
+    BFF service for resident access-log history exposed under
+    ``/codeservice/residentlog``.
+
+    Two retrieval levels are supported:
+
+    * **First level** (``/me``, ``/user``): one entry per access code from
+      ``accesscode/history/search`` (access-code ``created_at``/``updated_at``,
+      resident ``full_name`` from ``users``, plus ``usage_count`` and
+      ``code_deleted`` (soft-deleted or past ``valid_until``).
+    * **Second level** (``/me/{code}``, ``/user/{code}``): validation events
+      for a single code plus access-code lifecycle metadata on
+      :class:`CodeHistoryListResponse`.
+
+    Personal endpoints reject security accounts (in-code check). Estate-wide
+    endpoints require ``can_view_other_user_logs`` (admin/security within
+    estate; root globally). Each entry carries the resident's denormalized
+    ``full_name``.
+
+    History windows are clamped by ``extended_historical_record`` when
+    an estate_id is known. Access (no paid limit) uses the configured
+    default (14 days).
+    """
+
+    def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
+        self.ahttp_client = ahttp_client
+        self.repository = Repository(ahttp_client)
+
+    async def _resolve_estate_scope(self, requester: dict) -> str | None:
+        """
+        Authorize an estate-wide request and return the estate scope to apply.
+
+        Returns:
+            The requester's estate_id when they may only view their own estate,
+            or None when they may view all estates (root).
+
+        Raises:
+            HTTPException: 403 if the requester may not view others' logs.
+        """
+        permissions = await get_role_permissions(
+            self.ahttp_client, requester["role"]
+        )
+        return resolve_estate_log_scope(requester, permissions)
+
+    async def _apply_retention(
+        self,
+        estate_id: str | None,
+        from_date: datetime | None,
+        requester: dict,
+        auth_token: str | None = None,
+    ) -> datetime | None:
+        """Clamp from_date to entitled days, or the Access default.
+
+        Code-service history sub-gate: ``extended_historical_record``.
+        Root may omit ``estate_id`` (cross-estate). Everyone else must
+        have one so retention can be applied.
+
+        Raises:
+            HTTPException: 403 when ``estate_id`` is missing and the
+                requester is not root.
+        """
+        if not estate_id:
+            if is_root(str(requester.get("role", ""))):
+                return from_date
+            raise HTTPException(
+                status_code=403,
+                detail="Estate is required to view these logs.",
+            )
+        return await resolve_retention_from_date(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=str(estate_id),
+            service_key=EXTENDED_HISTORICAL_RECORD_KEY,
+            from_date=from_date,
+            auth_token=auth_token,
+        )
+
+    @staticmethod
+    def _reject_personal_for_security(requester: dict) -> None:
+        """
+        Block security staff from the personal (``me/``) endpoints.
+
+        Security accounts validate codes but do not own access history, so a
+        personal view is meaningless for them.
+
+        Raises:
+            HTTPException: 403 if the requester is a security account.
+        """
+        deny_roles(
+            str(requester.get("role", "")),
+            ("security",),
+            detail="Security accounts have no personal access history.",
+        )
+
+    @staticmethod
+    def _parse_timestamp(value) -> datetime | None:
+        """
+        Parse an ISO timestamp from db-service.
+
+        Naive values are treated as UTC.
+        """
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @classmethod
+    def _is_past_expiry(cls, valid_until) -> bool:
+        """Return True when ``valid_until`` is present and already past."""
+        try:
+            expiry = cls._parse_timestamp(valid_until)
+        except (TypeError, ValueError):
+            return False
+        if expiry is None:
+            return False
+        return datetime.now(timezone.utc) > expiry
+
+    async def _enrich_code_history(
+        self,
+        result: dict,
+        hashed_code: str,
+    ) -> dict:
+        """
+        Attach access-code lifecycle metadata for code-level history.
+
+        Sets ``code_created_at``, ``code_deleted``, and ``code_deleted_at``
+        from the earliest access-code row (including soft-deleted). A code is
+        treated as deleted when ``is_deleted`` is true or ``valid_until`` has
+        passed. Does not modify ``items``.
+        """
+        access_code = await self.repository.earliest_access_code(hashed_code)
+        if not access_code:
+            result["code_deleted"] = False
+            result["code_created_at"] = None
+            result["code_deleted_at"] = None
+            return result
+
+        expired = self._is_past_expiry(access_code.get("valid_until"))
+        code_deleted = bool(access_code.get("is_deleted")) or expired
+        result["code_deleted"] = code_deleted
+        result["code_created_at"] = access_code.get("created_at")
+        if access_code.get("is_deleted"):
+            result["code_deleted_at"] = access_code.get("deleted_at")
+        elif expired:
+            result["code_deleted_at"] = access_code.get("valid_until")
+        else:
+            result["code_deleted_at"] = None
+        return result
+
+    async def my_history(
+        self,
+        requester: dict,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        First-level personal history: one entry per access code with
+        access-code timestamps, resident ``full_name``, ``usage_count``, and
+        ``code_deleted``. Security accounts are rejected.
+        """
+        self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None,
+            from_date,
+            requester,
+            auth_token=auth_token,
+        )
+        result = await self.repository.unique_history(
+            user_id=requester["id"],
+            from_date=effective_from,
+            to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+        return ListResponse.model_validate(result)
+
+    async def my_history_by_code(
+        self,
+        requester: dict,
+        hashed_code: str,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> CodeHistoryListResponse:
+        """
+        Second-level personal history for one ``hashed_code``.
+
+        Returns :class:`CodeHistoryListResponse` with validation rows (latest
+        first) and code lifecycle metadata. Security accounts are rejected.
+        """
+        self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None,
+            None,
+            requester,
+            auth_token=auth_token,
+        )
+        result = await self.repository.code_history(
+            hashed_code=hashed_code,
+            user_id=requester["id"],
+            from_date=effective_from,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_history(result, hashed_code)
+        return CodeHistoryListResponse.model_validate(result)
+
+    async def estate_history(
+        self,
+        requester: dict,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        First-level estate-wide history: one entry per access code with
+        access-code timestamps, resident ``full_name``, ``usage_count``, and
+        ``code_deleted``. Requires permission to view other users' logs.
+        """
+        estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(
+            estate_scope, from_date, requester, auth_token=auth_token
+        )
+        result = await self.repository.unique_history(
+            estate_id=estate_scope,
+            from_date=effective_from,
+            to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+        return ListResponse.model_validate(result)
+
+    async def estate_history_by_code(
+        self,
+        requester: dict,
+        hashed_code: str,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> CodeHistoryListResponse:
+        """
+        Second-level estate-wide history for one ``hashed_code``.
+
+        Returns :class:`CodeHistoryListResponse` with validation rows (latest
+        first) and code lifecycle metadata. Requires permission to view other
+        users' logs.
+        """
+        estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(
+            estate_scope, None, requester, auth_token=auth_token
+        )
+        result = await self.repository.code_history(
+            hashed_code=hashed_code,
+            estate_id=estate_scope,
+            from_date=effective_from,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_history(result, hashed_code)
+        return CodeHistoryListResponse.model_validate(result)

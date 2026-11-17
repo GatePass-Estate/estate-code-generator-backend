@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from app.libs.notify import fire_notify
 
 from app.schemas.request import (
     CreateEditRequestRequest,
@@ -13,24 +16,38 @@ from app.schemas.request import (
     UpdatePendingRequestResponse,
     DeletePendingRequestResponse,
     CheckPendingRequestResponse,
+    RemindAdminsResponse,
     RequestType,
     RequestStatus,
 )
 from app.libs.http_handler import get_http_handler, AsyncHttpHandler
-from app.libs.role_permissions import check_permission
+from gatepass_rbac import check_permission
 from app.repositories.request import RequestRepository
 from app.repositories.user import UserRepository
+from app.repositories.user_documents import UserDocumentsRepository
 from app.services.request import RequestService
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, get_current_user_unverified
 
 router = APIRouter()
+
+
+def get_request_service(
+    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+) -> RequestService:
+    """Return RequestService wired to db-service repositories."""
+    return RequestService(
+        RequestRepository(ahttp_client),
+        UserRepository(ahttp_client),
+        UserDocumentsRepository(ahttp_client),
+    )
 
 
 @router.post("/edit", response_model=CreateEditRequestResponse)
 async def create_edit_request(
     request: CreateEditRequestRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Create a new edit request to change user profile details.
@@ -38,12 +55,35 @@ async def create_edit_request(
     Admins: Auto-approves and applies change immediately.
     """
     user_id = current_user["id"]
+    user_role = current_user["role"]
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
+    result = await service.create_edit_request(request, user_id)
 
-    return await service.create_edit_request(request, user_id)
+    # Notify estate admins when a non-admin files a pending request
+    if user_role not in ("admin", "primary_admin", "root"):
+        estate_id = current_user.get("estate_id")
+        if estate_id:
+            background_tasks.add_task(
+                fire_notify,
+                {
+                    "type": "EDIT_REQUEST_PENDING",
+                    "title": "New edit request",
+                    "body": "A user has submitted a profile edit request.",
+                    "fan_out": {
+                        "estate_id": estate_id,
+                        "roles": ["admin", "primary_admin"],
+                    },
+                    "metadata": {
+                        "request_id": str(result.id),
+                        "request_type": request.request_type.value
+                        if hasattr(request.request_type, "value")
+                        else str(request.request_type),
+                        "requester_name": user_id,
+                    },
+                },
+            )
+
+    return result
 
 
 @router.get("/edit/me", response_model=ListEditRequestResponse)
@@ -52,26 +92,46 @@ async def get_my_requests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Get all edit requests for the current user with pagination.
     """
     user_id = current_user["id"]
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
     return await service.list_my_requests(user_id, page, limit)
+
+
+@router.get("/edit/pending/check", response_model=CheckPendingRequestResponse)
+async def check_pending_request(
+    request_type: RequestType = Query(
+        ..., description="Type of field to check for pending request"
+    ),
+    current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
+):
+    """
+    Check if the current user has a pending request for a specific field type.
+    This helps the frontend prevent duplicate requests and show appropriate UI.
+    """
+    user_id = current_user["id"]
+
+    pending_request = await service.check_pending_request(
+        user_id, request_type
+    )
+
+    return CheckPendingRequestResponse(
+        has_pending_request=pending_request is not None,
+        pending_request=pending_request,
+    )
 
 
 @router.get("/edit/{request_id}", response_model=GetEditRequestResponse)
 async def get_request(
     request_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Get details of a specific edit request by ID.
@@ -80,10 +140,6 @@ async def get_request(
     """
     user_id = current_user["id"]
     user_role = current_user["role"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.get_request(request_id, user_id, user_role)
 
@@ -109,8 +165,8 @@ async def search_requests(
     limit: int = Query(
         10, ge=1, le=100, description="Number of items per page"
     ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Search and list edit requests with optional filters and pagination.
@@ -157,39 +213,7 @@ async def search_requests(
         limit=limit,
     )
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
     return await service.search_requests(search_request, user_id, user_role)
-
-
-@router.get("/edit/pending/check", response_model=CheckPendingRequestResponse)
-async def check_pending_request(
-    request_type: RequestType = Query(
-        ..., description="Type of field to check for pending request"
-    ),
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Check if the current user has a pending request for a specific field type.
-    This helps the frontend prevent duplicate requests and show appropriate UI.
-    """
-    user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
-    pending_request = await service.check_pending_request(
-        user_id, request_type
-    )
-
-    return CheckPendingRequestResponse(
-        has_pending_request=pending_request is not None,
-        pending_request=pending_request,
-    )
 
 
 @router.patch(
@@ -198,8 +222,8 @@ async def check_pending_request(
 async def update_pending_request(
     request_id: str,
     request: UpdatePendingRequestRequest,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_unverified),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Update the new_value of a pending request.
@@ -207,10 +231,6 @@ async def update_pending_request(
     Request must still be in PENDING status.
     """
     user_id = current_user["id"]
-
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
 
     return await service.update_pending_request(request_id, request, user_id)
 
@@ -220,8 +240,8 @@ async def update_pending_request(
 )
 async def delete_pending_request(
     request_id: str,
-    ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Cancel (delete) a pending request.
@@ -230,11 +250,44 @@ async def delete_pending_request(
     """
     user_id = current_user["id"]
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
-
     return await service.delete_pending_request(request_id, user_id)
+
+
+@router.post("/edit/{request_id}/remind", response_model=RemindAdminsResponse)
+async def remind_admins(
+    request_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user_unverified),
+    service: RequestService = Depends(get_request_service),
+):
+    """
+    Send a reminder to estate admins about a pending edit request.
+    Rate-limited by EDIT_REQUEST_REMIND_COOLDOWN_HOURS (default 24 h).
+    Cooldown starts from request creation, not from first reminder.
+    """
+    user_id = current_user["id"]
+    result = await service.remind_admins(request_id, user_id)
+
+    estate_id = current_user.get("estate_id")
+    if estate_id:
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "EDIT_REQUEST_PENDING",
+                "title": "Edit request reminder",
+                "body": (
+                    "A user is following up on a pending "
+                    "profile edit request."
+                ),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
+                "metadata": {"request_id": request_id},
+            },
+        )
+
+    return result
 
 
 @router.patch(
@@ -243,8 +296,10 @@ async def delete_pending_request(
 async def update_request_status(
     request_id: str,
     request: UpdateRequestStatusRequest,
+    background_tasks: BackgroundTasks,
     ahttp_client: AsyncHttpHandler = Depends(get_http_handler),
     current_user: dict = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
 ):
     """
     Approve or reject a pending edit request.
@@ -263,10 +318,39 @@ async def update_request_status(
             detail="You are not authorized to review requests.",
         )
 
-    repository = RequestRepository(ahttp_client)
-    user_repository = UserRepository(ahttp_client)
-    service = RequestService(repository, user_repository)
+    edit_request = await service.repository.get_request_by_id(request_id)
 
-    return await service.update_request_status(
+    result = await service.update_request_status(
         request_id, request, reviewer_id, reviewer_role
     )
+
+    if edit_request:
+        resident_id = str(edit_request.resident_id)
+        review_status = (
+            request.status.value
+            if hasattr(request.status, "value")
+            else str(request.status)
+        )
+        request_type = (
+            edit_request.request_type.value
+            if hasattr(edit_request.request_type, "value")
+            else str(edit_request.request_type)
+        )
+        background_tasks.add_task(
+            fire_notify,
+            {
+                "type": "EDIT_REQUEST_REVIEWED",
+                "title": "Edit request reviewed",
+                "body": (
+                    f"Your profile edit request has been {review_status}."
+                ),
+                "recipient_user_ids": [resident_id],
+                "metadata": {
+                    "request_id": request_id,
+                    "request_type": request_type,
+                    "review_status": review_status,
+                },
+            },
+        )
+
+    return result

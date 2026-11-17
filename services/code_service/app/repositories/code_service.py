@@ -5,13 +5,27 @@ from fastapi import HTTPException
 from pydantic import UUID4
 
 from app.core.config import settings
-from app.core.exceptions import DatabaseError, NotFoundError
+from gatepass_entitlement import (
+    ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+    ADVANCED_CODE_MANAGEMENT_KEY,
+    EntitlementDeniedError,
+    check_ai_feature_allowed,
+    require_service_entitlement,
+)
+from gatepass_rbac import is_owner, same_estate
+
+from app.core.exceptions import DatabaseError, NotFoundError, ScheduleError
+from app.libs.auth import get_user_details
 from app.libs.hash_gen import generate_unique_code
 from app.libs.http_handler import AsyncHttpHandler
+from app.libs.notify import fire_notify
+from app.libs.spatial_anomaly import trigger_spatial_anomaly_check
 from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
@@ -19,12 +33,41 @@ from app.schemas.code_service import (
 )
 
 logger = logging.getLogger(__name__)
+_ONE_HOUR = timedelta(hours=1)
+
+
+def _bounds(value) -> tuple[object, object]:
+    """Return ``(start, end)`` from a period/window dict or model."""
+    if isinstance(value, dict):
+        return value.get("start"), value.get("end")
+    return getattr(value, "start", None), getattr(value, "end", None)
+
+
+def _has_bounds(value) -> bool:
+    """Return True when a period or window has a start or end set."""
+    if value is None:
+        return False
+    start, end = _bounds(value)
+    return bool(start or end)
+
+
+def _period_exceeds_one_hour(period) -> bool:
+    """Return True when a validity period spans more than one hour."""
+    if not period:
+        return False
+    start, end = _bounds(period)
+    if not start or not end:
+        return False
+    try:
+        start_dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return end_dt - start_dt > _ONE_HOUR
 
 
 class CodeServiceRepository:
-    """
-    Repository to operate on workflows.workflows table.
-    """
+    """Orchestrates access code operations across cache and database services."""
 
     def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
         """
@@ -36,8 +79,83 @@ class CodeServiceRepository:
         self.ahttp_client: AsyncHttpHandler = ahttp_client
 
     def _format_datetime(self, dt: datetime) -> str:
-        ms = int(dt.microsecond / 1000)
-        return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{ms:03d}+0000"
+        return dt.isoformat()
+
+    def _is_upcoming_visitor_code(self, item: dict, now: datetime) -> bool:
+        """Return True when the code's validity period has not started yet."""
+        period = item.get("validity_period") or {}
+        start = period.get("start")
+        if not start:
+            return False
+        start_dt = datetime.fromisoformat(start)
+        return now < start_dt
+
+    def _is_visitor_code_expired(
+        self, record: dict, now: datetime | None = None
+    ) -> bool:
+        """Return True when the visitor code is past its total validity end."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        period = record.get("validity_period") or {}
+        end = period.get("end") or record.get("valid_until")
+        if not end:
+            return False
+        end_dt = datetime.fromisoformat(end)
+        return now > end_dt
+
+    async def _resolve_resident_full_name(self, user_id: str | None) -> str:
+        """
+        Resolve a resident's full name for denormalized log storage.
+
+        The name is stored on the log row at write time so history reads avoid
+        an extra lookup or join. A lookup failure must not block validation, so
+        this returns an empty string on any error.
+        """
+        if not user_id:
+            return ""
+        try:
+            user = await get_user_details(self.ahttp_client, str(user_id))
+        except Exception:
+            logger.exception(
+                "Failed to resolve resident name for user %s", user_id
+            )
+            return ""
+        return (
+            f"{user.get('first_name', '') or ''} "
+            f"{user.get('last_name', '') or ''}"
+        ).strip()
+
+    async def _resolve_household_name(self, user_id: str | None) -> str | None:
+        """Resolve the household display name for a resident user."""
+        if not user_id:
+            return None
+        try:
+            user = await get_user_details(self.ahttp_client, str(user_id))
+        except Exception:
+            logger.exception(
+                "Failed to resolve household name for user %s", user_id
+            )
+            return None
+
+        household_id = user.get("household_id")
+        if not household_id:
+            return None
+
+        try:
+            url = (
+                f"{settings.DB_SERVICE_URL}api/v1/userprofile"
+                f"/household/{household_id}"
+            )
+            household = await self.ahttp_client.async_get(url)
+        except Exception:
+            logger.exception(
+                "Failed to fetch household %s for user %s",
+                household_id,
+                user_id,
+            )
+            return None
+
+        return household.get("name") if household else None
 
     async def _soft_delete_previous_resident_codes(
         self,
@@ -53,49 +171,77 @@ class CodeServiceRepository:
         Called after a new code row is persisted so only one active code
         remains. Failures on individual deletes are logged and do not roll back
         the new code.
+
+        Search orders by ``created_at`` (newest first) and hides rows with
+        ``is_deleted`` set. Soft-delete writes ``is_deleted`` and ``deleted_at``
+        and leaves ``created_at`` unchanged, so the row leaves the result set
+        and the codes behind it keep their order and slide forward into the
+        gap. Page 1 of codes 1–50, after deleting 2–50, becomes code 1 followed
+        by what used to be 51, 52, 53, and so on. Asking for page 2 would skip
+        those. Always re-read page 1 until a pass deletes nothing.
         """
         search_url = (
             f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode/search"
         )
-        params = {
-            "user_id": user_id,
-            "estate_id": estate_id,
-            "page": 1,
-            "limit": 50,
-        }
-        try:
-            existing = await ahttp_client.async_get(search_url, params=params)
-        except NotFoundError:
-            return
-        except Exception as exc:
-            logger.warning(
-                "Could not search prior access codes for soft delete "
-                "user_id=%s estate_id=%s: %s",
-                user_id,
-                estate_id,
-                exc,
-            )
-            return
-
-        for item in existing.get("items") or []:
-            old_id = item.get("id")
-            if not old_id or str(old_id) == str(keep_id):
-                continue
-            delete_url = (
-                f"{settings.DB_SERVICE_URL}"
-                f"api/v1/codeservice/accesscode/{old_id}"
-            )
+        limit = 50
+        deleted_ids: set[str] = set()
+        while True:
+            params = {
+                "user_id": user_id,
+                "estate_id": estate_id,
+                "page": 1,
+                "limit": limit,
+            }
             try:
-                await ahttp_client.async_delete(delete_url)
-                logger.info(
-                    "Soft-deleted prior resident access code id=%s", old_id
+                existing = await ahttp_client.async_get(
+                    search_url, params=params
                 )
+            except NotFoundError:
+                return
             except Exception as exc:
                 logger.warning(
-                    "Failed to soft-delete prior access code id=%s: %s",
-                    old_id,
+                    "Could not search prior access codes for soft delete "
+                    "user_id=%s estate_id=%s: %s",
+                    user_id,
+                    estate_id,
                     exc,
                 )
+                return
+
+            items = (existing or {}).get("items") or []
+            if not items:
+                break
+
+            deleted_any = False
+            for item in items:
+                old_id = item.get("id")
+                if (
+                    not old_id
+                    or str(old_id) == str(keep_id)
+                    or str(old_id) in deleted_ids
+                ):
+                    continue
+                delete_url = (
+                    f"{settings.DB_SERVICE_URL}"
+                    f"api/v1/codeservice/accesscode/{old_id}"
+                )
+                try:
+                    await ahttp_client.async_delete(delete_url)
+                    deleted_ids.add(str(old_id))
+                    deleted_any = True
+                    logger.info(
+                        "Soft-deleted prior resident access code id=%s",
+                        old_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to soft-delete prior access code id=%s: %s",
+                        old_id,
+                        exc,
+                    )
+
+            if not deleted_any:
+                break
 
     async def _getitem(
         self,
@@ -103,20 +249,22 @@ class CodeServiceRepository:
         **kwargs,
     ) -> dict:
         """
-        Get an item from the table by its ID.
+        Look up an access code in cache (visitor) or database (resident).
+
+        Visitor codes are validated by cache_service, including total validity
+        period, daily validity window, and freeze checks. Resident codes are
+        checked for expiry only and return ``is_valid=True`` when active.
 
         Arguments:
-            session: The HttpClient session.
-            code: The generated access code to be retrieved.
-            receiver: The status of the code owner (visitor or resident).
+            ahttp_client: HTTP client for downstream services.
+            code: Access code to resolve.
 
         Returns:
-            Returns an instance of orm_model if the requested item is found.
+            Raw record dict including ``receiver`` and validity fields.
 
         Raises:
-            HTTPException: If item is not found, is expired, timestamp is
-                missing, or unexpected error occured during retrieval.
-            NotFoundError: If item is not found or expired.
+            NotFoundError: If the code is missing or invalid.
+            Exception: On unexpected downstream failures.
         """
         code = kwargs.get("code", None)
 
@@ -163,11 +311,14 @@ class CodeServiceRepository:
             else:
                 raise Exception("Expiry timestamp missing in cached data!")
             resident_data["is_expired"] = False
+            resident_data["is_valid"] = True
             resident_data["receiver"] = Receiver.RESIDENT
             return resident_data
+        except (NotFoundError, HTTPException):
+            raise
         except Exception as e:
             logger.error(e)
-            raise Exception(e) from e
+            raise NotFoundError("Code validation failed") from e
 
     async def _get_items_by_user(
         self, **kwargs
@@ -194,6 +345,7 @@ class CodeServiceRepository:
         user_id = kwargs.get("user_id", None)
         receiver = kwargs.get("receiver", None)
         user_details = kwargs.get("user_details", None)
+        upcoming = kwargs.get("upcoming", False)
 
         try:
             if receiver == Receiver.VISITOR:
@@ -203,6 +355,13 @@ class CodeServiceRepository:
                 )
                 params = {"estate_id": user_details.get("estate_id")}
                 response = await self.ahttp_client.async_get(url, params)
+                if upcoming:
+                    now = datetime.now(timezone.utc)
+                    response["items"] = [
+                        item
+                        for item in response.get("items", [])
+                        if self._is_upcoming_visitor_code(item, now)
+                    ]
                 return response
             elif receiver == Receiver.RESIDENT:
                 url = (
@@ -239,6 +398,7 @@ class CodeServiceRepository:
                 else:
                     raise Exception("Expiry timestamp missing in cached data")
                 resident_data["is_expired"] = False
+                resident_data["is_valid"] = True
                 resident_data["receiver"] = Receiver.RESIDENT
                 return resident_data
         except NotFoundError as e:
@@ -253,24 +413,33 @@ class CodeServiceRepository:
         ahttp_client: AsyncHttpHandler,
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
+        auth_token: str | None = None,
     ) -> dict:
         """
-        Create a new record in the database.
+        Persist a new access code for a visitor or resident.
+
+        Visitor codes are sent to cache_service with optional
+        ``validity_period`` and ``validity_window``. A custom period,
+        a period longer than an hour, or a daily window requires
+        ``advanced_code_management``.
+        Resident codes are stored in db-service with a
+        ``RESIDENT_CODE_EXPIRY_DAYS`` expiry.
 
         Args:
-            session (AsyncHttpHandler): The HttpClient session.
-            request (CreateRequestVisito | CreateRequestResident): The record
-                to be created/inserted in the database/redis cache.
-            recevier (Receiver): The status of the code owner (visitor or
-                resident).
+            ahttp_client: HTTP client for downstream services.
+            request: Visitor or resident create payload.
+            receiver: Whether the code is for a visitor or resident.
+            auth_token: Caller JWT forwarded to revenue-service when a
+                paid visitor schedule is requested.
 
         Returns:
-            dict: Returns the response dict containing the details of the
-                operation.
+            Dict with ``hashed_code`` and ``valid_until``.
 
         Raises:
-            HTTPException: If there is an unexpected error occured during
-                retrieval.
+            HTTPException: 401 if the forwarded token is rejected; 403
+                if a paid visitor schedule is requested without
+                entitlement; 502 if revenue-service fails; 500 on
+                downstream persistence failures.
         """
         try:
             if receiver == Receiver.VISITOR:
@@ -279,19 +448,24 @@ class CodeServiceRepository:
                     f"/cachehandler"
                 )
 
-                visit_data = request.model_dump()
-                now = datetime.now(timezone.utc)
-                code = generate_unique_code(
-                    user_id=visit_data.get("user_id"),
-                    estate_id=visit_data.get("estate_id"),
-                    visitor_fullname=visit_data.get("visitor_fullname"),
-                    relationship_with_resident=visit_data.get(
-                        "relationship_with_resident"
-                    ),
-                    date=now.strftime("%Y-%m-%d"),
-                    hour=now.strftime("%H"),
-                    receiver=receiver,
-                )
+                visit_data = request.model_dump(mode="json")
+                period = visit_data.get("validity_period")
+                window = visit_data.get("validity_window")
+                # Sub-gate: default 1-hour codes skip. Custom period,
+                # daily window, or span > 1 hour needs
+                # advanced_code_management (403 if missing).
+                if (
+                    _has_bounds(period)
+                    or _has_bounds(window)
+                    or _period_exceeds_one_hour(period)
+                ):
+                    await require_service_entitlement(
+                        settings.REVENUE_SERVICE_URL,
+                        estate_id=visit_data.get("estate_id"),
+                        service_key=ADVANCED_CODE_MANAGEMENT_KEY,
+                        auth_token=auth_token,
+                    )
+                code = generate_unique_code()
                 visit_data["hashed_code"] = code
                 data = {"hashed_code": code, "visit_data": visit_data}
                 response = await ahttp_client.async_post(
@@ -303,17 +477,12 @@ class CodeServiceRepository:
                     f"{settings.DB_SERVICE_URL}api/v1/codeservice/accesscode"
                 )
 
-                resident_data = request.model_dump()
-                now = datetime.now(timezone.utc)
-                code = generate_unique_code(
-                    user_id=resident_data.get("user_id"),
-                    estate_id=resident_data.get("estate_id"),
-                    date=now.strftime("%Y-%m-%d"),
-                    hour=now.strftime("%H"),
-                    receiver=receiver,
-                )
+                resident_data = request.model_dump(mode="json")
+                code = generate_unique_code()
                 resident_data["hashed_code"] = code
-                valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+                valid_until = datetime.now(timezone.utc) + timedelta(
+                    days=settings.RESIDENT_CODE_EXPIRY_DAYS
+                )
                 valid_until = self._format_datetime(valid_until)
                 resident_data["valid_until"] = valid_until
                 try:
@@ -341,6 +510,10 @@ class CodeServiceRepository:
                     "valid_until": valid_until,
                 }
                 return response
+        except ScheduleError:
+            raise
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -355,8 +528,11 @@ class CodeServiceRepository:
 
         Returns:
             A boolean indicating whether the item was deleted successfully.
+            Returns False when the code is expired or is a resident code.
 
         Raises:
+            NotFoundError: If the code is missing or the requester is not the
+                owner.
             HTTPException: If there is an internal server error
         """
 
@@ -364,36 +540,53 @@ class CodeServiceRepository:
         user_details = kwargs.get("user_details", None)
 
         try:
-            # Get the record from the database
-            record = await self._getitem(
-                ahttp_client=self.ahttp_client,
-                code=code,
+            raw_url = (
+                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                f"/cachehandler/{code}/raw"
             )
-            if record and (
-                str(record.get("user_id")) != user_details.get("id")
-            ):
-                message = (
-                    "User is not authorized to delete this resource "
-                    "due to user_id mismatch!"
-                )
-                logger.exception(message)
-                raise NotFoundError(f"Invalid code: {code}!")
+            try:
+                record = await self.ahttp_client.async_get(raw_url)
+            except NotFoundError:
+                record = None
 
-            if record.get("receiver") == Receiver.RESIDENT:
+            if record:
+                if self._is_visitor_code_expired(record):
+                    logger.info(
+                        "Skipping delete for expired visitor code %s", code
+                    )
+                    return False
+
+                if not is_owner(user_details, record.get("user_id")):
+                    message = (
+                        "User is not authorized to delete this resource "
+                        "due to user_id mismatch!"
+                    )
+                    logger.exception(message)
+                    raise NotFoundError(f"Invalid code: {code}!")
+
+                cache_url = (
+                    f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+                    f"/cachehandler/{code}"
+                )
+                return await self.ahttp_client.async_delete(cache_url)
+
+            url = (
+                f"{settings.DB_SERVICE_URL}api/v1/codeservice"
+                f"/accesscode/search"
+            )
+            params = {"hashed_code": code}
+            response = await self.ahttp_client.async_get(url, params=params)
+            if response.get("items"):
                 logger.info(
                     "Resident's code can't be deleted from this endpoint!"
                 )
                 return False
 
-            cache_url = (
-                f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
-                f"/cachehandler/{code}"
-            )
-
-            response = await self.ahttp_client.async_delete(cache_url)
-            return response
+            raise NotFoundError(f"Invalid code: {code}!")
+        except NotFoundError:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def _update_resident_code(
         self,
@@ -436,17 +629,12 @@ class CodeServiceRepository:
                 raise NotFoundError(f"No code found for resident {user_id}!")
 
             # Generate new code
-            now = datetime.now(timezone.utc)
-            new_code = generate_unique_code(
-                user_id=user_id,
-                estate_id=user_details.get("estate_id"),
-                date=now.strftime("%Y-%m-%d"),
-                hour=now.strftime("%H"),
-                receiver=Receiver.RESIDENT,
-            )
+            new_code = generate_unique_code()
 
             # Calculate new expiry date
-            valid_until = datetime.now(timezone.utc) + timedelta(days=120)
+            valid_until = datetime.now(timezone.utc) + timedelta(
+                days=settings.RESIDENT_CODE_EXPIRY_DAYS
+            )
             valid_until = self._format_datetime(valid_until)
 
             # Update the existing record
@@ -491,6 +679,7 @@ class CodeServiceRepository:
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
         user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> CreateResponse:
         """
         Create a new item in the table.
@@ -505,16 +694,20 @@ class CodeServiceRepository:
             The CreateResponse object after creating the item in the table.
 
         Raises:
+            ScheduleError: If the visitor validity period exceeds 2 weeks.
             DatabaseError: If there's an error during the database operation.
         """
-        if str(request.estate_id) != user_details.get("estate_id") or str(
-            request.user_id
-        ) != user_details.get("id"):
-            message = (
-                "User is not authorized to generate code for this estate/user!"
+        if not same_estate(request, user_details) or not is_owner(
+            user_details, request.user_id
+        ):
+            logger.warning(
+                "User is not authorized to generate code "
+                "for this estate/user!"
             )
-            logger.exception(message)
-            raise Exception("Invalid estate or user!")
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid estate or user",
+            )
 
         try:
             # Create the record in the database
@@ -522,33 +715,130 @@ class CodeServiceRepository:
                 ahttp_client=self.ahttp_client,
                 request=request,
                 receiver=receiver,
+                auth_token=auth_token,
             )
             created_record = CreateResponse.model_validate(response)
             return created_record
+        except ScheduleError:
+            raise
+        except HTTPException:
+            raise
         except DatabaseError as e:
             message = "Database error in creating the access code"
             logger.exception(message)
             raise DatabaseError(message) from e
 
+    async def _notify_admins_of_anomaly(
+        self,
+        *,
+        estate_id: str,
+        anomaly_type: str,
+        prediction_result_id: str,
+        hashed_code: str | None,
+    ) -> None:
+        """
+        Notify estate admins that a validation was flagged as anomalous.
+
+        Uses fan_out so the notification service resolves admin recipients.
+        Best-effort: notify failures are logged only.
+        """
+        if not estate_id:
+            return
+        await fire_notify(
+            {
+                "type": "SPATIAL_ANOMALY_DETECTED",
+                "title": "Anomalous access detected",
+                "body": (
+                    f"A {anomaly_type} access event was flagged as anomalous."
+                ),
+                "fan_out": {
+                    "estate_id": estate_id,
+                    "roles": ["admin", "primary_admin"],
+                },
+                "metadata": {
+                    "prediction_result_id": prediction_result_id,
+                    "anomaly_type": anomaly_type,
+                    "estate_id": estate_id,
+                    "hashed_code": hashed_code,
+                },
+            }
+        )
+
+    async def _spatial_anomaly_allowed(
+        self,
+        estate_id: object,
+        auth_token: str | None,
+    ) -> bool:
+        """
+        Code-service sub-gate for gate-scan spatial analyze.
+
+        Checks ``access_anomaly_detection_tier_1`` with
+        ``allow_security=True`` so security and admin may look up the
+        grant. Deny (403/404) is silent so validate still succeeds.
+        Call this immediately before ``trigger_spatial_anomaly_check``.
+        """
+        if not estate_id or not auth_token:
+            return False
+        try:
+            await check_ai_feature_allowed(
+                settings.REVENUE_SERVICE_URL,
+                estate_id=str(estate_id),
+                feature_key=ACCESS_ANOMALY_DETECTION_TIER_1_KEY,
+                auth_token=auth_token,
+                allow_security=True,
+            )
+        except EntitlementDeniedError as exc:
+            if exc.status_code not in (403, 404):
+                logger.exception(
+                    "Spatial anomaly entitlement check failed "
+                    "estate_id=%s status=%s",
+                    estate_id,
+                    exc.status_code,
+                )
+            return False
+        return True
+
+    async def _apply_anomaly_result(
+        self,
+        record: dict,
+        anomaly: dict | None,
+        anomaly_type: str,
+    ) -> None:
+        """Attach anomaly metadata and notify admins when flagged."""
+        if not anomaly:
+            return
+        record["prediction_result_id"] = anomaly["prediction_result_id"]
+        record["is_anomalous"] = anomaly["is_anomalous"]
+        record["severity"] = anomaly.get("severity")
+        if not anomaly["is_anomalous"]:
+            return
+        await self._notify_admins_of_anomaly(
+            estate_id=str(record.get("estate_id") or ""),
+            anomaly_type=anomaly_type,
+            prediction_result_id=anomaly["prediction_result_id"],
+            hashed_code=record.get("hashed_code"),
+        )
+
     async def get(
-        self, code: str, user_details: dict | None = None
+        self,
+        code: str,
+        user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> GetResponseVisitor | GetResponseResident:
         """
-        Get an item by code. If the recevier is a visitor, the retrieved record
-        is persisted to the DB for permanent logging.
+        Validate an access code and persist a visitor or resident log entry.
 
-        Arguments:
-            code: The generated access code to be validated.
-            user_details: The user details of the user trying to validate the
-                code.
+        Visitor validation uses cache_service lifecycle checks. Resident
+        validation checks expiry only. The caller's estate must match the
+        code's estate. Log rows are written with denormalized resident names
+        (``full_name`` on resident logs, ``resident_fullname`` on visitor
+        logs) resolved at validation time.
 
-        Returns:
-            A GetResponse object after retrieving the item by id.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
-            NotFoundError: If the item with the provided ID is not found or
-                expired.
+        After a successful log persist, a second sub-gate checks
+        ``access_anomaly_detection_tier_1``. Only then is
+        ``trigger_spatial_anomaly_check`` called (best-effort; deny is
+        silent). The log write is not entitlement-gated. When the event
+        is anomalous, estate admins and primary admins are notified.
         """
         try:
             # Get the record from the database
@@ -556,7 +846,7 @@ class CodeServiceRepository:
                 ahttp_client=self.ahttp_client, code=code
             )
 
-            if record.get("estate_id") != user_details.get("estate_id"):
+            if not same_estate(record, user_details):
                 message = (
                     "User is not authorized to access this resource "
                     "due to estate_id mismatch!"
@@ -564,10 +854,19 @@ class CodeServiceRepository:
                 logger.exception(message)
                 raise NotFoundError(f"Invalid code: {code}!")
 
+            record["household_name"] = await self._resolve_household_name(
+                record.get("user_id")
+            )
+
             if record and (record.get("receiver") == Receiver.VISITOR):
                 # Record was retrieved from the cache. Now, persist to DB.
+                full_name = await self._resolve_resident_full_name(
+                    record.get("user_id")
+                )
                 visitlog_data = {
                     "user_id": record.get("user_id"),
+                    "estate_id": record.get("estate_id"),
+                    "resident_fullname": full_name,
                     "visitor_fullname": record.get("visitor_fullname"),
                     "relationship_with_resident": record.get(
                         "relationship_with_resident"
@@ -595,15 +894,33 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting visitor's record to DB"
                     ) from persist_exception
+                # Sub-gate: persist always. Analyze only if the estate
+                # has access_anomaly_detection_tier_1 (security/admin).
+                anomaly = None
+                if await self._spatial_anomaly_allowed(
+                    record.get("estate_id"), auth_token
+                ):
+                    anomaly = await trigger_spatial_anomaly_check(
+                        anomaly_type="visitor",
+                        record=record,
+                        log_id=str((persist_response or {}).get("id") or ""),
+                        security_id=str(user_details.get("id")),
+                        auth_token=auth_token,
+                    )
+                await self._apply_anomaly_result(record, anomaly, "visitor")
                 # Convert the record to a GET schema model
                 return GetResponseVisitor.model_validate(
                     record, from_attributes=True
                 )
             elif record and (record.get("receiver") == Receiver.RESIDENT):
                 # Record was retrieved from access code. Now, persist to DB.
+                full_name = await self._resolve_resident_full_name(
+                    record.get("user_id")
+                )
                 residentlog_data = {
                     "user_id": record.get("user_id"),
                     "estate_id": record.get("estate_id"),
+                    "full_name": full_name,
                     "hashed_code": record.get("hashed_code"),
                     "security_id": user_details.get("id"),
                     "access_time": record.get("visit_time"),
@@ -626,6 +943,20 @@ class CodeServiceRepository:
                     raise DatabaseError(
                         "Error persisting resident's record to DB"
                     ) from persist_exception
+                # Sub-gate: persist always. Analyze only if the estate
+                # has access_anomaly_detection_tier_1 (security/admin).
+                anomaly = None
+                if await self._spatial_anomaly_allowed(
+                    record.get("estate_id"), auth_token
+                ):
+                    anomaly = await trigger_spatial_anomaly_check(
+                        anomaly_type="resident",
+                        record=record,
+                        log_id=str((persist_response or {}).get("id") or ""),
+                        security_id=str(user_details.get("id")),
+                        auth_token=auth_token,
+                    )
+                await self._apply_anomaly_result(record, anomaly, "resident")
                 return GetResponseResident.model_validate(
                     record, from_attributes=True
                 )
@@ -641,6 +972,113 @@ class CodeServiceRepository:
             message = f"Error in getting a record with code {code}"
             logger.exception(message)
             raise Exception(message) from e
+
+    async def _authorize_visitor_code_owner(
+        self, code: str, user_details: dict
+    ) -> dict:
+        """
+        Verify that the requester owns a visitor access code.
+
+        Loads the raw cached record (without validity filtering) and compares
+        ``user_id`` to the authenticated resident.
+
+        Raises:
+            NotFoundError: If the code is missing or the requester is not the
+                owner.
+        """
+        raw_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/raw"
+        )
+        try:
+            record = await self.ahttp_client.async_get(raw_url)
+        except NotFoundError:
+            logger.warning(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "reason=not_found",
+                code,
+                user_details.get("id"),
+            )
+            raise NotFoundError(f"Invalid code: {code}!")
+        except Exception as exc:
+            logger.error(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "error=%s",
+                code,
+                user_details.get("id"),
+                exc,
+            )
+            raise NotFoundError(f"Invalid code: {code}!") from exc
+
+        if not is_owner(user_details, record.get("user_id")):
+            logger.warning(
+                "Visitor code owner auth failed code=%s requester_id=%s "
+                "owner_id=%s reason=user_id_mismatch",
+                code,
+                user_details.get("id"),
+                record.get("user_id"),
+            )
+            raise NotFoundError(f"Invalid code: {code}!")
+        logger.info(
+            "Visitor code owner authorized code=%s requester_id=%s",
+            code,
+            user_details.get("id"),
+        )
+        return record
+
+    async def extend_code(
+        self, code: str, user_details: dict | None = None
+    ) -> ExtendResponse:
+        """
+        Extend a visitor code once by adding one hour to the period end.
+
+        Requires the requester to own the code. Delegates persistence to
+        cache_service, which updates ``validity_period.end``, ``valid_until``,
+        and Redis TTL.
+        """
+        await self._authorize_visitor_code_owner(code, user_details)
+        extend_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/extend"
+        )
+        response = await self.ahttp_client.async_patch(extend_url)
+        result = ExtendResponse.model_validate(response)
+        logger.info(
+            "Visitor code extend requested code=%s requester_id=%s "
+            "success=%s valid_until=%s extended=%s",
+            code,
+            user_details.get("id"),
+            result.success,
+            result.valid_until,
+            result.extended,
+        )
+        return result
+
+    async def toggle_freeze_code(
+        self, code: str, user_details: dict | None = None
+    ) -> FreezeResponse:
+        """
+        Toggle freeze/pause on a visitor access code.
+
+        Requires the requester to own the code. Freeze does not modify the
+        total validity period or daily validity window.
+        """
+        await self._authorize_visitor_code_owner(code, user_details)
+        freeze_url = (
+            f"{settings.CACHE_SERVICE_URL}api/v1/cacheservice"
+            f"/cachehandler/{code}/freeze"
+        )
+        response = await self.ahttp_client.async_patch(freeze_url)
+        result = FreezeResponse.model_validate(response)
+        logger.info(
+            "Visitor code freeze toggled code=%s requester_id=%s "
+            "frozen=%s is_valid=%s",
+            code,
+            user_details.get("id"),
+            result.frozen,
+            result.is_valid,
+        )
+        return result
 
     async def update_resident_code(
         self, user_id: UUID4, user_details: dict | None = None
@@ -660,12 +1098,12 @@ class CodeServiceRepository:
             NotFoundError: If the resident code is not found.
         """
         # Validate that the user is authorized to update this resident's code
-        if str(user_id) != user_details.get("id"):
+        if not is_owner(user_details, user_id):
             message = (
                 "User is not authorized to update code for this resident!"
             )
             logger.exception(message)
-            raise Exception("Invalid user!")
+            raise HTTPException(status_code=403, detail="Invalid user!")
 
         try:
             # Update the resident's code

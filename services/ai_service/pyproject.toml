@@ -8,7 +8,11 @@ packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.115.4"
+gatepass-auth = {path = "../../shared/gatepass_auth", develop = true}
+gatepass-entitlement = {path = "../../shared/gatepass_entitlement", develop = true}
+gatepass-rbac = {path = "../../shared/gatepass_rbac", develop = true}
+gatepass-llm = {path = "../../shared/gatepass_llm", develop = true}
+fastapi = "^0.138.0"
 uvicorn = { extras = ["standard"], version = "^0.32.0" }
 pydantic = "^2.9.2"
 pydantic-settings = "^2.6.1"
@@ -17,6 +21,8 @@ numpy = "^2.0.0"
 pyjwt = "^2.12.1"
 pandas = "^3.0.2"
 scikit-learn = ">=1.5,<2"
+stumpy = "^1.13.0"
+statsmodels = "^0.14"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -24,10 +30,18 @@ pytest-asyncio = "^0.24.0"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = [
+    ".",
+    "../../shared/gatepass_rbac",
+    "../../shared/gatepass_entitlement",
+    "../../shared/gatepass_llm",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # ``sys.path`` is adjusted before ``app.*`` imports (see module docstring).
-"app/pipeline/anomaly_orchestration.py" = ["E402"]
+"app/pipeline/spatial_anomaly_orchestration.py" = ["E402"]
+"app/pipeline/temporal_anomaly_orchestration.py" = ["E402"]
+"app/pipeline/volume_forecast_orchestrator.py" = ["E402"]
 
 [build-system]
 requires = ["poetry-core"]

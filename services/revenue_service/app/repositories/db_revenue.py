@@ -1,0 +1,708 @@
+"""HTTP repositories calling db-service revenue + estate APIs."""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import urlencode
+
+from fastapi import HTTPException
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler
+
+logger = logging.getLogger(__name__)
+
+
+class DbRevenueRepository:
+    """HTTP wrapper for db-service revenue and estate endpoints."""
+
+    def __init__(self, http_client: AsyncHttpHandler):
+        """
+        Bind endpoint base URLs from settings.
+
+        Args:
+            http_client: Shared async HTTP handler.
+        """
+        self.client = http_client
+        base = settings.DB_SERVICE_URL.rstrip("/") + "/"
+        self.base = base
+        self.estates = f"{base}api/v1/userprofile/estates"
+        self.service_catalog = f"{base}api/v1/revenue/servicecatalog"
+        self.ai_feature = f"{base}api/v1/revenue/aifeature"
+        self.feature_unit_price = f"{base}api/v1/revenue/featureunitprice"
+        self.subscription_tier = f"{base}api/v1/revenue/subscriptiontier"
+        self.estate_subscription = f"{base}api/v1/revenue/estatesubscription"
+        self.estate_ai_feature = f"{base}api/v1/revenue/estateaifeature"
+        self.payment_checkout_session = (
+            f"{base}api/v1/revenue/paymentcheckoutsession"
+        )
+        self.payment_event = f"{base}api/v1/revenue/paymentevent"
+        self.payment_transaction = f"{base}api/v1/revenue/paymenttransaction"
+        self.payment_charge_retry = f"{base}api/v1/revenue/paymentchargeretry"
+
+    async def _search(
+        self, endpoint: str, params: dict[str, Any]
+    ) -> list[dict]:
+        """
+        Call a db-service search endpoint and return items.
+
+        Args:
+            endpoint: Base resource URL (without /search).
+            params: Query filters; None values are dropped.
+
+        Returns:
+            List of item dicts from the search response.
+
+        Raises:
+            HTTPException: 502 if the db-service call fails.
+        """
+        clean = {k: v for k, v in params.items() if v is not None}
+        clean.setdefault("page", 1)
+        clean.setdefault("limit", 100)
+        encoded = {
+            k: ("true" if v is True else "false" if v is False else v)
+            for k, v in clean.items()
+        }
+        url = f"{endpoint}/search?{urlencode(encoded, doseq=True)}"
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=502, detail=f"db-service search failed: {endpoint}"
+            )
+        return response.get("items") or []
+
+    async def _paginate_all(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        page_size: int = 100,
+    ) -> list[dict]:
+        """
+        Paginate through all results from a db-service search endpoint.
+
+        Keeps fetching pages until a partial page is returned, which signals
+        the last page. Caller should not pass ``page`` or ``limit`` in params.
+
+        Args:
+            endpoint: Base resource URL (without /search).
+            params: Query filters; None values are dropped.
+            page_size: Items per page (default 100).
+
+        Returns:
+            All matching items across all pages.
+        """
+        page = 1
+        results: list[dict] = []
+        while True:
+            batch = await self._search(
+                endpoint,
+                {**params, "page": page, "limit": page_size},
+            )
+            results.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return results
+
+    async def get_estate(self, estate_id: str) -> dict:
+        """
+        Fetch an estate by ID.
+
+        Args:
+            estate_id: Estate UUID string.
+
+        Returns:
+            Estate payload from db-service.
+
+        Raises:
+            HTTPException: 404 if the estate is missing.
+        """
+        url = f"{self.estates}/{estate_id}"
+        response = await self.client.async_get(url)
+        if not response:
+            raise HTTPException(status_code=404, detail="Estate not found")
+        return response
+
+    async def get_service_catalog_map(self) -> dict[str, dict]:
+        """
+        Load active service catalog rows keyed by service_key.
+
+        List/search hide ``vat`` from FE catalogs; fetch it by key so
+        checkout quoting can still read the rate.
+
+        Returns:
+            Mapping of service_key -> catalog row.
+        """
+        items = await self._search(
+            self.service_catalog, {"is_active": True, "limit": 200}
+        )
+        catalog = {i["service_key"]: i for i in items}
+        if "vat" not in catalog:
+            vat_rows = await self._search(
+                self.service_catalog,
+                {"service_key": "vat", "is_active": True, "limit": 1},
+            )
+            if vat_rows:
+                catalog["vat"] = vat_rows[0]
+        return catalog
+
+    async def get_ai_feature_map(self) -> dict[str, dict]:
+        """
+        Load active AI feature rows keyed by feature_key.
+
+        Returns:
+            Mapping of feature_key -> AI feature row.
+        """
+        items = await self._search(
+            self.ai_feature, {"is_active": True, "limit": 200}
+        )
+        return {i["feature_key"]: i for i in items}
+
+    async def list_subscription_tiers(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        List subscription tiers from db-service (includes feature availability).
+
+        Proxies ``GET /api/v1/revenue/subscriptiontier``.
+        """
+        url = f"{self.subscription_tier}?page={page}&limit={limit}"
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=502,
+                detail="db-service subscription tier list failed",
+            )
+        return response
+
+    async def search_subscription_tiers(
+        self,
+        *,
+        slug: str | None = None,
+        is_active: bool | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Search subscription tiers (includes feature availability fields).
+
+        Proxies ``GET /api/v1/revenue/subscriptiontier/search``.
+        """
+        params: dict[str, Any] = {"page": page, "limit": limit}
+        if slug is not None:
+            params["slug"] = slug
+        if is_active is not None:
+            params["is_active"] = is_active
+        clean = {k: v for k, v in params.items() if v is not None}
+        encoded = {
+            k: ("true" if v is True else "false" if v is False else v)
+            for k, v in clean.items()
+        }
+        url = (
+            f"{self.subscription_tier}/search?{urlencode(encoded, doseq=True)}"
+        )
+        response = await self.client.async_get(url)
+        if response is None:
+            raise HTTPException(
+                status_code=502,
+                detail="db-service subscription tier search failed",
+            )
+        return response
+
+    async def get_tier_by_slug(self, slug: str) -> dict | None:
+        """
+        Look up a subscription tier by slug.
+
+        Args:
+            slug: Tier slug (e.g. "access", "standard").
+
+        Returns:
+            Tier row, or None if not found.
+        """
+        items = await self._search(
+            self.subscription_tier, {"slug": slug, "limit": 1}
+        )
+        return items[0] if items else None
+
+    async def get_tier_by_id(self, tier_id: str) -> dict | None:
+        """
+        Fetch a subscription tier by ID.
+
+        Args:
+            tier_id: Tier UUID string.
+
+        Returns:
+            Tier payload, or None if not found (404).
+
+        Raises:
+            HTTPException: Upstream failures (network / non-404 HTTP errors).
+        """
+        url = f"{self.subscription_tier}/{tier_id}"
+        return await self.client.async_get(url)
+
+    async def get_active_subscription(self, estate_id: str) -> dict | None:
+        """
+        Return the current subscription for entitlement / billing lookups.
+
+        Prefers healthy statuses, then cancelled/past_due (access may
+        continue until period_end). Expired rows are excluded — after
+        the expiry cron runs, the active access-tier row carries the
+        ``over_cap_locked`` flag.
+
+        Args:
+            estate_id: Estate UUID string.
+
+        Returns:
+            Subscription row, or None if no non-expired subscription exists.
+        """
+        for status in (
+            "active",
+            "trialing",
+            "past_due",
+            "cancelled",
+        ):
+            items = await self._search(
+                self.estate_subscription,
+                {"estate_id": estate_id, "status": status, "limit": 1},
+            )
+            if items:
+                return items[0]
+        return None
+
+    async def list_estate_ai_features(self, estate_id: str) -> list[dict]:
+        """
+        List estate AI feature grant rows for an estate.
+
+        Args:
+            estate_id: Estate UUID string.
+
+        Returns:
+            List of estate_ai_feature rows.
+        """
+        return await self._search(
+            self.estate_ai_feature,
+            {"estate_id": estate_id, "limit": 200},
+        )
+
+    async def get_prices_for_country(self, country_code: str) -> list[dict]:
+        """
+        List active feature unit prices for a country.
+
+        Args:
+            country_code: ISO country code used for pricing.
+
+        Returns:
+            List of feature_unit_price rows.
+        """
+        return await self._search(
+            self.feature_unit_price,
+            {
+                "country_code": country_code,
+                "is_active": True,
+                "limit": 500,
+            },
+        )
+
+    async def create_estate_subscription(self, payload: dict) -> dict:
+        """POST a new estate_subscription row."""
+        response = await self.client.async_post(
+            self.estate_subscription, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to create estate_subscription"
+            )
+        return response
+
+    async def update_estate_subscription(
+        self, subscription_id: str, payload: dict
+    ) -> dict:
+        """PATCH an estate_subscription by id."""
+        url = f"{self.estate_subscription}/{subscription_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update estate_subscription"
+            )
+        return response
+
+    async def create_estate_ai_feature(self, payload: dict) -> dict:
+        """POST a new estate_ai_feature grant."""
+        response = await self.client.async_post(
+            self.estate_ai_feature, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to create estate_ai_feature"
+            )
+        return response
+
+    async def update_estate_ai_feature(
+        self, grant_id: str, payload: dict
+    ) -> dict:
+        """PATCH an estate_ai_feature grant by id."""
+        url = f"{self.estate_ai_feature}/{grant_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update estate_ai_feature"
+            )
+        return response
+
+    async def delete_estate_subscription(self, subscription_id: str) -> None:
+        """Soft-delete an estate_subscription by id."""
+        url = f"{self.estate_subscription}/{subscription_id}"
+        await self.client.async_delete(url)
+
+    async def delete_estate_ai_feature(self, grant_id: str) -> None:
+        """Soft-delete an estate_ai_feature grant by id."""
+        url = f"{self.estate_ai_feature}/{grant_id}"
+        await self.client.async_delete(url)
+
+    async def search_subscriptions(
+        self, *, statuses: list[str], period_end_before: str
+    ) -> list[dict]:
+        """Fetch subscriptions matching any of the given statuses
+        with period_end before cutoff."""
+        results = []
+        for status in statuses:
+            items = await self._paginate_all(
+                self.estate_subscription,
+                {
+                    "status": status,
+                    "period_end_before": period_end_before,
+                },
+            )
+            results.extend(items)
+        return results
+
+    async def search_ai_grants(
+        self, *, status: str, is_free: bool, expires_at_before: str
+    ) -> list[dict]:
+        """Fetch AI grants with status, is_free flag,
+        and expires_at before cutoff."""
+        return await self._paginate_all(
+            self.estate_ai_feature,
+            {
+                "status": status,
+                "is_free": is_free,
+                "expires_at_before": expires_at_before,
+            },
+        )
+
+    async def get_estate_active_user_count(self, estate_id: str) -> int:
+        """Return count of all registered (non-deleted) users for an estate."""
+        url = (
+            f"{self.base}api/v1/userprofile/users/search"
+            f"?estate_id={estate_id}&limit=1&page=1"
+        )
+        response = await self.client.async_get(url)
+        return (response or {}).get("total", 0)
+
+    async def list_estate_subscriptions(self, estate_id: str) -> list[dict]:
+        """List subscriptions for an estate (any status)."""
+        return await self._search(
+            self.estate_subscription,
+            {"estate_id": estate_id, "limit": 50},
+        )
+
+    async def get_subscription_by_paystack_subscription_code(
+        self, subscription_code: str
+    ) -> dict | None:
+        """Return a subscription by paystack_subscription_code, or None."""
+        items = await self._search(
+            self.estate_subscription,
+            {"paystack_subscription_code": subscription_code, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def get_ai_grant_by_paystack_subscription_code(
+        self, subscription_code: str
+    ) -> dict | None:
+        """Return an AI grant by paystack_subscription_code, or None."""
+        items = await self._search(
+            self.estate_ai_feature,
+            {
+                "paystack_subscription_code": subscription_code,
+                "limit": 1,
+            },
+        )
+        return items[0] if items else None
+
+    async def update_ai_feature(self, feature_id: str, payload: dict) -> dict:
+        """PATCH an ai_feature catalog row by id."""
+        url = f"{self.ai_feature}/{feature_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502, detail="Failed to update ai_feature"
+            )
+        return response
+
+    async def search_subscriptions_pre_expiry(
+        self, *, period_end_before: str, period_end_after: str
+    ) -> list[dict]:
+        """Fetch active/trialing subscriptions whose period_end falls within
+        the pre-expiry warning window and have not yet been notified."""
+        results = []
+        for status in ("active", "trialing"):
+            items = await self._paginate_all(
+                self.estate_subscription,
+                {
+                    "status": status,
+                    "period_end_before": period_end_before,
+                    "period_end_after": period_end_after,
+                    "pre_expiry_notified": False,
+                },
+            )
+            results.extend(items)
+        return results
+
+    async def search_ai_grants_pre_expiry(
+        self, *, expires_at_before: str, expires_at_after: str
+    ) -> list[dict]:
+        """Fetch active non-free AI grants whose expires_at falls within
+        the pre-expiry warning window and have not yet been notified."""
+        return await self._paginate_all(
+            self.estate_ai_feature,
+            {
+                "status": "active",
+                "is_free": False,
+                "expires_at_before": expires_at_before,
+                "expires_at_after": expires_at_after,
+                "pre_expiry_notified": False,
+            },
+        )
+
+    async def search_stale_ai_grants(
+        self, *, expires_at_before: str
+    ) -> list[dict]:
+        """Fetch cancelled non-free AI grants past their expires_at.
+
+        ``past_due`` is handled by the grace-aware pass in the expiry
+        service so Paystack has time to retry the charge.
+        """
+        results: list[dict] = []
+        for status in ("cancelled",):
+            items = await self._paginate_all(
+                self.estate_ai_feature,
+                {
+                    "status": status,
+                    "is_free": False,
+                    "expires_at_before": expires_at_before,
+                },
+            )
+            results.extend(items)
+        return results
+
+    # ------------------------------------------------------------------ #
+    # Payment checkout session
+    # ------------------------------------------------------------------ #
+
+    async def create_checkout_session(self, payload: dict) -> dict:
+        """POST a new payment_checkout_session row."""
+        response = await self.client.async_post(
+            self.payment_checkout_session, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create checkout session",
+            )
+        return response
+
+    async def get_checkout_session_by_idempotency_key(
+        self, key: str, *, user_id: str | None = None
+    ) -> dict | None:
+        """Return a checkout session by idempotency_key (scoped to user).
+
+        Args:
+            key: Client-supplied idempotency key.
+            user_id: Authenticated user UUID. When provided the lookup
+                is scoped to that user.
+
+        Returns:
+            Session row, or None if not found.
+        """
+        params: dict = {"idempotency_key": key, "limit": 1}
+        if user_id:
+            params["initiated_by_user_id"] = user_id
+        items = await self._search(self.payment_checkout_session, params)
+        return items[0] if items else None
+
+    async def get_pending_checkout_for_estate(
+        self,
+        estate_id: str,
+        *,
+        checkout_kind: str | None = None,
+    ) -> dict | None:
+        """Return the newest pending checkout session for an estate.
+
+        When *checkout_kind* is given the search is scoped so that,
+        e.g., a pending AI checkout does not block a subscription
+        checkout.
+        """
+        params: dict = {
+            "estate_id": estate_id,
+            "status": "pending",
+            "limit": 1,
+        }
+        if checkout_kind:
+            params["checkout_kind"] = checkout_kind
+        items = await self._search(self.payment_checkout_session, params)
+        return items[0] if items else None
+
+    async def get_checkout_session_by_reference(
+        self, reference: str
+    ) -> dict | None:
+        """Return a checkout session by paystack_reference, or None."""
+        items = await self._search(
+            self.payment_checkout_session,
+            {"paystack_reference": reference, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def update_checkout_session(
+        self, session_id: str, payload: dict
+    ) -> dict:
+        """PATCH a payment_checkout_session by id."""
+        url = f"{self.payment_checkout_session}/{session_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to update checkout session",
+            )
+        return response
+
+    # ------------------------------------------------------------------ #
+    # Payment event (webhook dedup ledger)
+    # ------------------------------------------------------------------ #
+
+    async def get_payment_event_by_event_id(
+        self, event_id: str
+    ) -> dict | None:
+        """Return a payment_event by provider event_id, or None."""
+        items = await self._search(
+            self.payment_event,
+            {"event_id": event_id, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def create_payment_event(self, payload: dict) -> dict:
+        """POST a new payment_event row."""
+        response = await self.client.async_post(
+            self.payment_event, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment event",
+            )
+        return response
+
+    # ------------------------------------------------------------------ #
+    # Payment transaction (audit ledger)
+    # ------------------------------------------------------------------ #
+
+    async def get_transaction_by_provider_reference(
+        self, provider_reference: str
+    ) -> dict | None:
+        """Return a payment transaction by provider_reference, or None."""
+        items = await self._search(
+            self.payment_transaction,
+            {"provider_reference": provider_reference, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def create_payment_transaction(self, payload: dict) -> dict:
+        """POST a new payment_transaction row."""
+        response = await self.client.async_post(
+            self.payment_transaction, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment transaction",
+            )
+        return response
+
+    # ------------------------------------------------------------------ #
+    # Payment charge retry (self-managed retry queue)
+    # ------------------------------------------------------------------ #
+
+    async def create_payment_charge_retry(self, payload: dict) -> dict:
+        """POST a new payment_charge_retry row."""
+        response = await self.client.async_post(
+            self.payment_charge_retry, json_data=payload
+        )
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to create payment charge retry",
+            )
+        return response
+
+    async def update_payment_charge_retry(
+        self, retry_id: str, payload: dict
+    ) -> dict:
+        """PATCH a payment_charge_retry by id."""
+        url = f"{self.payment_charge_retry}/{retry_id}"
+        response = await self.client.async_patch(url, json_data=payload)
+        if not response:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to update payment charge retry",
+            )
+        return response
+
+    async def get_charge_retry_by_billing_period_key(
+        self, key: str
+    ) -> dict | None:
+        """Return a retry schedule by billing_period_key, or None."""
+        items = await self._search(
+            self.payment_charge_retry,
+            {"billing_period_key": key, "limit": 1},
+        )
+        return items[0] if items else None
+
+    async def search_pending_retries_due(self, now_iso: str) -> list[dict]:
+        """Fetch pending retries where next_retry_at <= now."""
+        return await self._paginate_all(
+            self.payment_charge_retry,
+            {
+                "status": "pending",
+                "next_retry_at_before": now_iso,
+            },
+        )
+
+    async def cancel_pending_retries_for_target(
+        self, target_type: str, target_id: str
+    ) -> int:
+        """Cancel all pending retries for a target. Returns count."""
+        items = await self._search(
+            self.payment_charge_retry,
+            {
+                "target_type": target_type,
+                "target_id": target_id,
+                "status": "pending",
+                "limit": 100,
+            },
+        )
+        cancelled = 0
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        for item in items:
+            try:
+                await self.update_payment_charge_retry(
+                    str(item["id"]),
+                    {"status": "cancelled", "resolved_at": now_iso},
+                )
+                cancelled += 1
+            except Exception:
+                logger.warning("Failed to cancel retry id=%s", item.get("id"))
+        return cancelled

@@ -128,6 +128,7 @@ class RequestRepository:
             reviewed_by=response.get("reviewed_by"),
             created_at=response["created_at"],
             updated_at=response.get("updated_at"),
+            last_reminded_at=response.get("last_reminded_at"),
             is_deleted=response.get("is_deleted", False),
         )
 
@@ -313,6 +314,15 @@ class RequestRepository:
         return DeletePendingRequestResponse(
             id=request_id,
             message="Request successfully canceled",
+        )
+
+    async def set_last_reminded_at(
+        self, request_id: str, reminded_at: str
+    ) -> None:
+        """Stamp ``last_reminded_at`` on a request after a reminder is sent."""
+        url = f"{self.requests_endpoint}/{request_id}"
+        await self.client.async_patch(
+            url, json_data={"last_reminded_at": reminded_at}
         )
 
     async def update_request_status(

@@ -1,0 +1,259 @@
+import asyncio
+import logging
+from datetime import datetime
+
+from fastapi import HTTPException
+
+from app.core.config import settings
+from app.libs.http_handler import AsyncHttpHandler
+from gatepass_entitlement import (
+    EXTENDED_HISTORICAL_RECORD_KEY,
+    resolve_retention_from_date,
+)
+from gatepass_rbac import (
+    deny_roles,
+    get_role_permissions,
+    is_root,
+    resolve_estate_log_scope,
+)
+from app.repositories.visitor_log import (
+    VisitorLogRepository as Repository,
+)
+from app.schemas.visitor_log import ListResponse
+
+logger = logging.getLogger(__name__)
+
+
+class VisitorLogService:
+    """
+    BFF service for visitor-log history exposed under
+    ``/codeservice/visitorlog``.
+
+    Two retrieval levels:
+
+    * **First level** (``/me``, ``/user``): one entry per unique
+      ``hashed_code`` with ``usage_count`` and ``code_deleted`` (missing from
+      cache or past ``valid_until``); ``created_at`` is the earliest log
+      row per code (db-service ``unique=true``).
+    * **Second level** (``/me/{code}``, ``/user/{code}``): every visit for a
+      single code, latest first.
+
+    Personal endpoints reject security accounts (in-code check). Estate-wide
+    endpoints require ``can_view_other_user_logs`` (admin/security within
+    estate; root globally). Each entry carries denormalized
+    ``resident_fullname``.
+
+    History windows are clamped by ``extended_historical_record`` when
+    an estate_id is known. Access (no paid limit) uses the configured
+    default (14 days).
+    """
+
+    def __init__(self, ahttp_client: AsyncHttpHandler) -> None:
+        self.ahttp_client = ahttp_client
+        self.repository = Repository(ahttp_client)
+
+    async def _resolve_estate_scope(self, requester: dict) -> str | None:
+        """
+        Authorize an estate-wide request and return the estate scope to apply.
+
+        Returns:
+            The requester's estate_id when they may only view their own estate,
+            or None when they may view all estates (root).
+
+        Raises:
+            HTTPException: 403 if the requester may not view others' logs.
+        """
+        permissions = await get_role_permissions(
+            self.ahttp_client, requester["role"]
+        )
+        return resolve_estate_log_scope(requester, permissions)
+
+    async def _apply_retention(
+        self,
+        estate_id: str | None,
+        from_date: datetime | None,
+        requester: dict,
+        auth_token: str | None = None,
+    ) -> datetime | None:
+        """Clamp from_date to entitled days, or the Access default.
+
+        Code-service history sub-gate: ``extended_historical_record``.
+        Root may omit ``estate_id`` (cross-estate). Everyone else must
+        have one so retention can be applied.
+
+        Raises:
+            HTTPException: 403 when ``estate_id`` is missing and the
+                requester is not root.
+        """
+        if not estate_id:
+            if is_root(str(requester.get("role", ""))):
+                return from_date
+            raise HTTPException(
+                status_code=403,
+                detail="Estate is required to view these logs.",
+            )
+        return await resolve_retention_from_date(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=str(estate_id),
+            service_key=EXTENDED_HISTORICAL_RECORD_KEY,
+            from_date=from_date,
+            auth_token=auth_token,
+        )
+
+    @staticmethod
+    def _reject_personal_for_security(requester: dict) -> None:
+        """
+        Block security staff from the personal (``me/``) endpoints.
+
+        Security accounts validate codes but do not own visitor history, so a
+        personal view is meaningless for them.
+
+        Raises:
+            HTTPException: 403 if the requester is a security account.
+        """
+        deny_roles(
+            str(requester.get("role", "")),
+            ("security",),
+            detail="Security accounts have no personal visitor history.",
+        )
+
+    async def _enrich_code_deleted(self, result: dict) -> dict:
+        """
+        Set ``code_deleted`` on each history item from cache expiry.
+
+        Visitor codes live in Redis. A code is treated as deleted when it is
+        missing from cache or ``valid_until`` has passed. Unique codes on the
+        page are resolved concurrently.
+        """
+        items = result.get("items") or []
+        codes = list(
+            {
+                item.get("hashed_code")
+                for item in items
+                if item.get("hashed_code")
+            }
+        )
+        statuses = await asyncio.gather(
+            *(self.repository.is_code_inactive(code) for code in codes)
+        )
+        flags = dict(zip(codes, statuses, strict=True))
+        for item in items:
+            hashed_code = item.get("hashed_code")
+            item["code_deleted"] = flags.get(hashed_code, False)
+        return result
+
+    async def my_history(
+        self,
+        requester: dict,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        First-level personal visitor history: one entry per unique code with
+        ``usage_count``; ``created_at`` reflects the earliest log row per
+        code. Security accounts are rejected.
+        """
+        self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None,
+            from_date,
+            requester,
+            auth_token=auth_token,
+        )
+        result = await self.repository.unique_history(
+            user_id=requester["id"],
+            from_date=effective_from,
+            to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_deleted(result)
+        return ListResponse.model_validate(result)
+
+    async def my_history_by_code(
+        self,
+        requester: dict,
+        hashed_code: str,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        Second-level personal visitor history for one ``hashed_code``, latest
+        first. Security accounts are rejected.
+        """
+        self._reject_personal_for_security(requester)
+        estate_id = requester.get("estate_id")
+        effective_from = await self._apply_retention(
+            str(estate_id) if estate_id else None,
+            None,
+            requester,
+            auth_token=auth_token,
+        )
+        result = await self.repository.code_history(
+            hashed_code=hashed_code,
+            user_id=requester["id"],
+            from_date=effective_from,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_deleted(result)
+        return ListResponse.model_validate(result)
+
+    async def estate_history(
+        self,
+        requester: dict,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        First-level estate-wide visitor history: one entry per unique code with
+        ``usage_count``; ``created_at`` reflects the earliest log row per
+        code. Requires permission to view other users' logs.
+        """
+        estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(
+            estate_scope, from_date, requester, auth_token=auth_token
+        )
+        result = await self.repository.unique_history(
+            estate_id=estate_scope,
+            from_date=effective_from,
+            to_date=to_date,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_deleted(result)
+        return ListResponse.model_validate(result)
+
+    async def estate_history_by_code(
+        self,
+        requester: dict,
+        hashed_code: str,
+        page: int = 1,
+        limit: int = 20,
+        auth_token: str | None = None,
+    ) -> ListResponse:
+        """
+        Second-level estate-wide visitor history for one ``hashed_code``,
+        latest first. Requires permission to view other users' logs.
+        """
+        estate_scope = await self._resolve_estate_scope(requester)
+        effective_from = await self._apply_retention(
+            estate_scope, None, requester, auth_token=auth_token
+        )
+        result = await self.repository.code_history(
+            hashed_code=hashed_code,
+            estate_id=estate_scope,
+            from_date=effective_from,
+            page=page,
+            limit=limit,
+        )
+        result = await self._enrich_code_deleted(result)
+        return ListResponse.model_validate(result)

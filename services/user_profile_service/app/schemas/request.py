@@ -23,6 +23,7 @@ __all__ = [
     "UpdatePendingRequestRequest",
     "UpdatePendingRequestResponse",
     "DeletePendingRequestResponse",
+    "RemindAdminsResponse",
 ]
 
 model_config = ConfigDict(
@@ -42,6 +43,7 @@ class RequestType(str, Enum):
     EMAIL_CHANGE = "email_change"
     GENDER_CHANGE = "gender_change"
     VACATE_RESIDENCE = "vacate_residence"
+    ID_CHANGE = "id_change"
 
 
 class RequestStatus(str, Enum):
@@ -125,6 +127,9 @@ class GetEditRequestResponse(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: Optional[datetime] = Field(
         None, description="Last update timestamp"
+    )
+    last_reminded_at: Optional[datetime] = Field(
+        None, description="When the user last reminded admins"
     )
     is_deleted: bool = Field(False, description="Deletion status")
 
@@ -333,5 +338,24 @@ class DeletePendingRequestResponse(BaseModel):
     @field_serializer("id")
     def serialize_id(self, id: UUID4) -> str:
         return str(id)
+
+    model_config = model_config
+
+
+class RemindAdminsResponse(BaseModel):
+    """
+    Response model after sending a reminder notification to admins.
+
+    Attributes:
+        success (bool): Whether the reminder was sent.
+        message (str): Confirmation or error message.
+        next_remind_after (datetime): Earliest time the user may remind again.
+    """
+
+    success: bool = Field(..., description="Whether the reminder was sent")
+    message: str = Field(..., description="Confirmation message")
+    next_remind_after: datetime = Field(
+        ..., description="Earliest time the user may remind again"
+    )
 
     model_config = model_config

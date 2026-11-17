@@ -4,6 +4,9 @@ from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_APP_ENV = os.getenv("APP_ENV", "dev")
+
+
 class Settings(BaseSettings):
     """
     Imports all the configuration settings for the API service
@@ -16,6 +19,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "cache-service Service"
     APP_VERSION: str = "0.0.1"
     APP_DESCRIPTION: str = "cache-service Service for Estace Code Generator "
+    APP_ENV: str = _APP_ENV
     ENV: str = os.getenv("ENV", "local")
 
     # Environment variables for Redis connection (defaulting to localhost for
@@ -28,8 +32,46 @@ class Settings(BaseSettings):
         f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
     )
 
+    # Maximum visitor code validity horizon from creation time
+    # (default: 14 days).
+    VISITOR_CODE_MAX_VALIDITY_DAYS: int = int(
+        os.getenv("VISITOR_CODE_MAX_VALIDITY_DAYS", "14")
+    )
+
+    # Maximum span between validity period start and end (default: 7 days).
+    VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS: int = int(
+        os.getenv("VISITOR_CODE_MAX_PERIOD_LENGTH_DAYS", "7")
+    )
+
+    # Scheduler — internal API key shared across services
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+    # Hour (UTC, 0-23) at which the daily crons run
+    CRON_HOUR: int = int(os.getenv("CRON_HOUR", "0"))
+    # Full URL of the user-profile-service daily cron endpoint
+    USER_PROFILE_CRON_URL: str = os.getenv(
+        "USER_PROFILE_CRON_URL",
+        "http://user-profile-service:9034/api/v1/internal/cron/daily",
+    )
+    # Full URL of the revenue-service daily cron endpoint
+    REVENUE_CRON_URL: str = os.getenv(
+        "REVENUE_CRON_URL",
+        "http://revenue-service:9037/api/v1/internal/cron/daily",
+    )
+    REVENUE_CRON_HOUR: int = int(os.getenv("REVENUE_CRON_HOUR", "2"))
+    # Full URL of the revenue-service charge retry cron endpoint
+    REVENUE_RETRY_CHARGES_CRON_URL: str = os.getenv(
+        "REVENUE_RETRY_CHARGES_CRON_URL",
+        "http://revenue-service:9037/api/v1/internal/cron/retry-charges",
+    )
+    # Interval in minutes between charge retry cron runs
+    REVENUE_RETRY_CHARGES_INTERVAL_MINUTES: int = int(
+        os.getenv("REVENUE_RETRY_CHARGES_INTERVAL_MINUTES", "60")
+    )
+
     @field_validator("REDIS_URL", mode="before")
     def assemble_db_url(cls, v, info: ValidationInfo):
+        if _APP_ENV == "production":
+            return v
         return (
             f"redis://{info.data['REDIS_HOST']}:"
             f"{info.data['REDIS_PORT']}/{info.data['REDIS_DB']}"

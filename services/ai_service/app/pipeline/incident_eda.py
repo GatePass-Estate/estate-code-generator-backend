@@ -1,19 +1,36 @@
 """
-Exploratory descriptive statistics for incident cohorts (paid tier).
+Exploratory descriptive statistics for incident cohorts.
 
 Counts category labels, custom categories, field completeness, and occurred-at
-range. Output is JSON-safe and fed to the LLM summariser; not used in NMF.
+range. Also builds the result-page category EDA (top five + remainder) and a
+list of separate trend insights.
 """
 
 from __future__ import annotations
 
-from collections import Counter
-from typing import Any
+from collections import Counter, defaultdict
+from datetime import datetime
+from typing import Any, Literal
 
 from app.domain.incident_category import IncidentCategory
 
+PeakTime = Literal["morning", "afternoon", "evening_night"]
+_TOP_N = 5
+_SNIPPET_LEN = 160
+_SAMPLE_N = 2
+
 
 def _parse_ts(raw: Any) -> str | None:
+    """
+    Normalize ``occurred_at`` to a sortable ``YYYY-MM-DD HH:MM:SS``.
+
+    Arguments:
+        raw: Datetime string or other value from an incident row.
+
+    Returns:
+        A truncated timestamp string, or ``None`` when ``raw`` is
+        empty.
+    """
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -21,25 +38,45 @@ def _parse_ts(raw: Any) -> str | None:
     return str(raw)
 
 
+_FIXED_CATEGORIES = {item.value for item in IncidentCategory}
+
+
 def _category_labels(row: dict[str, Any]) -> list[str]:
-    """Normalize ``category`` enum array into lowercase label strings."""
+    """
+    Return only fixed taxonomy labels from ``category``.
+
+    Arguments:
+        row: One incident dict from db-service.
+
+    Returns:
+        Lowercased ``IncidentCategory`` values. Unknown strings and
+        custom text are dropped.
+    """
     raw = row.get("category")
     if raw is None:
         return []
+    values: list[str] = []
     if isinstance(raw, list):
-        labels: list[str] = []
         for x in raw:
             if isinstance(x, IncidentCategory):
-                labels.append(x.value)
+                values.append(x.value)
             elif isinstance(x, str) and x.strip():
-                labels.append(x.strip().lower())
-        return labels
-    if isinstance(raw, str) and raw.strip():
-        return [raw.strip().lower()]
-    return []
+                values.append(x.strip().lower())
+    elif isinstance(raw, str) and raw.strip():
+        values.append(raw.strip().lower())
+    return [label for label in values if label in _FIXED_CATEGORIES]
 
 
 def _custom_category_label(row: dict[str, Any]) -> str | None:
+    """
+    Return the trimmed custom-category string, if any.
+
+    Arguments:
+        row: One incident dict from db-service.
+
+    Returns:
+        Lowercased custom text, or ``None`` when blank.
+    """
     raw = row.get("custom_category")
     if raw is None:
         return None
@@ -49,10 +86,19 @@ def _custom_category_label(row: dict[str, Any]) -> str | None:
 
 def build_incident_eda(records: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    Build descriptive cohort statistics for the paid LLM prompt and API ``summary.eda``.
+    Build descriptive cohort statistics for the LLM prompt and stats.
 
-    Multi-label rows increment each category label separately. Used only when
-    ``estate_payment_active``; not part of TF-IDF/NMF.
+    Multi-label rows increment each fixed category separately. Custom
+    labels are counted in ``custom_category_distribution`` only. Not
+    used by TF-IDF/NMF.
+
+    Arguments:
+        records: Incident rows in the requested window.
+
+    Returns:
+        Record counts, category / custom distributions, field
+        quality, and the occurred-at range. An empty window returns
+        a note instead of zeros-only distributions.
     """
     n = len(records)
     if n == 0:
@@ -107,3 +153,333 @@ def build_incident_eda(records: list[dict[str, Any]]) -> dict[str, Any]:
             "max": occurred_sorted[-1] if occurred_sorted else None,
         },
     }
+
+
+def _occurred_hour(raw: Any) -> int | None:
+    """
+    Extract the hour of ``occurred_at`` when the value is parseable.
+
+    Arguments:
+        raw: A ``datetime`` or ISO-8601 string, possibly with ``Z``.
+
+    Returns:
+        Hour in ``0..23``, or ``None`` if parsing fails.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.hour
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).hour
+    except ValueError:
+        return None
+
+
+def _peak_bucket(hour: int) -> PeakTime:
+    """
+    Map an hour onto morning / afternoon / evening-night.
+
+    Morning is 06–12, afternoon 12–18, otherwise evening/night.
+
+    Arguments:
+        hour: Hour of day in ``0..23``.
+
+    Returns:
+        One of ``morning``, ``afternoon``, ``evening_night``.
+    """
+    if 6 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 18:
+        return "afternoon"
+    return "evening_night"
+
+
+def _snippet(row: dict[str, Any]) -> str:
+    """
+    Build a short title + narrative excerpt for a sample report.
+
+    Arguments:
+        row: One incident dict from db-service.
+
+    Returns:
+        Combined text, truncated to ``_SNIPPET_LEN`` characters.
+    """
+    title = str(row.get("title") or "").strip()
+    narrative = str(row.get("narrative") or "").strip()
+    if title and narrative:
+        body = f"{title}: {narrative}"
+    else:
+        body = title or narrative
+    if len(body) > _SNIPPET_LEN:
+        return body[: _SNIPPET_LEN - 1].rstrip() + "…"
+    return body
+
+
+def _row_labels(row: dict[str, Any]) -> list[str]:
+    """
+    Return the fixed taxonomy labels used for category ranking.
+
+    Arguments:
+        row: One incident dict from db-service.
+
+    Returns:
+        The same labels as ``_category_labels``; custom text is
+        ignored.
+    """
+    return _category_labels(row)
+
+
+def _category_item(
+    *,
+    category: str,
+    count: int,
+    total: int,
+    hours: list[int],
+    snippets: list[str],
+) -> dict[str, Any]:
+    """
+    Build one ranked category's peak time, share, and snippets.
+
+    Arguments:
+        category: Fixed taxonomy label.
+        count: Incidents tagged with this label.
+        total: Cohort size used for ``percentage_share``.
+        hours: ``occurred_at`` hours for peak-time voting.
+        snippets: Pre-built sample excerpts.
+
+    Returns:
+        A dict matching ``CategoryEdaItem``.
+    """
+    buckets: Counter[PeakTime] = Counter()
+    for hour in hours:
+        buckets[_peak_bucket(hour)] += 1
+    peak: PeakTime = "afternoon"
+    if buckets:
+        peak = buckets.most_common(1)[0][0]
+    share = round((count / total) * 100.0, 2) if total else 0.0
+    return {
+        "category": category,
+        "peak_time": peak,
+        "incident_count": count,
+        "percentage_share": share,
+        "sample_reports": snippets[:_SAMPLE_N],
+    }
+
+
+def build_category_eda(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Rank fixed taxonomy categories and split top five from the rest.
+
+    Custom-category text is ignored. Top five are ``top_1`` … ``top_5``
+    (null when fewer than five labels exist). Remaining labels sit
+    under ``other_categories``, still ordered by count descending.
+    Each item has peak time, count, percentage of all reports, and
+    two snippets.
+
+    Arguments:
+        records: Incident rows in the requested window.
+
+    Returns:
+        ``top_1`` … ``top_5`` plus ``other_categories``. An empty
+        cohort returns null tops and an empty remainder map.
+    """
+    empty = {
+        "top_1": None,
+        "top_2": None,
+        "top_3": None,
+        "top_4": None,
+        "top_5": None,
+        "other_categories": {},
+    }
+    total = len(records)
+    if total == 0:
+        return empty
+
+    counts: Counter[str] = Counter()
+    hours: dict[str, list[int]] = defaultdict(list)
+    snippets: dict[str, list[str]] = defaultdict(list)
+    for row in records:
+        labels = _row_labels(row)
+        hour = _occurred_hour(row.get("occurred_at"))
+        sample = _snippet(row)
+        for label in labels:
+            counts[label] += 1
+            if hour is not None:
+                hours[label].append(hour)
+            if sample and len(snippets[label]) < _SAMPLE_N:
+                snippets[label].append(sample)
+
+    ranked = counts.most_common()
+    out = dict(empty)
+    for index, (label, count) in enumerate(ranked[:_TOP_N]):
+        out[f"top_{index + 1}"] = _category_item(
+            category=label,
+            count=count,
+            total=total,
+            hours=hours[label],
+            snippets=snippets[label],
+        )
+    other: dict[str, Any] = {}
+    for label, count in ranked[_TOP_N:]:
+        other[label] = _category_item(
+            category=label,
+            count=count,
+            total=total,
+            hours=hours[label],
+            snippets=snippets[label],
+        )
+    out["other_categories"] = other
+    return out
+
+
+_PEAK_LABELS = {
+    "morning": "morning",
+    "afternoon": "afternoon",
+    "evening_night": "evening/night",
+}
+
+
+def _category_name(raw: Any) -> str:
+    """Turn a taxonomy key into display text."""
+    return str(raw or "unknown").replace("_", " ")
+
+
+def _share_clause(share: Any) -> str:
+    """Return a percentage phrase, or an empty string when share is missing."""
+    if share is None:
+        return ""
+    return f", {share}% of the total"
+
+
+def _trend(kind: str, title: str, detail: str) -> dict[str, str]:
+    """One formattable trend item."""
+    return {"kind": kind, "title": title, "detail": detail}
+
+
+def format_incident_trends(
+    *,
+    record_count: int,
+    category_eda: dict[str, Any],
+    stats: dict[str, Any] | None = None,
+    resident_count: int = 0,
+    security_count: int = 0,
+    resident_percentage: int = 0,
+    security_percentage: int = 0,
+) -> list[dict[str, str]]:
+    """
+    Build separate trend insights from category EDA and reporter mix.
+
+    Always returns at least three items, each a different kind, so the
+    client can format them as a list. Extra items are added only when
+    the window has a runner-up category, uncategorised rows, or a
+    resident/security mix.
+
+    Arguments:
+        record_count: Total incidents in the window.
+        category_eda: Output of ``build_category_eda``.
+        stats: Optional ``build_incident_eda`` payload for the
+            uncategorised-row count.
+        resident_count: Resident-side report count.
+        security_count: Security report count.
+        resident_percentage: Whole-number resident share of the mix.
+        security_percentage: Whole-number security share of the mix.
+
+    Returns:
+        At least three ``{kind, title, detail}`` trend objects.
+    """
+    if not isinstance(category_eda, dict):
+        category_eda = {}
+    noun = "report" if record_count == 1 else "reports"
+    if record_count <= 0:
+        volume = _trend(
+            "volume",
+            "Report volume",
+            "No incident reports matched this estate and date window.",
+        )
+    else:
+        volume = _trend(
+            "volume",
+            "Report volume",
+            f"{record_count} incident {noun} in this window.",
+        )
+
+    top = category_eda.get("top_1")
+    if not isinstance(top, dict):
+        trends = [
+            volume,
+            _trend(
+                "leading_category",
+                "Leading category",
+                "No categorised labels are available to rank in this window.",
+            ),
+            _trend(
+                "peak_time",
+                "Peak time",
+                "No peak time can be read because this window has no "
+                "categorised reports.",
+            ),
+        ]
+    else:
+        name = _category_name(top.get("category"))
+        count = int(top.get("incident_count") or 0)
+        share = _share_clause(top.get("percentage_share"))
+        peak_key = str(top.get("peak_time") or "afternoon")
+        peak = _PEAK_LABELS.get(peak_key, peak_key.replace("_", "/"))
+        report_noun = "report" if count == 1 else "reports"
+        trends = [
+            volume,
+            _trend(
+                "leading_category",
+                "Leading category",
+                f"{name} is the most frequent category "
+                f"({count} {report_noun}{share}).",
+            ),
+            _trend(
+                "peak_time",
+                "Peak time",
+                f"{name} peaks in the {peak}.",
+            ),
+        ]
+        second = category_eda.get("top_2")
+        if isinstance(second, dict):
+            second_name = _category_name(second.get("category"))
+            second_count = int(second.get("incident_count") or 0)
+            second_share = _share_clause(second.get("percentage_share"))
+            second_noun = "report" if second_count == 1 else "reports"
+            trends.append(
+                _trend(
+                    "runner_up",
+                    "Next category",
+                    f"{second_name} is the next most frequent category "
+                    f"({second_count} {second_noun}{second_share}).",
+                )
+            )
+
+    missing = int((stats or {}).get("rows_without_category") or 0)
+    if missing:
+        verb = "has" if missing == 1 else "have"
+        trends.append(
+            _trend(
+                "uncategorised",
+                "Uncategorised reports",
+                f"{missing} report{'s' if missing != 1 else ''} "
+                f"{verb} no taxonomy category.",
+            )
+        )
+
+    mix = resident_count + security_count
+    if mix > 0:
+        trends.append(
+            _trend(
+                "reporter_mix",
+                "Who filed them",
+                "Resident-side roles filed "
+                f"{resident_count} reports ({resident_percentage}%) and "
+                f"security filed {security_count} reports "
+                f"({security_percentage}%).",
+            )
+        )
+    return trends

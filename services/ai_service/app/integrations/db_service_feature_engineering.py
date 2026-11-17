@@ -14,7 +14,8 @@ from app.domain.anomaly_types import AnomalyType
 from app.domain.log_feature_store import FEATURE_JSON_COLUMN
 from app.domain.log_kind import LogKind
 from app.integrations.db_service_logs import _db_url
-from app.models.anomaly_schema import CodeValidationPayload
+from app.models.code_validation import CodeValidationPayload
+from app.core.spatial_anomaly_trace import trace
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ async def batch_lookup_engineered_features(
         FeatureStoreError: On transport failure or non-success HTTP status.
     """
     if not log_ids:
+        trace(
+            "feature-store-lookup",
+            "no prior log ids — skipping batch lookup",
+        )
         return []
     url = _db_url(
         settings, "api/v1/codeservice/logfeatureengineering/batch-lookup"
@@ -79,7 +84,16 @@ async def batch_lookup_engineered_features(
     items = data.get("items") or []
     if not isinstance(items, list):
         return []
-    return [x for x in items if isinstance(x, dict)]
+    rows = [x for x in items if isinstance(x, dict)]
+    trace(
+        "feature-store-lookup",
+        "batch-lookup response",
+        rows_returned=len(rows),
+        row_log_ids=[
+            r.get("visitor_log_id") or r.get("resident_log_id") for r in rows
+        ],
+    )
+    return rows
 
 
 async def upsert_focal_engineered_features(
@@ -90,24 +104,38 @@ async def upsert_focal_engineered_features(
     anomaly_type: AnomalyType,
     features_by_scope_value: dict[str, dict[str, float]],
     log_kind: LogKind,
-    is_anomalous: bool,
-    prediction_result: dict[str, Any],
-) -> None:
+    is_anomalous: bool | None = False,
+    prediction_result: dict[str, Any] | None = None,
+    features_only: bool = False,
+) -> str | None:
     """
     POST ``/logfeatureengineering/upsert`` for the focal log anchor.
 
-    Merges per-scope feature dicts into feature JSON columns and stores a
-    prediction payload under ``prediction_result`` as ``{"result": ...}``.
-    Raises :class:`FeatureStoreError` on failure.
+    Updates the existing row when one already exists for
+    ``(visitor_log_id|resident_log_id, anomaly_type)``; otherwise inserts.
+    Feature JSON columns are replaced in full when supplied.
+
+    When ``features_only=True``, only feature columns are sent so existing
+    ``is_anomalous`` and prediction rows are left unchanged unless
+    ``is_anomalous`` is explicitly set.
+
+    Returns:
+        The persisted ``prediction_result`` id as a string, or ``None`` if
+        the upsert response did not include one.
+
+    Raises:
+        FeatureStoreError: On failure.
     """
     url = _db_url(settings, "api/v1/codeservice/logfeatureengineering/upsert")
     body: dict[str, Any] = {
         "anomaly_type": anomaly_type.value,
         "log_kind": log_kind.value,
-        "is_anomalous": is_anomalous,
-        "prediction_type": _PREDICTION_TYPE_BY_ANOMALY[anomaly_type],
-        "prediction_result": {"result": prediction_result},
     }
+    if is_anomalous is not None:
+        body["is_anomalous"] = is_anomalous
+    if not features_only and prediction_result is not None:
+        body["prediction_type"] = _PREDICTION_TYPE_BY_ANOMALY[anomaly_type]
+        body["prediction_result"] = {"result": prediction_result}
     if code_validation.visitor_log_id is not None:
         body["visitor_log_id"] = str(code_validation.visitor_log_id)
     else:
@@ -116,6 +144,20 @@ async def upsert_focal_engineered_features(
         key = _SCOPE_VALUE_TO_UPSERT_KEY.get(scope_val)
         if key is not None:
             body[key] = feats
+    trace(
+        "feature-store-upsert",
+        "persist focal features"
+        if features_only
+        else "persist focal features + prediction",
+        log_kind=log_kind.value,
+        is_anomalous=is_anomalous,
+        final_score=(
+            prediction_result.get("final_score")
+            if isinstance(prediction_result, dict)
+            else None
+        ),
+        scopes=list(features_by_scope_value.keys()),
+    )
     try:
         response = await client.post(url, json=body)
         response.raise_for_status()
@@ -128,3 +170,8 @@ async def upsert_focal_engineered_features(
             f"db-service feature upsert HTTP error: {exc}",
             status_code=502,
         ) from exc
+    data = response.json() if response.content else {}
+    pred_id = (
+        data.get("prediction_result_id") if isinstance(data, dict) else None
+    )
+    return str(pred_id) if pred_id else None

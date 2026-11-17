@@ -6,7 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime config for anomaly detection, incident topic modelling, and LLM summaries."""
+    """
+    Runtime config for anomaly, incident, and volume-forecast pipelines.
+
+    Spatial anomaly finetuning knobs (history confidence, threshold, per-scope
+    fetch cap) are grouped below ``ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD``.
+    Static scope/detector/feature priors live in :mod:`app.core.ensemble_config`.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env.localdocker", extra="ignore"
@@ -15,8 +21,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "ai-service"
     APP_VERSION: str = "0.1.0-draft"
     APP_DESCRIPTION: str = (
-        "AI service: visit anomaly detection and incident report intelligence "
-        "(TF-IDF+NMF topic modelling, payment-gated LLM summaries)"
+        "AI service: visit anomaly detection, incident report intelligence "
+        "(TF-IDF+NMF topic modelling, payment-gated LLM summaries), and "
+        "ARIMA validation-volume forecasting"
     )
     ENV: str = os.getenv("ENV", "local")
 
@@ -29,10 +36,84 @@ class Settings(BaseSettings):
     CODE_SERVICE_URL: str = os.getenv(
         "CODE_SERVICE_URL", "http://code-service:9033/"
     )
+    REVENUE_SERVICE_URL: str = os.getenv(
+        "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
+    )
+    #: Max characters allowed on an AI marketplace rating comment.
+    RATING_COMMENT_MAX_LENGTH: int = 1000
     #: Ensemble score at or above this marks the focal row ``is_anomalous`` in the feature store.
-    ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.5
+    ENSEMBLE_ANOMALOUS_SCORE_THRESHOLD: float = 0.74
+    #: ``final_score`` at or above this maps to high severity (medium starts at threshold).
+    SPATIAL_SEVERITY_HIGH_MIN: float = 0.8
 
-    #: Optional OpenAI-compatible chat API for incident summarisation.
+    # --- Spatial ensemble history-confidence (app/pipeline/analysis_manager.py) ---
+    #: Reference depth treated as a "full" 30-day cohort per scope.
+    SPATIAL_EXPECTED_REFERENCE_CAP: int = 10
+    #: Minimum stored vectors required before a scope contributes (else weight 0).
+    SPATIAL_MIN_MATCHED_TO_SCORE: int = 5
+    #: Floor on history-confidence when matched >= MIN (0 = fully exclude thin scopes).
+    SPATIAL_HISTORY_CONFIDENCE_FLOOR: float = 0.0
+    #: Max prior log rows fetched per analysis scope (scope-specific search filters).
+    SPATIAL_SCOPE_HISTORY_LIMIT: int = 40
+    #: Print payload / feature-engineering / history trace to stdout.
+    SPATIAL_ANOMALY_PAYLOAD_DEBUG: bool = (
+        os.getenv("SPATIAL_ANOMALY_PAYLOAD_DEBUG", "").lower()
+        in ("1", "true", "yes")
+        or os.getenv("ENV", "local") == "local"
+    )
+
+    # --- Spatial K-means detector (app/pipeline/spatial_anomaly_models/kmeans_model.py) ---
+    #: Upper bound on K-means clusters (actual = min of this and history size).
+    SPATIAL_KMEANS_MAX_CLUSTERS: int = 8
+    #: Fixed seed so repeated fits on the same history are deterministic.
+    SPATIAL_KMEANS_RANDOM_STATE: int = 42
+    #: Percentile of historical min-centroid distances used as the focal denominator.
+    SPATIAL_KMEANS_HIST_DISTANCE_PERCENTILE: float = 95.0
+
+    # --- Spatial DBSCAN detector (app/pipeline/spatial_anomaly_models/dbscan_model.py) ---
+    #: Neighbourhood radius used when history is too small to derive one from data.
+    SPATIAL_DBSCAN_FALLBACK_EPS: float = 0.75
+    #: Lower bound on DBSCAN ``min_samples``.
+    SPATIAL_DBSCAN_MIN_SAMPLES_FLOOR: int = 2
+    #: Upper bound on DBSCAN ``min_samples`` (actual = clamped by history size).
+    SPATIAL_DBSCAN_MIN_SAMPLES_CAP: int = 5
+    #: Score for an in-cluster focal when no historical noise exists.
+    SPATIAL_DBSCAN_INCLUSTER_BASELINE: float = 0.05
+    #: Base term of the distance-to-noise blend for an in-cluster focal.
+    SPATIAL_DBSCAN_NOISE_BLEND_BASE: float = 0.15
+    #: Scale term of the distance-to-noise blend for an in-cluster focal.
+    SPATIAL_DBSCAN_NOISE_BLEND_SCALE: float = 0.85
+
+    # --- Spatial LOF detector (app/pipeline/spatial_anomaly_models/lof_model.py) ---
+    #: Upper bound on LOF neighbours (actual = clamped to history size - 1).
+    SPATIAL_LOF_MAX_NEIGHBORS: int = 20
+    #: sklearn ``LocalOutlierFactor`` contamination ("auto" or a float in (0, 0.5]).
+    SPATIAL_LOF_CONTAMINATION: float | str = "auto"
+    #: Minimum score floor for an inlier focal.
+    SPATIAL_LOF_INLIER_BASELINE: float = 0.05
+    #: Maximum score an inlier focal can reach (below the anomalous band).
+    SPATIAL_LOF_INLIER_MAX: float = 0.5
+    #: How strongly the relative decision-function gap lifts an inlier score.
+    SPATIAL_LOF_INLIER_UPLIFT_SCALE: float = 0.45
+
+    #: Temporal (Matrix Profile) discord score at or above this flags ``is_anomalous``.
+    TEMPORAL_ANOMALY_SCORE_THRESHOLD: float = 0.5
+    #: Matrix Profile subsequence length in days (default: one week).
+    TEMPORAL_SUBSEQUENCE_WINDOW_DAYS: int = 7
+    #: History must span at least this many subsequence windows or a 422 is returned.
+    TEMPORAL_MIN_HISTORY_WINDOW_MULTIPLE: int = 3
+
+    #: Vertex ADC (prod ``gatepass_llm`` stream); path set in ``.env.secrets``.
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    )
+    GCP_PROJECT_ID: str | None = os.getenv("GCP_PROJECT_ID")
+    GCP_VERTEX_LOCATION: str = os.getenv("GCP_VERTEX_LOCATION", "global")
+    GCP_LLM_CHAT_MODEL: str = os.getenv(
+        "GCP_LLM_CHAT_MODEL", "google/gemini-2.5-flash"
+    )
+
+    #: Non-prod ``gatepass_llm`` stream (OpenAI-compatible).
     OPENAI_API_KEY: str | None = os.getenv("OPENAI_API_KEY")
     OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     OPENAI_BASE_URL: str = os.getenv(

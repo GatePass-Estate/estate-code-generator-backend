@@ -358,23 +358,19 @@ class VisitorLogRepository:
             raise DatabaseError(message) from e
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        unique: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter visitor-log rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-            page: The page number to retrieve.
-            limit: The max number of items per page.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
-
-        Raises:
-            DatabaseError: If there's an error during the database operation.
+        ``unique`` collapses to one row per ``hashed_code`` (first-level BFF
+        history). ``ascending`` defaults to descending (latest first). Rows
+        include denormalized ``resident_fullname``.
         """
         # Create a query to get all records from the database.
         query = select(TableModel).where(
@@ -404,9 +400,19 @@ class VisitorLogRepository:
                 else:
                     query = query.where(column == field_value)
 
-        # Order the records by the created_at timestamp in descending order.
-        order_by = (TableModel.created_at.desc(),)
         try:
+            if unique:
+                return await self._search_unique(
+                    query=query,
+                    ascending=ascending,
+                    page=page,
+                    limit=limit,
+                )
+            order_by = (
+                (TableModel.created_at.asc(),)
+                if ascending
+                else (TableModel.created_at.desc(),)
+            )
             return await self._list(
                 query=query,
                 order_by=order_by,
@@ -415,5 +421,115 @@ class VisitorLogRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def _search_unique(
+        self,
+        query: Select,
+        ascending: bool = False,
+        page: int = 1,
+        limit: int = 20,
+    ) -> ListResponse:
+        """
+        Collapse a filtered query to one entry per unique ``hashed_code``.
+
+        Keeps the most recent row per code for display fields, attaches
+        ``usage_count`` (total validations per code within the filtered set),
+        and sets ``created_at`` from the earliest row per code so first-level
+        history reflects when the code was first used.
+        """
+        filtered = query.subquery("filtered")
+        row_num = (
+            func.row_number()
+            .over(
+                partition_by=filtered.c.hashed_code,
+                order_by=filtered.c.created_at.desc(),
+            )
+            .label("rn")
+        )
+        earliest_row_num = (
+            func.row_number()
+            .over(
+                partition_by=filtered.c.hashed_code,
+                order_by=filtered.c.created_at.asc(),
+            )
+            .label("ern")
+        )
+        usage_count = (
+            func.count()
+            .over(partition_by=filtered.c.hashed_code)
+            .label("usage_count")
+        )
+        ranked = (
+            select(filtered, row_num, earliest_row_num, usage_count)
+            .select_from(filtered)
+            .subquery("ranked")
+        )
+        earliest_created = (
+            select(
+                ranked.c.hashed_code,
+                ranked.c.created_at.label("earliest_created_at"),
+            )
+            .where(ranked.c.ern == 1)
+            .subquery("earliest_created")
+        )
+        count_query = (
+            select(func.count()).select_from(ranked).where(ranked.c.rn == 1)
+        )
+        order_column = earliest_created.c.earliest_created_at
+        records_query = (
+            select(ranked, earliest_created.c.earliest_created_at)
+            .select_from(ranked)
+            .join(
+                earliest_created,
+                func.lower(ranked.c.hashed_code)
+                == func.lower(earliest_created.c.hashed_code),
+            )
+            .where(ranked.c.rn == 1)
+            .order_by(order_column.asc() if ascending else order_column.desc())
+            .limit(limit)
+            .offset((page - 1) * limit)
+        )
+        try:
+            total = await self.session.scalar(count_query)
+            rows = (await self.session.execute(records_query)).all()
+            items = []
+            for row in rows:
+                mapping = row._mapping
+                items.append(
+                    GetResponse.model_validate(
+                        {
+                            "id": mapping["id"],
+                            "created_at": mapping["earliest_created_at"],
+                            "updated_at": mapping["updated_at"],
+                            "is_deleted": mapping["is_deleted"],
+                            "user_id": mapping["user_id"],
+                            "estate_id": mapping["estate_id"],
+                            "resident_fullname": mapping["resident_fullname"],
+                            "visitor_fullname": mapping["visitor_fullname"],
+                            "relationship_with_resident": mapping[
+                                "relationship_with_resident"
+                            ],
+                            "gender": mapping["gender"],
+                            "hashed_code": mapping["hashed_code"],
+                            "security_id": mapping["security_id"],
+                            "visit_time": mapping["visit_time"],
+                            "usage_count": mapping["usage_count"],
+                        }
+                    )
+                )
+            return ListResponse(
+                items=items,
+                total=total,
+                page=page,
+                limit=limit,
+            )
+        except SQLAlchemyError as e:
+            message = "Database error in retrieving unique search results"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+        except Exception as e:
+            message = "Unexpected error in retrieving unique search results"
             logger.exception(message)
             raise DatabaseError(message) from e

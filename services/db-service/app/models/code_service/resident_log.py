@@ -21,6 +21,7 @@ class ResidentLog(BaseModelDB):
             deleted.
         user_id (UUID): Reference to the resident.
         estate_id (UUID): Reference to the estate.
+        full_name (str): Full name of the resident (denormalized from users).
         hashed_code (str): Resident's generated access code.
         security_id (UUID): Security personnel who validated the access.
         access_time (DateTime): Timestamp of resident access validation.
@@ -37,6 +38,10 @@ class ResidentLog(BaseModelDB):
     estate_id = Column(
         UUID(as_uuid=True),
         ForeignKey("core.estates.id"),
+        nullable=False,
+    )
+    full_name = Column(
+        type_=String,
         nullable=False,
     )
     hashed_code = Column(

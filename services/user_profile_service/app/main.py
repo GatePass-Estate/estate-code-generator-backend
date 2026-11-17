@@ -1,5 +1,7 @@
 import logging
+from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -7,14 +9,25 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import api_router
 from app.core.config import settings
+from app.libs.http_handler import handler
 
 logger = logging.getLogger("user-profile-service")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    client = httpx.AsyncClient(timeout=30.0)
+    handler.set_client(client)
+    yield
+    await client.aclose()
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
     root_path="/user",
+    lifespan=lifespan,
 )
 
 # Enable CORS for all origins/methods/headers
@@ -45,7 +58,7 @@ def custom_openapi():
         openapi_schema["components"] = {}
 
     openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2PasswordBearer": {
+        "HTTPBearer": {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
@@ -53,7 +66,7 @@ def custom_openapi():
         }
     }
 
-    openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
+    openapi_schema["security"] = [{"HTTPBearer": []}]
 
     for path in openapi_schema["paths"]:
         if path in ("/", "/healthz"):
@@ -69,7 +82,8 @@ app.openapi = custom_openapi
 
 @app.get("/")
 async def root():
-    """Avoid 404 on GET / (LB probes and browsers); use /healthz or /api/v1 for APIs."""
+    """Avoid 404 on GET / (LB probes and browsers); use /healthz or
+    /api/v1 for APIs."""
     return JSONResponse(
         content={"service": "user-profile-service", "status": "ok"}
     )

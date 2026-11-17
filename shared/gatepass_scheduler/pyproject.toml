@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "gatepass-scheduler"
+version = "0.1.0"
+description = "Shared HTTP job scheduler for GatePass services"
+authors = ["GatePass"]
+packages = [{ include = "gatepass_scheduler" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+httpx = ">=0.27.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

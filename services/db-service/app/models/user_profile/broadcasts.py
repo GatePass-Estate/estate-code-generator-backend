@@ -1,9 +1,17 @@
 import logging
 
-from sqlalchemy import Column, String, Enum, Boolean, ForeignKey, DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    Column,
+    String,
+    Text,
+    Boolean,
+    ForeignKey,
+    DateTime,
+    Enum,
+)
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
+
 from app.models.base import BaseModelDB
-from app.schemas.user_profile.broadcasts import Audience
 
 logger = logging.getLogger(__name__)
 
@@ -14,16 +22,14 @@ class Broadcasts(BaseModelDB):
 
     Attributes:
         id (UUID): Unique identifier for each broadcast.
-        created_at (DateTime): Created timestamp.
-        updated_at (DateTime): Updated timestamp.
-        deleted_at (Optional[DateTime]): UTC Time when the item was deleted.
-        is_deleted (Optional[Boolean]): Flag to indicate if the item is (soft)
-            deleted.
-        estate_id (UUID): Broadcast estate.
+        estate_id (UUID): Broadcast estate (NULL for root broadcasts).
         sender_id (UUID): User who created the broadcast.
         title (str): Broadcast title.
-        message (str): Full Broadcast message.
-        audience (Audience): Audience for the broadcast.
+        message (str): Full broadcast message.
+        audience (List[str]): Role-based audience (e.g. ["resident"]).
+        priority (str): Delivery priority — LOW, MEDIUM, or HIGH.
+        category (str): Broadcast category — BROADCAST or AD.
+        sender_name (str): Optional custom sender display name.
         attachment_url (str): Optional URL of the attachment.
         status (bool): Active/inactive status.
         expires_at (DateTime): UTC timestamp of expiration.
@@ -40,10 +46,31 @@ class Broadcasts(BaseModelDB):
     )
     title = Column(String, nullable=False)
     message = Column(String, nullable=False)
-    audience = Column(
-        Enum(Audience, name="audience", schema="core", create_type=False),
+    audience = Column(ARRAY(Text), nullable=False)
+    priority = Column(
+        Enum(
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            name="broadcast_priority",
+            schema="core",
+            create_type=False,
+        ),
         nullable=False,
+        default="LOW",
     )
+    category = Column(
+        Enum(
+            "BROADCAST",
+            "AD",
+            name="broadcast_category",
+            schema="core",
+            create_type=False,
+        ),
+        nullable=False,
+        default="BROADCAST",
+    )
+    sender_name = Column(String, nullable=True)
     attachment_url = Column(String, nullable=True)
     status = Column(Boolean, nullable=False)
-    expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)

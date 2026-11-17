@@ -98,19 +98,23 @@ class ResidentLogService:
         return await self.repository.list(page=page, limit=limit)
 
     async def search(
-        self, request: SearchRequest, page: int = 1, limit: int = 20
+        self,
+        request: SearchRequest,
+        page: int = 1,
+        limit: int = 20,
+        unique: bool = False,
+        ascending: bool = False,
     ) -> ListResponse:
         """
-        Filters items based on the provided search criteria and returns
-        a list of them meeting the criteria.
+        Filter resident-log rows and return a paginated list.
 
-        Arguments:
-            request: The request body for searching items.
-
-        Returns:
-            A ListResponse object containing all the items found from the table
-            which match the requested criteria.
+        Supports ``unique`` and ``ascending`` for code-service BFF history
+        endpoints (first- and second-level).
         """
         return await self.repository.search(
-            request=request, page=page, limit=limit
+            request=request,
+            page=page,
+            limit=limit,
+            unique=unique,
+            ascending=ascending,
         )

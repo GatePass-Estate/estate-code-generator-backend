@@ -1,3 +1,14 @@
+import asyncio
+import logging
+import secrets
+from typing import List, Optional
+from urllib.parse import urlencode
+
+import httpx
+import pyotp
+from cryptography.fernet import Fernet
+from passlib.context import CryptContext
+
 from app.schemas.user import (
     RegisterUserRequest,
     RegisterUserResponse,
@@ -7,6 +18,7 @@ from app.schemas.user import (
     DeleteUserResponse,
     SearchUserRequest,
     ListUserResponse,
+    RoleSummary,
     SetPasswordRequest,
     SetPasswordResponse,
     UpdatePasswordRequest,
@@ -28,12 +40,44 @@ from app.services.token import (
     generate_password_reset_token,
     decode_password_reset_token,
     decode_tos_pending_token,
+    decode_2fa_pending_token,
 )
 from app.libs.password_utils import (
     generate_random_password,
     hash_password,
 )
 from fastapi import HTTPException
+from gatepass_entitlement import assert_seat_available
+from gatepass_rbac import require_higher_rank, same_estate
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _log_user_fetch_exception(user_id: str, exc: Exception) -> None:
+    """Log the underlying db-service error; caller still returns 503 to
+    clients."""
+    status_code = None
+    if isinstance(exc, HTTPException):
+        status_code = exc.status_code
+    elif isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+
+    if status_code == 404:
+        logger.error("User not found while fetching user_id=%s", user_id)
+    elif status_code == 500:
+        logger.error(
+            "Internal server error while fetching user_id=%s", user_id
+        )
+    else:
+        logger.error(
+            "Failed to fetch user_id=%s (status_code=%s): %s",
+            user_id,
+            status_code,
+            exc,
+            exc_info=True,
+        )
 
 
 class UserService:
@@ -66,8 +110,29 @@ class UserService:
         self.household_repository = household_repository
         self.admin_repository = admin_repository
 
+    # --- private helpers ---
+
+    def _get_fernet(self) -> Fernet:
+        from app.core.config import settings
+
+        key = settings.TOTP_ENCRYPTION_KEY
+        if not key:
+            raise HTTPException(
+                status_code=500,
+                detail="TOTP encryption key not configured.",
+            )
+        return Fernet(key.encode())
+
+    def _encrypt_secret(self, secret: str) -> str:
+        return self._get_fernet().encrypt(secret.encode()).decode()
+
+    def _decrypt_secret(self, encrypted: str) -> str:
+        return self._get_fernet().decrypt(encrypted.encode()).decode()
+
     async def register_user(
-        self, request: RegisterUserRequest
+        self,
+        request: RegisterUserRequest,
+        auth_token: str | None = None,
     ) -> tuple[RegisterUserResponse, str]:
         """
         Handles user registration flow.
@@ -93,27 +158,36 @@ class UserService:
                     detail="A primary admin already exists for this estate.",
                 )
 
+        # Enforce covered seat / max_active_users before creating the account
+        active_users = await self.repository.search_users(
+            SearchUserRequest(
+                estate_id=request.estate_id,
+                status=True,
+                page=1,
+                limit=1,
+            )
+        )
+        await assert_seat_available(
+            settings.REVENUE_SERVICE_URL,
+            estate_id=str(request.estate_id),
+            current_active_users=int(active_users.total or 0),
+            auth_token=auth_token,
+        )
+
         # Generate random password for new user
         raw_password = generate_random_password()
         hashed_password = hash_password(raw_password)
 
-        # Check if email already exists
-        existing_user = await self.repository.get_user_by_email(request.email)
-
-        if existing_user:
-            if existing_user.status:
-                raise HTTPException(
-                    status_code=400, detail="Email already registered"
-                )
-            # Email exists but user is not yet active — overwrite with new data
-            user = await self.repository.overwrite_user_registration(
-                str(existing_user.id), request, hashed_password
+        # Block if an active account already exists for this (email, estate)
+        if await self.repository.check_active_email_exists(
+            request.email, str(request.estate_id)
+        ):
+            raise HTTPException(
+                status_code=400, detail="Email already registered"
             )
-            token = generate_email_token(str(existing_user.id))
-        else:
-            # Create a brand new user
-            user = await self.repository.create_user(request, hashed_password)
-            token = generate_email_token(str(user.id))
+
+        user = await self.repository.create_user(request, hashed_password)
+        token = generate_email_token(str(user.id))
 
         return user, token
 
@@ -213,7 +287,58 @@ class UserService:
         Returns:
             ListUserResponse: Search results with pagination.
         """
-        return await self.repository.search_users(request)
+        result = await self.repository.search_users(request)
+
+        # Enrich items with household_name
+        household_ids = list(
+            {str(u.household_id) for u in result.items if u.household_id}
+        )
+        if household_ids:
+            households = await asyncio.gather(
+                *[
+                    self.household_repository.get_household_by_id(hid)
+                    for hid in household_ids
+                ],
+                return_exceptions=True,
+            )
+            household_map = {}
+            for hid, h in zip(household_ids, households):
+                if isinstance(h, Exception) or h is None:
+                    continue
+                household_map[hid] = h.name
+
+            for user in result.items:
+                if user.household_id:
+                    user.household_name = household_map.get(
+                        str(user.household_id)
+                    )
+
+        # Populate role summary if estate_id is available
+        if request.estate_id:
+            try:
+                status_str = (
+                    str(request.status).lower()
+                    if request.status is not None
+                    else "all"
+                )
+                role_counts = await self._get_role_counts(
+                    estate_id=str(request.estate_id),
+                    status=status_str,
+                    from_date=request.from_date,
+                    to_date=request.to_date,
+                )
+                result.role_summary = RoleSummary(
+                    root=role_counts.get("root", 0),
+                    primary_admin=role_counts.get("primary_admin", 0),
+                    admin=role_counts.get("admin", 0),
+                    resident=role_counts.get("resident", 0),
+                    security=role_counts.get("security", 0),
+                    guest=role_counts.get("guest", 0),
+                )
+            except Exception as e:
+                logger.error(f"Failed to calculate role summary: {e}")
+
+        return result
 
     async def list_users(
         self, page: int = 1, limit: int = 10
@@ -251,20 +376,35 @@ class UserService:
 
     async def set_password_and_activate(
         self, request: SetPasswordRequest
-    ) -> SetPasswordResponse:
+    ) -> tuple[SetPasswordResponse, str]:
         """
         Sets user password (for new accounts after email verification).
 
+        The caller supplies the email-verification JWT that was sent to
+        the user.  The server decodes it to obtain the ``user_id``
+        rather than trusting client-supplied values.
+
         Args:
-            request: The password set request.
+            request: Contains the email-verification JWT and the new
+                password.
 
         Returns:
-            SetPasswordResponse: Operation result.
+            Tuple of (SetPasswordResponse, user_id_str) so the caller
+            can fire notifications without needing ``payload.user_id``.
 
         Raises:
-            HTTPException: If user not found or already activated.
+            HTTPException: If token is invalid/expired, user not found,
+            or already activated.
         """
-        user = await self.repository.get_user_by_id(str(request.user_id))
+        try:
+            user_id = decode_email_token(request.token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired verification token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
 
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
@@ -274,10 +414,19 @@ class UserService:
                 status_code=400, detail="Account already activated"
             )
 
+        # Block if another account with the same email is already active
+        if user.estate_id and await self.repository.check_active_email_exists(
+            user.email, str(user.estate_id)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Another account with this email is already active in this estate.",
+            )
+
         # Hash password and activate account
         hashed_password = hash_password(request.new_password)
 
-        response = await self.validate_user(str(request.user_id))
+        response = await self.validate_user(str(user_id))
 
         if not response:
             raise HTTPException(
@@ -285,7 +434,7 @@ class UserService:
             )
 
         # Update password and activate user
-        url = f"{self.repository.users_endpoint}/{request.user_id}"
+        url = f"{self.repository.users_endpoint}/{user_id}"
         response = await self.repository.client.async_patch(
             url,
             json_data={
@@ -299,9 +448,12 @@ class UserService:
                 status_code=500, detail="Password update failed"
             )
 
-        return SetPasswordResponse(
-            success=True,
-            message="Password set and account activated successfully",
+        return (
+            SetPasswordResponse(
+                success=True,
+                message="Password set and account activated successfully",
+            ),
+            str(user_id),
         )
 
     async def update_password(
@@ -377,22 +529,6 @@ class UserService:
             if not user or user.is_deleted:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            # If no household and the role is NOT the root user,
-            # create one and assign user as primary_resident
-            if not user.household_id and user.role != "root":
-                household = await self.household_repository.create_household(
-                    {
-                        "estate_id": str(user.estate_id),
-                        "primary_resident_id": str(user.id),
-                        "max_members": 10,
-                    }
-                )
-                household_id = household["id"]
-                payload = UpdateUserRequest(household_id=household_id)
-                await self.repository.update_user(
-                    user_id=str(user.id), data=payload
-                )
-
             # If admin or primary_admin, add to admin_management
             if user.role in ("admin", "primary_admin"):
                 await self.admin_repository.create_admin_record(
@@ -410,6 +546,8 @@ class UserService:
                         estate_id=str(user.estate_id), estate_data=payload
                     )
             return True
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -441,22 +579,22 @@ class UserService:
             raise HTTPException(status_code=404, detail="Estate not found")
         estate_name = estate_name.name
 
-        primary_resident_id = None
+        household_name = None
+        head_user_id = None
         if user.household_id:
             household = await self.household_repository.get_household_by_id(
                 str(user.household_id)
             )
-            if household and household["primary_resident_id"]:
-                primary_resident_id = household["primary_resident_id"]
+            if household:
+                household_name = household.name
+                if household.head_user_id:
+                    head_user_id = household.head_user_id
 
-        if primary_resident_id:
-            primary_resident = await self.repository.get_user_by_id(
-                str(primary_resident_id)
-            )
-            if primary_resident:
+        if head_user_id:
+            head_user = await self.repository.get_user_by_id(str(head_user_id))
+            if head_user:
                 primary_resident_name = (
-                    f"{primary_resident.first_name} "
-                    f"{primary_resident.last_name}"
+                    f"{head_user.first_name} {head_user.last_name}"
                 )
             else:
                 primary_resident_name = None
@@ -474,6 +612,7 @@ class UserService:
             role=user.role,
             estate_id=estate_id,
             estate_name=estate_name,
+            household_name=household_name,
             household_primary_resident=primary_resident_name,
             status=user.status,
         )
@@ -562,11 +701,6 @@ class UserService:
                 from_date=from_date,
                 to_date=to_date,
             )
-
-            # Import RoleSummary
-            from app.schemas.user import RoleSummary
-
-            # Add role summary to response
             response.role_summary = RoleSummary(
                 root=role_counts.get("root", 0),
                 primary_admin=role_counts.get("primary_admin", 0),
@@ -577,9 +711,6 @@ class UserService:
             )
         except Exception as e:
             # If role summary calculation fails, log but continue
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to calculate role summary: {e}")
             # Leave role_summary as None
 
@@ -593,55 +724,44 @@ class UserService:
         to_date=None,
     ) -> dict:
         """
-        Gets role counts for users in a specific estate.
+        Gets role counts for users in a specific estate via a
+        dedicated db-service GROUP BY endpoint.
 
         Args:
             estate_id: The estate ID.
-            status: Optional status filter.
+            status: Optional status filter ("true", "false", or "all").
             from_date: Optional creation date filter (from).
             to_date: Optional creation date filter (to).
 
         Returns:
             dict: Dictionary with role as key and count as value.
         """
-        # Fetch all users with same filters
-        if status == "all":
-            request = SearchUserRequest(
-                estate_id=estate_id,
-                page=1,
-                limit=10000000,  # Very large limit to ensure all users
-                from_date=from_date,
-                to_date=to_date,
+        params: dict = {"estate_id": estate_id}
+        if status and status != "all":
+            params["status"] = status
+        if from_date:
+            params["from_date"] = (
+                from_date.isoformat()
+                if hasattr(from_date, "isoformat")
+                else str(from_date)
             )
-        else:
-            request = SearchUserRequest(
-                estate_id=estate_id,
-                status=status == "true",
-                page=1,
-                limit=10000000,  # Very large limit to ensure all users
-                from_date=from_date,
-                to_date=to_date,
+        if to_date:
+            params["to_date"] = (
+                to_date.isoformat()
+                if hasattr(to_date, "isoformat")
+                else str(to_date)
             )
 
-        all_users_response = await self.repository.search_users(request)
+        query_string = urlencode(params)
+        url = f"{self.repository.users_endpoint}/role-counts?{query_string}"
+        response = await self.repository.client.async_get(url)
 
-        # Count users by role
-        from collections import Counter
+        if not response or "items" not in response:
+            return {}
 
-        # Extract role as string (in case it's an enum or object)
-        roles = []
-        for user in all_users_response.items:
-            role = user.role
-            # Convert to string if it's an enum or has a value attribute
-            if hasattr(role, "value"):
-                role = role.value
-            elif not isinstance(role, str):
-                role = str(role)
-            roles.append(role)
-
-        role_counts = Counter(roles)
-
-        return dict(role_counts)
+        return {
+            item["role"].lower(): item["count"] for item in response["items"]
+        }
 
     async def get_estate_id_by_user_id(self, user_id: str) -> str:
         """
@@ -726,7 +846,7 @@ class UserService:
         try:
             user = await self.repository.get_user_by_id(user_id)
             requester = await self.repository.get_user_by_id(requester_user_id)
-            return user.estate_id == requester.estate_id
+            return same_estate(user, requester)
         except Exception:
             return False
 
@@ -775,30 +895,39 @@ class UserService:
             )
 
         token = generate_email_token(str(user.id))
-        return user.email, user.first_name, token
+        return str(user.id), token
 
-    async def forgot_password(self, email: str) -> tuple[str, str] | None:
+    async def forgot_password(
+        self, email: str, estate_id: Optional[str] = None
+    ) -> tuple[str, str] | None:
         """
-        Initiates the forgot password flow for a given email.
+        Initiates the forgot password flow for a given email and estate.
 
-        Looks up the user by email. If the user exists and is activated,
-        generates a password reset token and returns (email, token).
-        Returns None if the user does not exist or is not activated,
-        so the caller always responds the same way (no enumeration).
+        Looks up the active user for (email, estate_id). If estate_id is
+        omitted, only resolves for root users. Returns None for any
+        unresolved case to prevent enumeration.
 
         Args:
             email: The email address to reset the password for.
+            estate_id: The estate the account belongs to. None for root only.
 
         Returns:
-            Tuple of (email, token) if user found and active, else None.
+            Tuple of (email, first_name, token) if found and active, else None.
         """
-        user = await self.repository.get_user_by_email(email)
+        if estate_id:
+            user = await self.repository.get_user_by_email_and_estate(
+                email, estate_id, active_only=True
+            )
+        else:
+            user = await self.repository.get_user_by_email(email)
+            if user and user.role != Role.ROOT:
+                return None
 
         if not user or not user.status or user.is_deleted:
             return None
 
         token = generate_password_reset_token(str(user.id))
-        return user.email, user.first_name, token
+        return str(user.id), token
 
     async def verify_password_reset_token(
         self, token: str
@@ -817,7 +946,7 @@ class UserService:
             or user not found/inactive.
         """
         try:
-            user_id = decode_password_reset_token(token)
+            user_id, _iat = decode_password_reset_token(token)
         except Exception:
             raise HTTPException(
                 status_code=400,
@@ -843,21 +972,33 @@ class UserService:
 
     async def reset_password(
         self, request: SetPasswordRequest
-    ) -> SetPasswordResponse:
+    ) -> tuple[SetPasswordResponse, str]:
         """
-        Resets the password for an activated user
-        (no current password required).
+        Resets the password for an activated user using a password-reset
+        token.  The token is single-use: once the password is changed the
+        user's ``updated_at`` advances past the token's ``iat``, which
+        invalidates the token for any subsequent request.
 
         Args:
-            request: Contains user_id and the new password.
+            request: Contains the password-reset JWT and the new password.
 
         Returns:
-            SetPasswordResponse: Operation result.
+            Tuple of (SetPasswordResponse, user_id_str) so the caller can
+            fire notifications without needing ``payload.user_id``.
 
         Raises:
-            HTTPException: If user not found or account not activated.
+            HTTPException: If token is invalid/expired/reused, user not
+            found, or account not activated.
         """
-        user = await self.repository.get_user_by_id(str(request.user_id))
+        try:
+            user_id, iat = decode_password_reset_token(request.token)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired password reset token.",
+            )
+
+        user = await self.repository.get_user_by_id(str(user_id))
 
         if not user or user.is_deleted:
             raise HTTPException(status_code=404, detail="User not found.")
@@ -867,8 +1008,16 @@ class UserService:
                 status_code=400, detail="Account is not activated."
             )
 
+        # Single-use check: if the user record was updated after the
+        # token was issued, the token has already been consumed.
+        if user.updated_at and user.updated_at > iat:
+            raise HTTPException(
+                status_code=400,
+                detail="This reset link has already been used.",
+            )
+
         hashed_password = hash_password(request.new_password)
-        url = f"{self.repository.users_endpoint}/{request.user_id}"
+        url = f"{self.repository.users_endpoint}/{user_id}"
         response = await self.repository.client.async_patch(
             url,
             json_data={"password": hashed_password},
@@ -879,8 +1028,12 @@ class UserService:
                 status_code=500, detail="Password reset failed."
             )
 
-        return SetPasswordResponse(
-            success=True, message="Password has been reset successfully."
+        return (
+            SetPasswordResponse(
+                success=True,
+                message="Password has been reset successfully.",
+            ),
+            str(user_id),
         )
 
     async def accept_tos(self, tos_token: str) -> dict:
@@ -927,6 +1080,7 @@ class UserService:
             "id": str(user.id),
             "email": user.email,
             "role": user.role,
+            "estate_id": str(user.estate_id) if user.estate_id else None,
         }
 
     async def update_admin_record(self, admin_id: str, data: dict) -> dict:
@@ -935,15 +1089,258 @@ class UserService:
         """
         return await self.admin_repository.update_admin_record(admin_id, data)
 
-    async def close_account(self, user_id: str) -> DeleteUserResponse:
-        """
-        Closes the authenticated user's own account.
+    # ------------------------------------------------------------------
+    # 2FA methods
+    # ------------------------------------------------------------------
 
-        Primary admins must transfer their role before closing their account.
+    async def setup_2fa(self, user_id: str) -> dict:
+        """
+        Generates a new TOTP secret, encrypts it, saves it to the user
+        (totp_enabled stays False), and returns the provisioning URI + secret.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        secret = pyotp.random_base32()
+        encrypted = self._encrypt_secret(secret)
+
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url, json_data={"totp_secret": encrypted, "totp_enabled": False}
+        )
+
+        provisioning_uri = pyotp.totp.TOTP(secret).provisioning_uri(
+            name=user.email, issuer_name="GatePass"
+        )
+        return {"provisioning_uri": provisioning_uri, "secret": secret}
+
+    async def enable_2fa(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> List[str]:
+        """
+        Verifies the TOTP code against the stored (unconfirmed) secret,
+        sets totp_enabled=True, and generates 8 recovery codes.
+        Returns the plaintext recovery codes (shown once).
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception as exc:
+            _log_user_fetch_exception(user_id, exc)
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_secret:
+            raise HTTPException(
+                status_code=400, detail="2FA setup not initiated."
+            )
+        if user.totp_enabled:
+            raise HTTPException(
+                status_code=400, detail="2FA is already enabled."
+            )
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        totp = pyotp.TOTP(plain_secret)
+        if not totp.verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url,
+            json_data={
+                "totp_enabled": True,
+                "last_2fa_verified_at": now.isoformat(),
+            },
+        )
+
+        # Generate 8 recovery codes
+        recovery_codes = [
+            f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}"
+            for _ in range(8)
+        ]
+
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        for code_plain in recovery_codes:
+            await totp_recovery_repo.create_recovery_code(
+                user_id=user_id,
+                code_hash=bcrypt_ctx.hash(code_plain),
+            )
+
+        return recovery_codes
+
+    async def disable_2fa(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> None:
+        """
+        Verifies the TOTP code, clears totp_secret/totp_enabled, and
+        soft-deletes all recovery codes for the user.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_enabled:
+            raise HTTPException(status_code=400, detail="2FA is not enabled.")
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        if not pyotp.TOTP(plain_secret).verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url,
+            json_data={"totp_enabled": False, "totp_secret": None},
+        )
+        await totp_recovery_repo.delete_all_for_user(user_id)
+
+    async def verify_totp_code(self, user_id: str, code: str) -> bool:
+        """
+        Verifies a TOTP code for an already-enabled user.
+        Returns True if valid, False otherwise. Does not raise on failure.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user or not user.totp_enabled or not user.totp_secret:
+            return False
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        return pyotp.TOTP(plain_secret).verify(code, valid_window=1)
+
+    async def recover_with_code(
+        self, two_fa_token: str, recovery_code: str, totp_recovery_repo
+    ) -> dict:
+        """
+        Authenticates using a one-time recovery code.
+        Marks the code as used and disables 2FA entirely.
+        Returns user dict for token generation.
+        """
+        try:
+            user_id = decode_2fa_pending_token(two_fa_token)
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail="Invalid or expired 2FA token."
+            )
+
+        try:
+            user = await self.repository.get_user_by_id(str(user_id))
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Find an unused recovery code that matches
+        result = await totp_recovery_repo.search_recovery_codes(
+            user_id=str(user_id), is_used=False
+        )
+        codes = result.get("items", [])
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        matched = None
+        for record in codes:
+            if bcrypt_ctx.verify(recovery_code, record["code_hash"]):
+                matched = record
+                break
+
+        if not matched:
+            raise HTTPException(
+                status_code=401, detail="Invalid recovery code."
+            )
+
+        # Mark code as used
+        from datetime import datetime, timezone
+
+        await totp_recovery_repo.mark_code_used(
+            matched["id"],
+            datetime.now(timezone.utc).isoformat(),
+        )
+
+        # Disable 2FA
+        url = f"{self.repository.users_endpoint}/{user_id}"
+        await self.repository.client.async_patch(
+            url, json_data={"totp_enabled": False, "totp_secret": None}
+        )
+
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "estate_id": str(user.estate_id) if user.estate_id else None,
+            "tos_accepted_version": user.tos_accepted_version,
+        }
+
+    async def regenerate_recovery_codes(
+        self, user_id: str, code: str, totp_recovery_repo
+    ) -> List[str]:
+        """
+        Verifies TOTP code, soft-deletes existing recovery codes,
+        and generates 8 new ones.
+        """
+        try:
+            user = await self.repository.get_user_by_id(user_id)
+        except Exception:
+            raise HTTPException(
+                status_code=503, detail="Service temporarily unavailable."
+            )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if not user.totp_enabled:
+            raise HTTPException(status_code=400, detail="2FA is not enabled.")
+
+        plain_secret = self._decrypt_secret(user.totp_secret)
+        if not pyotp.TOTP(plain_secret).verify(code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid TOTP code.")
+
+        await totp_recovery_repo.delete_all_for_user(user_id)
+
+        recovery_codes = [
+            f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}"
+            for _ in range(8)
+        ]
+        bcrypt_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        for code_plain in recovery_codes:
+            await totp_recovery_repo.create_recovery_code(
+                user_id=user_id,
+                code_hash=bcrypt_ctx.hash(code_plain),
+            )
+
+        return recovery_codes
+
+    async def close_account(
+        self,
+        user_id: str,
+        actor_user_id: str | None = None,
+    ) -> DeleteUserResponse:
+        """
+        Closes a user account.
+
+        When called without actor_user_id (self-service), primary admins must
+        transfer their role first. When called with actor_user_id (admin path),
+        that restriction is bypassed and deactivated_by is set to the actor.
+
         Admin records and household records are cleaned up automatically.
 
         Args:
-            user_id: The ID of the user closing their account.
+            user_id: The ID of the user whose account is being closed.
+            actor_user_id: The ID of the admin performing the closure,
+                or None for self-service.
 
         Returns:
             DeleteUserResponse: Deletion confirmation.
@@ -951,9 +1348,12 @@ class UserService:
         Raises:
             HTTPException: If the user cannot close their account.
         """
+        from datetime import datetime, timezone
+        from uuid import UUID
+
         user = await self.repository.get_user_by_id(user_id)
 
-        if not user or user.is_deleted:
+        if not user:
             raise HTTPException(status_code=404, detail="User not found.")
 
         if user.role == "root":
@@ -962,7 +1362,7 @@ class UserService:
                 detail="Root accounts cannot be closed.",
             )
 
-        if user.role == "primary_admin":
+        if actor_user_id is None and user.role == "primary_admin":
             raise HTTPException(
                 status_code=403,
                 detail=(
@@ -979,15 +1379,241 @@ class UserService:
                 await self.admin_repository.delete_admin_record(
                     admin_record["id"]
                 )
-            except HTTPException:
-                pass
+            except HTTPException as e:
+                if e.status_code != 404:
+                    logger.error(
+                        "Failed to delete admin record for user_id=%s "
+                        "during account closure: HTTP %s — %s",
+                        user_id,
+                        e.status_code,
+                        e.detail,
+                    )
+                    raise
+                logger.warning(
+                    "Admin record not found for user_id=%s during account "
+                    "closure; may have already been removed.",
+                    user_id,
+                )
 
         if user.household_id:
             try:
-                await self.household_repository.delete_household(
-                    str(user.household_id)
-                )
-            except HTTPException:
-                pass
+                from app.services.household import HouseholdService
 
+                hh_service = HouseholdService(
+                    household_repo=self.household_repository,
+                    user_repo=self.repository,
+                )
+                household = (
+                    await self.household_repository.get_household_by_id(
+                        str(user.household_id)
+                    )
+                )
+                if household and household.head_user_id == str(user.id):
+                    await self.household_repository.update_household(
+                        str(user.household_id), {"head_user_id": None}
+                    )
+                    await hh_service.notify_admins_headless_household(
+                        household_id=str(user.household_id),
+                        household_name=household.name or "",
+                        estate_id=str(household.estate_id)
+                        if household.estate_id
+                        else "",
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to clear head from household %s",
+                    str(user.household_id),
+                )
+
+        try:
+            from app.repositories.user_documents import UserDocumentsRepository
+
+            docs_repo = UserDocumentsRepository(self.repository.client)
+            await docs_repo.delete_all_for_user(user_id)
+        except HTTPException as e:
+            if e.status_code == 404:
+                logger.info(
+                    "No documents found for user_id=%s during account closure",
+                    user_id,
+                )
+            else:
+                logger.error(
+                    "Failed to delete documents for user_id=%s "
+                    "during account closure: HTTP %s — %s",
+                    user_id,
+                    e.status_code,
+                    e.detail,
+                )
+                raise
+        except Exception:
+            logger.exception(
+                "Failed to delete user documents for user_id=%s", user_id
+            )
+
+        closing_user_id = actor_user_id if actor_user_id else user_id
+        await self.repository.update_user(
+            user_id=user_id,
+            data=UpdateUserRequest(
+                deactivated_by=UUID(closing_user_id),
+                deactivated_at=datetime.now(timezone.utc),
+            ),
+        )
         return await self.repository.delete_user(user_id)
+
+    async def validate_close_target(
+        self, user_id: str, actor_role: str
+    ) -> None:
+        """
+        Validates that an actor with actor_role can close the given user.
+
+        Args:
+            user_id: The ID of the target user.
+            actor_role: The role string of the actor.
+
+        Raises:
+            HTTPException 404: If the user does not exist or is already
+                deleted.
+            HTTPException 403: If the actor's rank is not strictly above the
+                target's rank.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+        if not user or user.is_deleted:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        target_role_str = (
+            user.role.value if hasattr(user.role, "value") else str(user.role)
+        )
+        require_higher_rank(
+            actor_role,
+            target_role_str,
+            detail="You cannot close an account of equal or higher rank.",
+        )
+
+    async def admin_close_account(
+        self,
+        user_id: str,
+        actor_user_id: str,
+        actor_role: str,
+    ) -> DeleteUserResponse:
+        """
+        Force-closes a user account on behalf of an admin.
+
+        Validates the role hierarchy then delegates to close_account with
+        the actor_user_id so that deactivated_by is set correctly.
+
+        Args:
+            user_id: The ID of the user to close.
+            actor_user_id: The ID of the admin performing the action.
+            actor_role: The role string of the admin.
+
+        Returns:
+            DeleteUserResponse: Deletion confirmation.
+
+        Raises:
+            HTTPException: If the actor lacks permission or the user is
+                not found.
+        """
+        await self.validate_close_target(user_id, actor_role)
+        return await self.close_account(
+            user_id=user_id, actor_user_id=actor_user_id
+        )
+
+    async def schedule_close_account(
+        self,
+        user_id: str,
+        actor_user_id: str,
+        actor_role: str,
+        close_at,
+        schedule_repo,
+    ):
+        """
+        Validates and schedules an account closure via Redis.
+
+        Overwrites any existing scheduled entry for the same user.
+
+        Args:
+            user_id: The ID of the user to close.
+            actor_user_id: The ID of the admin scheduling the action.
+            actor_role: The role string of the admin.
+            close_at: The datetime at which to close the account.
+            schedule_repo: The schedule repository instance.
+
+        Returns:
+            dict: Success message and the scheduled UTC datetime.
+
+        Raises:
+            HTTPException 400: If close_at is in the past or exceeds the
+                maximum allowed scheduling window.
+            HTTPException 403: If the actor lacks permission over the target.
+        """
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.config import settings
+        from app.repositories.schedule import SCHEDULED_USER_CLOSURES_KEY
+
+        await self.validate_close_target(user_id, actor_role)
+
+        close_at_utc = (
+            close_at.replace(tzinfo=timezone.utc)
+            if close_at.tzinfo is None
+            else close_at.astimezone(timezone.utc)
+        )
+        now_utc = datetime.now(timezone.utc)
+        if close_at_utc <= now_utc:
+            raise HTTPException(
+                status_code=400, detail="close_at must be in the future."
+            )
+        max_days = settings.SCHEDULE_CLOSE_MAX_DAYS
+        if close_at_utc > now_utc + timedelta(days=max_days):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"close_at cannot be more than {max_days} days"
+                    " in the future."
+                ),
+            )
+
+        await schedule_repo.remove_by_field(
+            SCHEDULED_USER_CLOSURES_KEY, "user_id", user_id
+        )
+        await schedule_repo.add(
+            key=SCHEDULED_USER_CLOSURES_KEY,
+            score=close_at_utc.timestamp(),
+            member=json.dumps(
+                {
+                    "user_id": user_id,
+                    "actor_user_id": actor_user_id,
+                    "actor_role": actor_role,
+                }
+            ),
+        )
+        return {
+            "success": True,
+            "message": "Account closure scheduled.",
+            "close_at": close_at_utc,
+        }
+
+    async def cancel_scheduled_close(
+        self, user_id: str, schedule_repo
+    ) -> None:
+        """
+        Cancels a pending scheduled account closure.
+
+        Args:
+            user_id: The ID of the user whose closure to cancel.
+            schedule_repo: The schedule repository instance.
+
+        Raises:
+            HTTPException 404: If no scheduled closure exists for this user.
+        """
+        from app.repositories.schedule import SCHEDULED_USER_CLOSURES_KEY
+
+        removed = await schedule_repo.remove_by_field(
+            SCHEDULED_USER_CLOSURES_KEY, "user_id", user_id
+        )
+        if not removed:
+            raise HTTPException(
+                status_code=404,
+                detail="No scheduled closure found for this user.",
+            )

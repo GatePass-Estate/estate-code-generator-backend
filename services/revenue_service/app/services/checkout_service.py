@@ -1,0 +1,1486 @@
+"""Checkout quote, Paystack initialization, and seat/AI quote services."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any
+
+from fastapi import HTTPException
+
+from app.core.config import settings
+from app.integrations.paystack_client import PaystackClient
+from app.libs.checkout_token import (
+    generate_checkout_token,
+    verify_checkout_token,
+)
+from app.libs.entitlement_validation import (
+    ensure_admin_fee_entitlement,
+    validate_entitlements,
+)
+from app.libs.period_dating import infer_period_months
+from app.repositories.db_revenue import DbRevenueRepository
+from app.schemas.estate import EstateTypeMultiplier
+from app.services.subscription_service import require_paid_subscription
+from app.services.pricing_service import (
+    VAT_KEY,
+    to_int,
+    apply_vat,
+    compute_ai_monthly,
+    compute_price_per_seat,
+    compute_seat_proration,
+    extract_included_keys,
+    prorate_tier_change,
+    quote_pricing,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ── Per-kind checkout handlers ─────────────────────────────────────────────
+
+
+class CheckoutHandler(ABC):
+    """Abstract base for checkout-kind-specific logic.
+
+    Each concrete handler encapsulates the guard, quote, and metadata
+    logic for one checkout kind so that adding a new kind is a new class
+    rather than a new if/else branch in CheckoutService.initialize().
+    """
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        self._repo = repo
+        self._svc = svc
+
+    @abstractmethod
+    async def guard(self, request: dict[str, Any]) -> None:
+        """Raise HTTPException if this checkout cannot proceed."""
+        ...
+
+    @abstractmethod
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return {amount, currency_code, country_code, snapshot}."""
+        ...
+
+    @abstractmethod
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Build the session_metadata dict for this checkout kind."""
+        ...
+
+
+class SubscriptionCheckoutHandler(CheckoutHandler):
+    """Handles 'tier' and 'custom' subscription checkout kinds."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        active_sub = await self._repo.get_active_subscription(
+            request["estate_id"]
+        )
+        if active_sub and active_sub.get("status") in (
+            "active",
+            "trialing",
+        ):
+            # Allow purchasing when the estate is on the free access tier.
+            tier_id = str(active_sub.get("tier_id") or "")
+            if tier_id:
+                tier = await self._repo.get_tier_by_id(tier_id)
+                if tier and tier.get("slug") == "access":
+                    return
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Estate already has an active subscription. "
+                    "Wait for it to expire, or cancel it first "
+                    "to subscribe to a different tier."
+                ),
+            )
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote(
+            {
+                "estate_id": request["estate_id"],
+                "tier_slug": request.get("tier_slug"),
+                "entitlements": request.get("entitlements"),
+                "ai_feature_keys": request.get("ai_feature_keys"),
+                "covered_users": request["covered_users"],
+                "period_months": request["period_months"],
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        kind = request["checkout_kind"]
+        meta: dict[str, Any] = {
+            "checkout_kind": kind,
+            "initiated_by_user_id": user_id,
+            "tier_slug": (
+                request.get("tier_slug") if kind == "tier" else "custom"
+            ),
+            "covered_users": request.get("covered_users"),
+            "period_months": request.get("period_months"),
+            "ai_feature_keys": request.get("ai_feature_keys") or [],
+        }
+        if kind == "custom":
+            meta["entitlements"] = request.get("entitlements")
+        return meta
+
+
+class SeatAddCheckoutHandler(CheckoutHandler):
+    """Handles 'seat_add' checkout kind."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        await require_paid_subscription(self._repo, request["estate_id"])
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.prorate_seats(
+            {
+                "estate_id": request["estate_id"],
+                "seats_added": request["seats_added"],
+            }
+        )
+        return {
+            "amount": result["prorated_charge"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "seat_add",
+            "initiated_by_user_id": user_id,
+            "seats_added": request.get("seats_added"),
+        }
+
+
+class AiOnlyCheckoutHandler(CheckoutHandler):
+    """Handles 'ai_only' standalone AI feature checkout kind."""
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        await self._svc.guard_no_active_ai_grants(
+            estate_id=str(request["estate_id"]),
+            ai_feature_keys=list(request.get("ai_feature_keys") or []),
+        )
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote_ai_features(
+            {
+                "estate_id": request["estate_id"],
+                "ai_feature_keys": request["ai_feature_keys"],
+                "period_months": request.get("period_months", 1),
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "ai_only",
+            "initiated_by_user_id": user_id,
+            "ai_feature_keys": request.get("ai_feature_keys") or [],
+            "period_months": request.get("period_months"),
+        }
+
+
+class TierChangeCheckoutHandler(CheckoutHandler):
+    """Handles 'tier_upgrade_immediate' checkout kind (prorated upgrade)."""
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        super().__init__(repo, svc)
+        self._active_sub: dict[str, Any] | None = None
+        self._current_tier: dict[str, Any] | None = None
+        self._new_tier: dict[str, Any] | None = None
+        self._covered_users: int = 0
+        self._period_months: int = 1
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        active_sub = await self._repo.get_active_subscription(
+            request["estate_id"]
+        )
+        if not active_sub or active_sub.get("status") not in (
+            "active",
+            "trialing",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="No active subscription to upgrade",
+            )
+        period_end_raw = active_sub.get("period_end")
+        if not period_end_raw:
+            # Access (free) tier has no billing period — use
+            # checkout_kind='tier' for the initial purchase instead.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Free-tier subscriptions cannot be upgraded. "
+                    "Use checkout_kind='tier' to purchase a plan."
+                ),
+            )
+        period_end_dt = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+        if period_end_dt < datetime.now(tz=timezone.utc):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Billing period has expired; " "renew before upgrading"
+                ),
+            )
+        current_tier = await self._repo.get_tier_by_id(
+            str(active_sub["tier_id"])
+        )
+        if not current_tier:
+            raise HTTPException(
+                status_code=500, detail="Current subscription tier not found"
+            )
+        new_tier = await self._repo.get_tier_by_slug(request["tier_slug"])
+        if not new_tier:
+            raise HTTPException(status_code=404, detail="Tier not found")
+        if new_tier.get("is_custom"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Custom tier upgrades require negotiated entitlements. "
+                    "Use the custom checkout flow instead."
+                ),
+            )
+        current_order = current_tier.get("display_order") or 0
+        new_order = new_tier.get("display_order") or 0
+        if new_order <= current_order:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Target tier is not an upgrade. "
+                    "Use POST /estate/{id}/schedule-tier-change"
+                    " for downgrades."
+                ),
+            )
+        # Cache for get_quote() so it doesn't re-fetch.
+        self._active_sub = active_sub
+        self._current_tier = current_tier
+        self._new_tier = new_tier
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        estate_id = request["estate_id"]
+        active_sub = self._active_sub
+        if not active_sub:
+            raise HTTPException(
+                status_code=400, detail="No active subscription to upgrade"
+            )
+
+        period_start_raw = active_sub["period_start"]
+        period_end_raw = active_sub["period_end"]
+        period_start = datetime.fromisoformat(
+            str(period_start_raw).replace("Z", "+00:00")
+        )
+        period_end = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+        period_months = infer_period_months(active_sub)
+        covered_users = int(active_sub.get("covered_users") or 1)
+        self._covered_users = covered_users
+        self._period_months = period_months
+
+        (
+            country,
+            service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+            _catalog,
+        ) = await self._svc._pricing_context(estate_id)
+
+        current_tier = self._current_tier
+        if not current_tier:
+            raise HTTPException(
+                status_code=500, detail="Current subscription tier not found"
+            )
+        new_tier = self._new_tier
+        if not new_tier:
+            raise HTTPException(status_code=404, detail="Tier not found")
+
+        def _seat_price_from_tier(tier: dict[str, Any]) -> int:
+            if tier.get("is_custom"):
+                entitlements = ensure_admin_fee_entitlement(
+                    dict(active_sub.get("entitlements") or {})
+                )
+            else:
+                entitlements = dict(tier.get("entitlements") or {})
+            included_keys = extract_included_keys(entitlements)
+            result = compute_price_per_seat(service_prices, included_keys)
+            return result["price_per_seat"]
+
+        def _ai_monthly_from_tier(tier: dict[str, Any]) -> int:
+            ai_keys = list(tier.get("included_ai_features") or [])
+            if not ai_keys:
+                return 0
+            result = compute_ai_monthly(ai_prices, ai_keys)
+            return result["ai_price_per_month"]
+
+        try:
+            old_pps = _seat_price_from_tier(current_tier)
+            new_pps = _seat_price_from_tier(new_tier)
+            old_ai = _ai_monthly_from_tier(current_tier)
+            new_ai = _ai_monthly_from_tier(new_tier)
+            proration = prorate_tier_change(
+                old_price_per_seat=old_pps,
+                new_price_per_seat=new_pps,
+                covered_users=covered_users,
+                period_months=period_months,
+                period_start=period_start,
+                period_end=period_end,
+                currency_code=currency,
+                country_code=country,
+                old_ai_monthly=old_ai,
+                new_ai_monthly=new_ai,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        vat = apply_vat(proration["subtotal"], vat_rate)
+        snapshot = {
+            **proration,
+            "subtotal": vat["subtotal"],
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        }
+        return {
+            "amount": vat["client_total"],
+            "currency_code": currency,
+            "country_code": country,
+            "snapshot": snapshot,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "tier_upgrade_immediate",
+            "initiated_by_user_id": user_id,
+            "tier_slug": request["tier_slug"],
+            "covered_users": self._covered_users,
+            "period_months": self._period_months,
+        }
+
+
+class RenewCheckoutHandler(CheckoutHandler):
+    """Handles 'renew' checkout kind for manual-renewal users."""
+
+    def __init__(
+        self, repo: DbRevenueRepository, svc: CheckoutService
+    ) -> None:
+        super().__init__(repo, svc)
+        self._active_sub: dict[str, Any] | None = None
+        self._tier_slug: str = ""
+        self._covered_users: int = 0
+
+    async def guard(self, request: dict[str, Any]) -> None:
+        sub = await require_paid_subscription(self._repo, request["estate_id"])
+        tier = await self._repo.get_tier_by_id(str(sub["tier_id"]))
+        if not tier:
+            raise HTTPException(
+                status_code=500,
+                detail="Current subscription tier not found",
+            )
+
+        # Only allow renewal within the grace window before expiry.
+        grace_days = settings.RENEWAL_GRACE_PERIOD_DAYS
+        period_end_raw = sub.get("period_end")
+        if period_end_raw:
+            period_end = datetime.fromisoformat(
+                str(period_end_raw).replace("Z", "+00:00")
+            )
+            earliest_renew = period_end - timedelta(days=grace_days)
+            if datetime.now(tz=timezone.utc) < earliest_renew:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Renewal is only available within "
+                        f"{grace_days} days of the billing "
+                        f"period end ({period_end_raw})."
+                    ),
+                )
+
+        if sub.get("auto_renew"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Subscription has auto-renewal enabled — "
+                    "renewal is handled automatically."
+                ),
+            )
+
+        self._active_sub = sub
+        self._tier_slug = tier.get("slug", "")
+        self._covered_users = int(sub.get("covered_users") or 1)
+
+    async def get_quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        result = await self._svc.quote(
+            {
+                "estate_id": request["estate_id"],
+                "tier_slug": self._tier_slug,
+                "covered_users": self._covered_users,
+                "period_months": request["period_months"],
+            }
+        )
+        return {
+            "amount": result["client_total"],
+            "currency_code": result["currency_code"],
+            "country_code": result["country_code"],
+            "snapshot": result,
+        }
+
+    def build_metadata(
+        self, request: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        return {
+            "checkout_kind": "renew",
+            "initiated_by_user_id": user_id,
+            "tier_slug": self._tier_slug,
+            "covered_users": self._covered_users,
+            "period_months": request.get("period_months"),
+        }
+
+
+_HANDLERS: dict[str, type[CheckoutHandler]] = {
+    "tier": SubscriptionCheckoutHandler,
+    "custom": SubscriptionCheckoutHandler,
+    "seat_add": SeatAddCheckoutHandler,
+    "ai_only": AiOnlyCheckoutHandler,
+    "tier_upgrade_immediate": TierChangeCheckoutHandler,
+    "renew": RenewCheckoutHandler,
+}
+
+
+# ── Service ────────────────────────────────────────────────────────────────
+
+
+class CheckoutService:
+    """Builds quotes from estate type, country prices, and VAT."""
+
+    def __init__(self, repo: DbRevenueRepository):
+        """
+        Bind the db-service revenue repository and Paystack client.
+
+        Args:
+            repo: Repository used for estate, catalog, and price lookups.
+        """
+        self.repo = repo
+        self._paystack = PaystackClient(
+            secret_key=settings.PAYSTACK_SECRET_KEY
+        )
+        # Set by _resolve_pending_session when Paystack confirms
+        # a payment but the webhook hasn't arrived yet.  Used by
+        # the caller to include the reference in the 409 response.
+        self._last_resolved_paid_reference: str | None = None
+
+    @staticmethod
+    def _estate_multiplier(estate_type: str | None) -> float:
+        """Resolve the env-backed multiplier for the estate's type."""
+        if not estate_type:
+            raise HTTPException(
+                status_code=400,
+                detail="Estate has no estate_type set; cannot price",
+            )
+        factors = EstateTypeMultiplier(
+            housing=settings.ESTATE_TYPE_HOUSING_MULTIPLIER,
+            corporate=settings.ESTATE_TYPE_CORPORATE_MULTIPLIER,
+        )
+        key = str(estate_type).lower()
+        if key not in factors.model_fields:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown estate_type '{estate_type}'",
+            )
+        return getattr(factors, key)
+
+    async def _pricing_context(
+        self, estate_id: str
+    ) -> tuple[str, dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
+        """Country, scaled prices, currency, VAT rate, and catalog for an estate."""
+        estate = await self.repo.get_estate(estate_id)
+        country = (estate.get("country") or "").upper()
+        if not country:
+            raise HTTPException(
+                status_code=400,
+                detail="Estate has no country set; cannot price",
+            )
+        multiplier = self._estate_multiplier(estate.get("estate_type"))
+        (
+            service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+            catalog,
+        ) = await self._price_maps(country, multiplier)
+        return country, service_prices, ai_prices, currency, vat_rate, catalog
+
+    async def _price_maps(
+        self, country: str, multiplier: float
+    ) -> tuple[dict[str, Any], dict[str, Any], str, Any, dict[str, Any]]:
+        """
+        Return service_prices, ai_prices, currency, VAT rate, and catalog.
+
+        Unit prices (except VAT) are multiplied by ``multiplier`` before
+        any quote math. VAT is the catalog percent, unscaled.
+        """
+        catalog, ai_catalog, prices = await asyncio.gather(
+            self.repo.get_service_catalog_map(),
+            self.repo.get_ai_feature_map(),
+            self.repo.get_prices_for_country(country),
+        )
+        if not prices:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No feature_unit_price rows for country {country}",
+            )
+        currency = prices[0].get("currency_code", "NGN")
+        service_id_to_key = {str(v["id"]): k for k, v in catalog.items()}
+        ai_id_to_key = {str(v["id"]): k for k, v in ai_catalog.items()}
+        service_prices: dict[str, Any] = {}
+        ai_prices: dict[str, Any] = {}
+        vat_rate: Any = None
+        factor = Decimal(str(multiplier))
+        for row in prices:
+            amount = row["feature_unit_price"]
+            if row.get("service_catalog_id"):
+                key = service_id_to_key.get(str(row["service_catalog_id"]))
+                if not key:
+                    continue
+                if key == VAT_KEY:
+                    vat_rate = amount  # percent; do not scale
+                    continue
+                service_prices[key] = to_int(Decimal(str(amount)) * factor)
+            if row.get("ai_feature_id"):
+                key = ai_id_to_key.get(str(row["ai_feature_id"]))
+                if key:
+                    ai_prices[key] = to_int(Decimal(str(amount)) * factor)
+        if vat_rate is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No VAT rate for country {country}",
+            )
+        return service_prices, ai_prices, currency, vat_rate, catalog
+
+    @staticmethod
+    def _hash_request(request: dict[str, Any]) -> str:
+        """Return a deterministic SHA-256 hex digest of the request body."""
+        canonical = json.dumps(request, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _build_cached_response(self, existing: dict) -> dict[str, Any]:
+        """Build the idempotent replay response from an existing session."""
+        meta = existing.get("session_metadata") or {}
+        return {
+            "checkout_session_id": str(existing["id"]),
+            "paystack_reference": existing.get("paystack_reference", ""),
+            "authorization_url": meta.get("authorization_url", ""),
+            "checkout_token": generate_checkout_token(
+                str(existing["id"]), settings.SECRET_KEY
+            ),
+        }
+
+    @staticmethod
+    def _is_session_expired(
+        created_at: str | datetime, ttl_seconds: int
+    ) -> bool:
+        """Check if a session has exceeded its TTL."""
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return datetime.now(tz=timezone.utc) - created_at > timedelta(
+            seconds=ttl_seconds
+        )
+
+    # Paystack statuses where money may actually be moving (user entered
+    # OTP, bank processing, etc.).  These deserve the full TTL.
+    _PAYSTACK_MONEY_IN_FLIGHT = frozenset({"ongoing", "processing", "queued"})
+    # Transaction initialized but no payment attempt — safe to expire
+    # quickly or allow cancellation.
+    _PAYSTACK_IDLE = frozenset({"pending"})
+    # Union of the above — anything Paystack considers "not terminal".
+    _PAYSTACK_IN_PROGRESS = _PAYSTACK_MONEY_IN_FLIGHT | _PAYSTACK_IDLE
+    # Paystack statuses that mean the transaction is dead.
+    _PAYSTACK_TERMINAL_DEAD = frozenset({"abandoned", "failed", "reversed"})
+
+    async def _resolve_pending_session(self, pending: dict[str, Any]) -> bool:
+        """Try to clear a pending session so a new checkout can proceed.
+
+        Verifies with Paystack to determine the real state. Falls back
+        to TTL expiry only for sessions that never reached Paystack.
+
+        Returns:
+            True if the session was resolved (expired / abandoned / failed)
+            and the caller may proceed with a new checkout.
+            False if the session is genuinely still active.
+        """
+        session_id = str(pending["id"])
+        reference = pending.get("paystack_reference")
+
+        # No reference means Paystack was never called (session was
+        # created but initialize failed before stamping the reference).
+        # Safe to expire.
+        if not reference:
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            return True
+
+        # Verify with Paystack to determine the real transaction state.
+        try:
+            txn = await self._paystack.verify_transaction(reference)
+        except HTTPException:
+            # Verify failed — use the shorter idle TTL since we can't
+            # confirm money is moving.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack verify failed for stale session %s "
+                    "reference=%s — expired by idle TTL",
+                    session_id,
+                    reference,
+                )
+                return True
+            logger.warning(
+                "Paystack verify failed for pending session %s "
+                "reference=%s — failing closed",
+                session_id,
+                reference,
+            )
+            return False
+
+        ps_status = (txn.get("status") or "").lower()
+
+        if ps_status == "success":
+            # Payment went through but webhook hasn't arrived yet.
+            # Don't expire — the webhook will fulfil it. Block new
+            # checkouts so we don't risk a double charge.
+            self._last_resolved_paid_reference = reference
+            logger.warning(
+                "Pending session %s reference=%s is paid at Paystack "
+                "but webhook has not arrived — blocking new checkout",
+                session_id,
+                reference,
+            )
+            return False
+
+        if ps_status in self._PAYSTACK_MONEY_IN_FLIGHT:
+            # Money may be moving (OTP, bank transfer, direct debit).
+            # Use the full TTL to give the transaction time to settle.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_SESSION_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack status %r but session %s reference=%s "
+                    "is past TTL — expired",
+                    ps_status,
+                    session_id,
+                    reference,
+                )
+                return True
+            return False
+
+        if ps_status in self._PAYSTACK_IDLE:
+            # Initialized but user never entered payment details
+            # (e.g. closed the popup).  Use the shorter idle TTL.
+            created_at = pending.get("created_at")
+            ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
+            if created_at and self._is_session_expired(created_at, ttl):
+                await self.repo.update_checkout_session(
+                    session_id, {"status": "expired"}
+                )
+                logger.warning(
+                    "Paystack status %r — session %s reference=%s "
+                    "expired by idle TTL",
+                    ps_status,
+                    session_id,
+                    reference,
+                )
+                return True
+            return False
+
+        if ps_status in self._PAYSTACK_TERMINAL_DEAD:
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            return True
+
+        # Unknown status — use idle TTL, otherwise fail closed.
+        created_at = pending.get("created_at")
+        ttl = settings.CHECKOUT_IDLE_TTL_SECONDS
+        if created_at and self._is_session_expired(created_at, ttl):
+            await self.repo.update_checkout_session(
+                session_id, {"status": "expired"}
+            )
+            logger.warning(
+                "Unknown Paystack status %r for stale session %s "
+                "reference=%s — expired by idle TTL",
+                ps_status,
+                session_id,
+                reference,
+            )
+            return True
+        logger.warning(
+            "Unknown Paystack status %r for session %s "
+            "reference=%s — failing closed",
+            ps_status,
+            session_id,
+            reference,
+        )
+        return False
+
+    async def cancel_checkout(
+        self,
+        paystack_reference: str,
+        estate_id: str,
+    ) -> dict[str, Any]:
+        """Cancel a pending checkout session.
+
+        Verifies with Paystack before cancelling to avoid cancelling
+        a session that was actually paid.
+
+        Args:
+            paystack_reference: The GP-<session_id> reference.
+            estate_id: The caller's estate (for ownership check).
+
+        Returns:
+            Dict with reference, old status, and new status.
+
+        Raises:
+            HTTPException: 404 if not found; 403 if wrong estate;
+                409 if not pending or already paid at Paystack.
+        """
+        session = await self.repo.get_checkout_session_by_reference(
+            paystack_reference
+        )
+        if not session:
+            raise HTTPException(
+                status_code=404, detail="Checkout session not found"
+            )
+
+        if str(session["estate_id"]) != estate_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to this estate",
+            )
+
+        if session["status"] != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Session is already '{session['status']}' "
+                    "and cannot be cancelled."
+                ),
+            )
+
+        # Verify with Paystack — if the payment actually succeeded,
+        # refuse to cancel. Fail closed: if we can't verify, don't
+        # cancel (except for 404 which means Paystack never saw it).
+        try:
+            txn = await self._paystack.verify_transaction(paystack_reference)
+            ps_status = (txn.get("status") or "").lower()
+
+            if ps_status == "success":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This transaction has already been paid "
+                        "at Paystack. It cannot be cancelled."
+                    ),
+                )
+
+            # Allow cancellation for dead transactions and idle ones
+            # (pending = initialized but user never entered payment
+            # details, e.g. closed the popup).  Block only when money
+            # may actually be moving (ongoing/processing/queued).
+            _cancellable = self._PAYSTACK_TERMINAL_DEAD | self._PAYSTACK_IDLE
+            if ps_status not in _cancellable:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Payment is still being processed. "
+                        "Please wait before cancelling."
+                    ),
+                )
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                raise
+            # 404 = Paystack never saw this transaction; safe to cancel.
+            # Any other error (502, timeout) = fail closed.
+            if exc.status_code != 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Unable to verify transaction status with "
+                        "Paystack. Please try again later."
+                    ),
+                ) from exc
+
+        await self.repo.update_checkout_session(
+            str(session["id"]), {"status": "cancelled"}
+        )
+
+        return {
+            "paystack_reference": paystack_reference,
+            "previous_status": "pending",
+            "status": "cancelled",
+        }
+
+    async def quote(self, request: dict[str, Any]) -> dict[str, Any]:
+        """
+        Produce a checkout quote for an estate subscription purchase.
+
+        Resolves country pricing, scales unit prices by estate type (VAT
+        excluded), validates entitlements against the catalog, includes
+        administrative_fee when the entitlements map sets it True, then
+        applies country VAT to the finished total.
+
+        Args:
+            request: Quote request dict (estate_id, covered_users,
+                period_months, optional tier_slug / entitlements /
+                ai_feature_keys).
+
+        Returns:
+            Quote response with totals and line_items (int kobo).
+
+        Raises:
+            HTTPException: 400/404 on validation or missing pricing data.
+        """
+        estate_id = request["estate_id"]
+        (
+            country,
+            service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+            catalog,
+        ) = await self._pricing_context(estate_id)
+
+        tier_slug = request.get("tier_slug")
+        entitlements = request.get("entitlements")
+        ai_keys = list(request.get("ai_feature_keys") or [])
+        tier = None
+
+        if tier_slug:
+            tier = await self.repo.get_tier_by_slug(tier_slug)
+            if not tier:
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown tier '{tier_slug}'"
+                )
+            if tier.get("is_custom") and entitlements is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Custom tier requires entitlements in quote body",
+                )
+            if not tier.get("is_custom"):
+                entitlements = tier.get("entitlements") or {}
+                if not ai_keys:
+                    ai_keys = list(tier.get("included_ai_features") or [])
+            else:
+                entitlements = ensure_admin_fee_entitlement(entitlements or {})
+        else:
+            entitlements = entitlements or {}
+
+        # VAT is a rate, not a purchasable entitlement.
+        limit_map = {
+            k: v["limit_type"] for k, v in catalog.items() if k != VAT_KEY
+        }
+        validate_entitlements(entitlements, limit_map)
+
+        # Included product keys: enabled booleans / positive limits.
+        # administrative_fee is in entitlements (True/False), not tier slug.
+        included_keys = extract_included_keys(entitlements)
+
+        try:
+            breakdown = quote_pricing(
+                service_prices=service_prices,
+                ai_prices=ai_prices,
+                included_service_keys=included_keys,
+                ai_feature_keys=ai_keys,
+                seats=int(request["covered_users"]),
+                period_months=int(request["period_months"]),
+                currency_code=currency,
+                country_code=country,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        vat = apply_vat(breakdown["client_total"], vat_rate)
+        return {
+            "estate_id": estate_id,
+            "tier_slug": tier_slug,
+            **breakdown,
+            "subtotal": vat["subtotal"],
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
+            "line_items": breakdown["line_items"]
+            + [
+                {
+                    "key": VAT_KEY,
+                    "kind": "vat",
+                    "unit_price": vat["vat_amount"],
+                }
+            ],
+        }
+
+    async def prorate_seats(self, request: dict[str, Any]) -> dict[str, Any]:
+        """
+        Quote a mid-period seat add (AI excluded from proration).
+
+        Uses the active subscription period and current tier seat price.
+        Estate-type multiplier applies to unit prices; VAT is added last.
+        """
+        estate_id = request["estate_id"]
+        seats_added = int(request["seats_added"])
+        if seats_added < 1:
+            raise HTTPException(
+                status_code=400, detail="seats_added must be >= 1"
+            )
+
+        subscription = await self.repo.get_active_subscription(estate_id)
+        if not subscription:
+            raise HTTPException(
+                status_code=404, detail="No active subscription for estate"
+            )
+
+        period_start_raw = subscription.get("period_start")
+        period_end_raw = subscription.get("period_end")
+        if not period_start_raw or not period_end_raw:
+            raise HTTPException(
+                status_code=400,
+                detail="Subscription missing period_start/period_end",
+            )
+        period_start = datetime.fromisoformat(
+            str(period_start_raw).replace("Z", "+00:00")
+        )
+        period_end = datetime.fromisoformat(
+            str(period_end_raw).replace("Z", "+00:00")
+        )
+
+        (
+            country,
+            service_prices,
+            _ai_prices,
+            currency,
+            vat_rate,
+            _catalog,
+        ) = await self._pricing_context(estate_id)
+
+        tier = await self.repo.get_tier_by_id(str(subscription["tier_id"]))
+        if not tier:
+            raise HTTPException(
+                status_code=404, detail="Subscription tier missing"
+            )
+
+        if tier.get("is_custom"):
+            entitlements = ensure_admin_fee_entitlement(
+                dict(subscription.get("entitlements") or {})
+            )
+        else:
+            entitlements = dict(tier.get("entitlements") or {})
+
+        included_keys = extract_included_keys(entitlements)
+
+        period_months = infer_period_months(subscription)
+
+        try:
+            full_quote = quote_pricing(
+                service_prices=service_prices,
+                ai_prices={},
+                included_service_keys=included_keys,
+                ai_feature_keys=[],
+                seats=1,
+                period_months=period_months,
+                currency_code=currency,
+                country_code=country,
+            )
+            period_seat_price = full_quote["price_per_seat"] * period_months
+            prorated = compute_seat_proration(
+                period_seat_price=period_seat_price,
+                seats_added=seats_added,
+                period_start=period_start,
+                period_end=period_end,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        vat = apply_vat(prorated["prorated_charge"], vat_rate)
+        return {
+            "estate_id": estate_id,
+            "subscription_id": str(subscription["id"]),
+            "current_covered_users": int(
+                subscription.get("covered_users") or 0
+            ),
+            "seats_added": seats_added,
+            "country_code": country,
+            "currency_code": currency,
+            "price_per_seat": full_quote["price_per_seat"],
+            "period_months": period_months,
+            "period_seat_price": prorated["period_seat_price"],
+            "period_days": prorated["period_days"],
+            "remaining_days": prorated["remaining_days"],
+            "daily_seat_rate": prorated["daily_seat_rate"],
+            "subtotal": vat["subtotal"],
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": vat["vat_amount"],
+            "prorated_charge": vat["client_total"],
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        }
+
+    async def quote_ai_features(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Quote standalone AI feature flats (not × seats).
+
+        Estate-type multiplier applies to unit prices; VAT is added last.
+        """
+        estate_id = request["estate_id"]
+        feature_keys = list(request.get("ai_feature_keys") or [])
+        if not feature_keys:
+            raise HTTPException(
+                status_code=400, detail="ai_feature_keys required"
+            )
+        period_months = int(request.get("period_months") or 1)
+        if period_months < 1:
+            raise HTTPException(
+                status_code=400, detail="period_months must be >= 1"
+            )
+
+        (
+            country,
+            _service_prices,
+            ai_prices,
+            currency,
+            vat_rate,
+            _catalog,
+        ) = await self._pricing_context(estate_id)
+        try:
+            ai = compute_ai_monthly(ai_prices, feature_keys)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        monthly = ai["ai_price_per_month"]
+        total = ai["ai_price_per_month"] * period_months
+        vat = apply_vat(total, vat_rate)
+        return {
+            "estate_id": estate_id,
+            "country_code": country,
+            "currency_code": currency,
+            "ai_feature_keys": feature_keys,
+            "period_months": period_months,
+            "ai_price_per_month": monthly,
+            "subtotal": vat["subtotal"],
+            "vat_rate": float(vat["vat_rate"]),
+            "vat_amount": vat["vat_amount"],
+            "client_total": vat["client_total"],
+            "line_items": ai["line_items"]
+            + [
+                {
+                    "key": VAT_KEY,
+                    "kind": "vat",
+                    "unit_price": vat["vat_amount"],
+                }
+            ],
+        }
+
+    async def guard_no_active_ai_grants(
+        self,
+        estate_id: str,
+        ai_feature_keys: list[str],
+    ) -> None:
+        """Raise 409 if any requested feature key already has a live grant.
+
+        A grant is considered live when:
+        - status is 'active' and expires_at is absent or in the future, OR
+        - status is 'cancelled' (standalone) and expires_at is still in the
+          future beyond the grace period — the user should reactivate instead
+          of re-purchasing.
+
+        Cancelled grants whose expires_at has passed (or is within the grace
+        window) are allowed through so the user can make a fresh purchase.
+        """
+        if not ai_feature_keys:
+            return
+        catalog = await self.repo.get_ai_feature_map()
+        key_to_feature_id = {k: str(v["id"]) for k, v in catalog.items()}
+        grants = await self.repo.list_estate_ai_features(estate_id)
+        grant_by_feature_id = {str(g.get("ai_feature_id")): g for g in grants}
+        now = datetime.now(tz=timezone.utc)
+        grace_days = settings.RENEWAL_GRACE_PERIOD_DAYS
+        active_conflicts: list[str] = []
+        reactivatable: list[str] = []
+        for key in ai_feature_keys:
+            feature_id = key_to_feature_id.get(key)
+            if not feature_id:
+                continue
+            grant = grant_by_feature_id.get(feature_id)
+            if not grant:
+                continue
+            status = (grant.get("status") or "").lower()
+            source = (grant.get("source") or "").lower()
+            expires_raw = grant.get("expires_at")
+
+            if status == "active":
+                if expires_raw:
+                    expires_at = datetime.fromisoformat(
+                        str(expires_raw).replace("Z", "+00:00")
+                    )
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    if expires_at <= now:
+                        continue
+                active_conflicts.append(key)
+
+            elif (
+                status == "cancelled"
+                and source == "standalone_purchase"
+                and expires_raw
+            ):
+                expires_at = datetime.fromisoformat(
+                    str(expires_raw).replace("Z", "+00:00")
+                )
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                grace_cutoff = expires_at - timedelta(days=grace_days)
+                if now >= grace_cutoff:
+                    # Expired or within grace window — allow new purchase.
+                    continue
+                reactivatable.append(key)
+
+        if active_conflicts:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Estate already has an active grant for: "
+                    f"{', '.join(active_conflicts)}. "
+                    "Wait for expiry, cancel the existing grant, or "
+                    "upgrade to a higher tier."
+                ),
+            )
+        if reactivatable:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "These features were cancelled but are still within "
+                    "their billing period: "
+                    f"{', '.join(reactivatable)}. "
+                    "Use the reactivate endpoint to undo the "
+                    "cancellation instead of purchasing again."
+                ),
+            )
+
+    async def initialize(
+        self,
+        request: dict[str, Any],
+        idempotency_key: str,
+        current_user_id: str,
+    ) -> dict[str, Any]:
+        """
+        Initialize a Paystack checkout transaction.
+
+        Creates a pending checkout session, calls Paystack, and returns
+        the authorization URL and a short-lived checkout token for
+        status polling.
+
+        Args:
+            request: Validated CheckoutInitializeRequest dict.
+            idempotency_key: Client-supplied Idempotency-Key header value.
+            current_user_id: Authenticated user UUID (for audit metadata).
+
+        Returns:
+            Dict with checkout_session_id, paystack_reference,
+            authorization_url, and checkout_token.
+
+        Raises:
+            HTTPException: 409 on terminal idempotency key re-use;
+                422 on key reuse with different payload;
+                502 if Paystack fails.
+        """
+        # 1. Validate key length
+        if len(idempotency_key) > 255:
+            raise HTTPException(
+                status_code=400,
+                detail="Idempotency-Key exceeds maximum length of 255 chars",
+            )
+
+        request_hash = self._hash_request(request)
+
+        # 2. Idempotency check — scoped to the authenticated user
+        existing = await self.repo.get_checkout_session_by_idempotency_key(
+            idempotency_key, user_id=current_user_id
+        )
+        if existing:
+            if existing["status"] in (
+                "failed",
+                "expired",
+                "cancelled",
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A session for this idempotency key has already "
+                        f"{existing['status']}. Use a new key to retry."
+                    ),
+                )
+            # Verify request body matches — catch client bugs reusing
+            # the same key for a different cart.
+            stored_hash = existing.get("request_hash")
+            if stored_hash and stored_hash != request_hash:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Idempotency key was already used with a different "
+                        "request payload. Use a new key for a new checkout."
+                    ),
+                )
+            # pending or paid: return cached response (idempotent)
+            return self._build_cached_response(existing)
+
+        # 3. Business-level guard: one pending checkout per estate+kind.
+        #    Different checkout kinds (e.g. AI vs subscription) don't
+        #    block each other — only same-kind conflicts matter.
+        kind = request["checkout_kind"]
+        self._last_resolved_paid_reference = None
+        pending = await self.repo.get_pending_checkout_for_estate(
+            request["estate_id"], checkout_kind=kind
+        )
+        if pending:
+            resolved = await self._resolve_pending_session(pending)
+            if not resolved:
+                detail = (
+                    "This estate already has a pending checkout session. "
+                    "Complete or wait for it to expire before starting "
+                    "a new one."
+                )
+                paid_ref = self._last_resolved_paid_reference
+                if paid_ref:
+                    detail = (
+                        "Your previous payment was successful and is "
+                        "being processed. Reference: "
+                        f"{paid_ref}"
+                    )
+                raise HTTPException(
+                    status_code=409,
+                    detail=detail,
+                )
+
+        # 4. Resolve handler for this checkout kind
+        handler_cls = _HANDLERS.get(kind)
+        if not handler_cls:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported checkout_kind: {kind!r}",
+            )
+        handler = handler_cls(self.repo, self)
+
+        # 5. Kind-specific guard (raises 409 on conflict)
+        await handler.guard(request)
+
+        # 6. Compute quote
+        quote_result = await handler.get_quote(request)
+        amount: int = quote_result["amount"]
+        currency: str = quote_result["currency_code"]
+        country: str = quote_result["country_code"]
+        snapshot: dict = quote_result["snapshot"]
+
+        if amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Checkout amount must be greater than zero",
+            )
+
+        # 7. Build session_metadata
+        session_metadata = handler.build_metadata(request, current_user_id)
+
+        # 8. Compute session expiry
+        expires_at = (
+            datetime.now(tz=timezone.utc)
+            + timedelta(seconds=settings.CHECKOUT_SESSION_TTL_SECONDS)
+        ).isoformat()
+
+        # 9. Create pending session (no paystack_reference yet)
+        try:
+            session = await self.repo.create_checkout_session(
+                {
+                    "estate_id": request["estate_id"],
+                    "initiated_by_user_id": current_user_id,
+                    "idempotency_key": idempotency_key,
+                    "request_hash": request_hash,
+                    "status": "pending",
+                    "pricing_snapshot": snapshot,
+                    "amount": amount,
+                    "currency_code": currency,
+                    "country_code": country,
+                    "checkout_kind": kind,
+                    "session_metadata": session_metadata,
+                    "expires_at": expires_at,
+                }
+            )
+        except HTTPException as exc:
+            # Concurrent duplicate: the unique constraint
+            # (initiated_by_user_id, idempotency_key) rejected the
+            # insert. Re-fetch and return the cached response.
+            if exc.status_code == 502:
+                existing = (
+                    await self.repo.get_checkout_session_by_idempotency_key(
+                        idempotency_key, user_id=current_user_id
+                    )
+                )
+                if existing and existing["status"] in ("pending", "paid"):
+                    return self._build_cached_response(existing)
+            raise
+        session_id = str(session["id"])
+
+        # 10. Stamp the reference (GP-<session_id>)
+        paystack_reference = f"GP-{session_id}"
+        await self.repo.update_checkout_session(
+            session_id, {"paystack_reference": paystack_reference}
+        )
+
+        # 11. Call Paystack — amount is already in kobo (int)
+        try:
+            paystack_data = await self._paystack.initialize_transaction(
+                email=request["customer_email"],
+                amount_kobo=amount,
+                reference=paystack_reference,
+                callback_url=settings.PAYSTACK_CALLBACK_URL,
+                metadata=session_metadata,
+                currency=currency,
+            )
+        except HTTPException as exc:
+            await self.repo.update_checkout_session(
+                session_id,
+                {
+                    "status": "failed",
+                    "session_metadata": {
+                        **session_metadata,
+                        "paystack_error": exc.detail,
+                    },
+                },
+            )
+            raise
+
+        # 12. Persist authorization_url for idempotent replays
+        authorization_url: str = paystack_data["authorization_url"]
+        await self.repo.update_checkout_session(
+            session_id,
+            {
+                "session_metadata": {
+                    **session_metadata,
+                    "authorization_url": authorization_url,
+                    "access_code": paystack_data.get("access_code"),
+                }
+            },
+        )
+
+        # 13. Mint checkout token
+        checkout_token = generate_checkout_token(
+            session_id, settings.SECRET_KEY
+        )
+        return {
+            "checkout_session_id": session_id,
+            "paystack_reference": paystack_reference,
+            "authorization_url": authorization_url,
+            "checkout_token": checkout_token,
+        }
+
+    async def get_status(
+        self,
+        paystack_reference: str,
+        checkout_token: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Return the current status of a checkout session.
+
+        If a checkout_token is supplied it is verified against the session.
+        If absent, the lookup proceeds by reference only (rate-limiting
+        must be enforced at gateway level for this endpoint).
+
+        Args:
+            paystack_reference: Paystack transaction reference.
+            checkout_token: Optional Bearer token from the initialize
+                response.
+
+        Returns:
+            CheckoutStatusResponse-compatible dict plus ``estate_id``
+            for the caller to enforce membership before responding.
+
+        Raises:
+            HTTPException: 404 if not found; 401/403 on token mismatch.
+        """
+        session = await self.repo.get_checkout_session_by_reference(
+            paystack_reference
+        )
+        if not session:
+            raise HTTPException(
+                status_code=404, detail="Checkout session not found"
+            )
+
+        if checkout_token:
+            session_id_from_token = verify_checkout_token(
+                checkout_token, settings.SECRET_KEY
+            )
+            if not session_id_from_token:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired checkout_token",
+                )
+            if session_id_from_token != str(session["id"]):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Token does not match this session",
+                )
+
+        estate_id = str(session["estate_id"])
+        paid_at = session.get("paid_at")
+        return {
+            "paystack_reference": paystack_reference,
+            "status": session["status"],
+            "checkout_kind": session["checkout_kind"],
+            "paid_at": (
+                paid_at.isoformat()
+                if hasattr(paid_at, "isoformat")
+                else paid_at
+            ),
+            "estate_id": estate_id,
+            "estate_id_masked": estate_id[:8] + "***",
+        }

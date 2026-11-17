@@ -1,0 +1,91 @@
+"""Pydantic response models for spatial (feature-space) anomaly detection routes."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from app.models.spatial_anomaly_resultpage import Severity
+
+# Re-exported for callers that historically imported these from this module.
+from app.models.code_validation import (  # noqa: F401
+    AnalyzeRequest,
+    CodeValidationPayload,
+    Receiver,
+)
+
+
+class FeatureContribution(BaseModel):
+    """One engineered feature value for transparency payloads."""
+
+    feature_name: str
+    label: str
+    value: float
+    weight: float | None = None
+    contribution: float | None = None
+
+
+class ScopeTransparencyDetail(BaseModel):
+    """Per-scope score, engineered features, and per-detector outputs."""
+
+    scope: str
+    label: str
+    score: float
+    feature_contributions: list[FeatureContribution]
+    thresholds: dict[str, float] = Field(default_factory=dict)
+    model_ids: list[str] = Field(default_factory=list)
+    model_outputs: dict[str, float] = Field(default_factory=dict)
+
+
+class ScopeEnsembleWeight(BaseModel):
+    """Base, history-confidence, and effective weights for one analysis scope."""
+
+    scope: str
+    label: str
+    base_weight: float
+    history_confidence: float
+    effective_weight: float
+    matched_count: int
+    eligible_count: int
+    excluded_schema_mismatch_count: int = 0
+
+
+class AnalysisTransparency(BaseModel):
+    """Structured transparency for audit and UI (scores, features, models)."""
+
+    scopes: list[ScopeTransparencyDetail]
+    ensemble_method: str
+    ensemble_notes: str | None = None
+    scope_weights: list[ScopeEnsembleWeight] = Field(default_factory=list)
+    detector_weights: dict[str, float] = Field(default_factory=dict)
+    global_model_outputs: dict[str, float] = Field(default_factory=dict)
+
+
+class SpatialAnalyzeResponse(BaseModel):
+    """API response for ``POST /spatial-anomaly/analyze/{anomaly_type}``."""
+
+    final_score: float
+    per_scope_scores: dict[str, float]
+    explanation: str
+    scopes_evaluated: list[str]
+    anomaly_type: str
+    is_anomalous: bool = Field(
+        ...,
+        description=(
+            "True when ensemble final_score meets the configured anomaly "
+            "threshold (same flag persisted on the focal feature-store row)."
+        ),
+    )
+    severity: Severity = Field(
+        ...,
+        description=(
+            "Band derived from final_score (low / medium / high), aligned "
+            "with result-page and db-service severity filters."
+        ),
+    )
+    prediction_result_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of the persisted core.predictionresult row for this analyze."
+        ),
+    )
+    transparency: AnalysisTransparency

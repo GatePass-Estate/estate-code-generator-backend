@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import DatabaseError, NotFoundError, ValidationError
 from app.models import Users as TableModel
 from app.schemas.user_profile.users import (
+    RoleCountItem,
+    RoleCountsResponse,
     CreateRequest,
     CreateResponse,
     DeleteResponse,
@@ -381,8 +383,17 @@ class UsersRepository:
             TableModel.is_deleted == False  # noqa E712
         )
 
+        # Apply role filter (list → IN clause)
+        if request.roles:
+            role_values = [r.value for r in request.roles]
+            query = query.where(
+                func.lower(cast(TableModel.role, String)).in_(role_values)
+            )
+
         # Apply filters
         for key, info in request.model_fields.items():
+            if key == "roles":
+                continue  # handled above
             if getattr(request, key) is None:
                 continue
             if key in ["from_date", "to_date"]:
@@ -400,12 +411,17 @@ class UsersRepository:
                     field_value = field_value.value
 
                 if isinstance(field_value, str):
-                    # Normalize both column and input
-                    # for case-insensitive matching
-                    # Cast column to text for enum types before applying lower
-                    query = query.where(
-                        func.lower(cast(column, String)) == field_value.lower()
-                    )
+                    # Case-insensitive partial matching for text fields;
+                    # exact match for enum columns (role, gender, etc.)
+                    if key in ("first_name", "last_name", "email"):
+                        query = query.where(
+                            cast(column, String).ilike(f"%{field_value}%")
+                        )
+                    else:
+                        query = query.where(
+                            func.lower(cast(column, String))
+                            == field_value.lower()
+                        )
                 else:
                     query = query.where(column == field_value)
 
@@ -420,5 +436,41 @@ class UsersRepository:
             )
         except DatabaseError as e:
             message = "Database error in searching for items"
+            logger.exception(message)
+            raise DatabaseError(message) from e
+
+    async def get_role_counts(
+        self,
+        estate_id: UUID,
+        status: bool | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> RoleCountsResponse:
+        query = select(
+            cast(TableModel.role, String).label("role"),
+            func.count().label("count"),
+        ).where(
+            TableModel.is_deleted == False,  # noqa E712
+            TableModel.estate_id == estate_id,
+        )
+
+        if status is not None:
+            query = query.where(TableModel.status == status)
+        if from_date is not None:
+            query = query.where(TableModel.created_at >= from_date)
+        if to_date is not None:
+            query = query.where(TableModel.created_at <= to_date)
+
+        query = query.group_by(TableModel.role)
+
+        try:
+            result = await self.session.execute(query)
+            rows = result.all()
+            items = [
+                RoleCountItem(role=row.role, count=row.count) for row in rows
+            ]
+            return RoleCountsResponse(items=items)
+        except SQLAlchemyError as e:
+            message = "Database error in getting role counts"
             logger.exception(message)
             raise DatabaseError(message) from e

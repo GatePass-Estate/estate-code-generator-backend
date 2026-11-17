@@ -94,6 +94,25 @@ EOF
 
 apply_secrets_from_env_files
 
+# GCS documents SA key (JSON file mount). Kept separate from apply_secrets_from_env_files
+# because that helper only supports --from-env-file, not binary/JSON key files.
+apply_gcs_documents_sa_secret() {
+    local key_file="services/db-service/secrets/gatepass-461616-332b2d1bd5c1.json"
+    local secret_name="db-service-gcs-sa"
+    local key_name="gatepass-461616-332b2d1bd5c1.json"
+
+    if [[ -f "$key_file" ]]; then
+        echo "Applying Secret ${secret_name} from ${key_file}"
+        kubectl create secret generic "$secret_name" \
+            --from-file="${key_name}=${key_file}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    else
+        echo "Skipping Secret ${secret_name}: file not found (${key_file}). Place the GCS SA key there before deploy."
+    fi
+}
+
+apply_gcs_documents_sa_secret
+
 # Postgres and Redis must exist before migrations (see infra/Note.txt). Skip baseimage apply if already healthy.
 baseimage_already_up() {
     local r p

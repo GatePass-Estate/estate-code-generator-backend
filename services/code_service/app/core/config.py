@@ -21,7 +21,20 @@ class Settings(BaseSettings):
     CACHE_SERVICE_URL: str = os.getenv("CACHE_SERVICE_URL")
     DB_SERVICE_URL: str = os.getenv("DB_SERVICE_URL")
     SECRET_KEY: str = os.getenv("SECRET_KEY")
-    LOGIN_EXPIRE_MINUTES: int = int(os.getenv("LOGIN_EXPIRE_MINUTES", 10))
+    RESIDENT_CODE_EXPIRY_DAYS: int = int(
+        os.getenv("RESIDENT_CODE_EXPIRY_DAYS", 30)
+    )
+
+    # Notification service
+    NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "")
+    INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "")
+
+    REVENUE_SERVICE_URL: str = os.getenv(
+        "REVENUE_SERVICE_URL", "http://revenue-service:9037/"
+    )
+    AI_SERVICE_URL: str = os.getenv(
+        "AI_SERVICE_URL", "http://ai-service:9036/"
+    )
 
 
 settings = Settings()

@@ -9,8 +9,11 @@ from enum import StrEnum
 
 
 class AnalysisScope(StrEnum):
-    """Behavioural lens for feature engineering (visitor / resident / security / estate)."""
+    """Behavioural lens for feature engineering (temporal / visitor / …)."""
 
+    TEMPORAL = (
+        "temporal"  # TS — focal clock/calendar features (slice-invariant)
+    )
     VISITOR = "visitor_specific"  # VS — excluded when anomaly_type is resident
     RESIDENT = "resident_specific"  # RS
     SECURITY = "security_specific"  # SS

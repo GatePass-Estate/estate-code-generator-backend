@@ -73,6 +73,7 @@ class LogFeatureEngineering(BaseModelDB):
         ),
         nullable=False,
     )
+    features_temporal = Column(JSONB, nullable=True)
     features_visitor_specific = Column(JSONB, nullable=True)
     features_resident_specific = Column(JSONB, nullable=True)
     features_security_specific = Column(JSONB, nullable=True)

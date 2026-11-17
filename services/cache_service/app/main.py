@@ -1,19 +1,91 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from gatepass_scheduler import interval_http_job, scheduled_http_job
 
 from app.api.v1 import api_router
 from app.core.config import settings
 
 logger = logging.getLogger("cache-service")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    tasks: list[asyncio.Task] = []
+
+    # In production, Cloud Scheduler handles cron — skip in-process loops.
+    if settings.APP_ENV != "production":
+        tasks.append(
+            asyncio.create_task(
+                scheduled_http_job(
+                    url=settings.USER_PROFILE_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    hour=settings.CRON_HOUR,
+                    name="user-profile-daily-cron",
+                )
+            )
+        )
+        tasks.append(
+            asyncio.create_task(
+                scheduled_http_job(
+                    url=settings.REVENUE_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    hour=settings.REVENUE_CRON_HOUR,
+                    name="revenue-daily-expiry",
+                )
+            )
+        )
+        tasks.append(
+            asyncio.create_task(
+                interval_http_job(
+                    url=settings.REVENUE_RETRY_CHARGES_CRON_URL,
+                    internal_api_key=settings.INTERNAL_API_KEY,
+                    interval_minutes=(
+                        settings.REVENUE_RETRY_CHARGES_INTERVAL_MINUTES
+                    ),
+                    name="revenue-retry-charges",
+                )
+            )
+        )
+        logger.info(
+            "Scheduler started: user-profile-daily-cron at %02d:00 UTC",
+            settings.CRON_HOUR,
+        )
+        logger.info(
+            "Scheduler started: revenue-daily-expiry at %02d:00 UTC",
+            settings.REVENUE_CRON_HOUR,
+        )
+        logger.info(
+            "Scheduler started: revenue-retry-charges every %d minutes",
+            settings.REVENUE_RETRY_CHARGES_INTERVAL_MINUTES,
+        )
+    else:
+        logger.info(
+            "Scheduler skipped: production uses Google Cloud Scheduler"
+        )
+
+    yield
+
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    if tasks:
+        logger.info("Schedulers stopped")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -44,7 +116,7 @@ def custom_openapi():
         openapi_schema["components"] = {}
 
     openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2PasswordBearer": {
+        "HTTPBearer": {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
@@ -53,7 +125,7 @@ def custom_openapi():
     }
 
     # Apply security globally
-    openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
+    openapi_schema["security"] = [{"HTTPBearer": []}]
 
     # Remove security requirement from healthz endpoint
     for path in openapi_schema["paths"]:

@@ -37,6 +37,7 @@ class LogFeatureEngineeringRepository:
             resident_log_id=row.resident_log_id,
             anomaly_type=row.anomaly_type,
             log_kind=row.log_kind,
+            features_temporal=row.features_temporal,
             features_visitor_specific=row.features_visitor_specific,
             features_resident_specific=row.features_resident_specific,
             features_security_specific=row.features_security_specific,
@@ -70,13 +71,17 @@ class LogFeatureEngineeringRepository:
             logger.exception("batch_lookup log feature engineering")
             raise DatabaseError("Database error in batch_lookup") from e
 
-    async def upsert(self, request: UpsertRequest) -> UUID:
+    async def upsert(self, request: UpsertRequest) -> tuple[UUID, UUID | None]:
         """
         Insert or update the single active row for (log id, anomaly_type).
 
         Feature JSON columns are updated only when the request field is not
         ``None``. If ``prediction_type`` + ``prediction_result`` are supplied,
         upsert one ``core.predictionresult`` row for the same feature-log id.
+
+        Returns:
+            ``(feature_log_id, prediction_result_id)`` — prediction id is
+            ``None`` when no prediction payload was supplied.
         """
         try:
             if request.visitor_log_id is not None:
@@ -99,6 +104,7 @@ class LogFeatureEngineeringRepository:
                     resident_log_id=request.resident_log_id,
                     anomaly_type=request.anomaly_type,
                     log_kind=request.log_kind,
+                    features_temporal=request.features_temporal,
                     features_visitor_specific=(
                         request.features_visitor_specific
                     ),
@@ -119,6 +125,8 @@ class LogFeatureEngineeringRepository:
             else:
                 row.anomaly_type = request.anomaly_type
                 row.log_kind = request.log_kind
+                if request.features_temporal is not None:
+                    row.features_temporal = request.features_temporal
                 if request.features_visitor_specific is not None:
                     row.features_visitor_specific = (
                         request.features_visitor_specific
@@ -137,6 +145,8 @@ class LogFeatureEngineeringRepository:
                     row.is_anomalous = request.is_anomalous
             await self.session.flush()
             await self.session.refresh(row)
+
+            prediction_id: UUID | None = None
             if (
                 request.prediction_type is not None
                 and request.prediction_result is not None
@@ -163,7 +173,10 @@ class LogFeatureEngineeringRepository:
                     prediction_result.visitor_log_id = request.visitor_log_id
                     prediction_result.resident_log_id = request.resident_log_id
                     prediction_result.result = request.prediction_result
-            return row.id
+                await self.session.flush()
+                await self.session.refresh(prediction_result)
+                prediction_id = prediction_result.id
+            return row.id, prediction_id
         except SQLAlchemyError as e:
             logger.exception("upsert log feature engineering")
             raise DatabaseError("Database error in upsert") from e

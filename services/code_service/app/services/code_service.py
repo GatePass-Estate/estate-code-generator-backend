@@ -10,6 +10,8 @@ from app.schemas.code_service import (
     CreateRequestResident,
     CreateRequestVisitor,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponseResident,
     GetResponseVisitor,
     ListResponse,
@@ -36,24 +38,33 @@ class CodeService:
         request: CreateRequestVisitor | CreateRequestResident,
         receiver: Receiver,
         user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> CreateResponse:
         """
-        Create a new item in the table.
+        Create a visitor or resident access code.
 
-        Arguments:
-            request: The request body for creating a new item in the table.
-            receiver: The status of the code owner (visitor or resident).
-            user_details: The details of the user making the request.
+        Visitor requests may include optional ``validity_period`` and
+        ``validity_window``. A custom period, a period longer than an
+        hour, or a daily window requires ``advanced_code_management``.
+        The total validity period may not exceed 2 weeks from now.
 
-        Returns:
-            The CreateResponse object after creating the item in the table.
+        Raises:
+            ScheduleError: If the visitor validity period exceeds 2 weeks.
+            HTTPException: 403 if a paid schedule is requested without
+                entitlement.
         """
         return await self.repository.create(
-            request=request, receiver=receiver, user_details=user_details
+            request=request,
+            receiver=receiver,
+            user_details=user_details,
+            auth_token=auth_token,
         )
 
     async def validate(
-        self, code: str, user_details: dict | None = None
+        self,
+        code: str,
+        user_details: dict | None = None,
+        auth_token: str | None = None,
     ) -> GetResponseResident | GetResponseVisitor:
         """
         Get an item by ID.
@@ -61,17 +72,23 @@ class CodeService:
         Arguments:
             code: The generated access code to be validated.
             user_details: The details of the user making the request.
+            auth_token: Bearer token used for the anomaly entitlement
+                check, then forwarded to ai-service if allowed.
+                Anomalous results also notify estate admins.
 
         Returns:
             A GetResponse object after retrieving the item by id.
         """
-        return await self.repository.get(code=code, user_details=user_details)
+        return await self.repository.get(
+            code=code, user_details=user_details, auth_token=auth_token
+        )
 
     async def get_items_by_user(
         self,
         user_id: UUID4,
         receiver: Receiver,
         user_details: dict | None = None,
+        upcoming: bool = False,
     ) -> ListResponse | GetResponseResident:
         """
         Get items from the table by user ID.
@@ -80,9 +97,14 @@ class CodeService:
             user_id: The ID of the user whose items are to be retrieved.
             receiver: The status of the code owner (visitor or resident).
             user_details: The details of the user making the request.
+            upcoming: When True, return only visitor codes scheduled for
+                future use (requires visitor receiver).
         """
         return await self.repository._get_items_by_user(
-            user_id=user_id, receiver=receiver, user_details=user_details
+            user_id=user_id,
+            receiver=receiver,
+            user_details=user_details,
+            upcoming=upcoming,
         )
 
     async def delete(
@@ -96,6 +118,22 @@ class CodeService:
             user_details: The details of the user making the request.
         """
         return await self.repository._delete(
+            code=code, user_details=user_details
+        )
+
+    async def extend_code(
+        self, code: str, user_details: dict | None = None
+    ) -> ExtendResponse:
+        """Extend a visitor code's validity duration by one hour."""
+        return await self.repository.extend_code(
+            code=code, user_details=user_details
+        )
+
+    async def toggle_freeze_code(
+        self, code: str, user_details: dict | None = None
+    ) -> FreezeResponse:
+        """Toggle freeze/pause on a visitor code."""
+        return await self.repository.toggle_freeze_code(
             code=code, user_details=user_details
         )
 

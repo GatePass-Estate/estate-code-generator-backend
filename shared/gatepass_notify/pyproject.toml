@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "gatepass-notify"
+version = "0.1.0"
+description = "Shared notification helper for GatePass services"
+authors = ["GatePass"]
+packages = [{ include = "gatepass_notify" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+httpx = ">=0.27.2"
+fastapi = ">=0.115.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

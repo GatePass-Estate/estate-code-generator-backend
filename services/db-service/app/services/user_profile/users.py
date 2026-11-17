@@ -11,6 +11,7 @@ from app.schemas.user_profile.users import (
     DeleteResponse,
     GetResponse,
     ListResponse,
+    RoleCountsResponse,
     SearchRequest,
     UpdateRequest,
     UpdateResponse,
@@ -114,4 +115,18 @@ class UsersService:
         """
         return await self.repository.search(
             request=request, page=page, limit=limit
+        )
+
+    async def get_role_counts(
+        self,
+        estate_id,
+        status=None,
+        from_date=None,
+        to_date=None,
+    ) -> RoleCountsResponse:
+        return await self.repository.get_role_counts(
+            estate_id=estate_id,
+            status=status,
+            from_date=from_date,
+            to_date=to_date,
         )

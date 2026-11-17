@@ -4,11 +4,13 @@ import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import UUID4
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ScheduleError
 from app.db.session import get_redis_connection
 from app.schemas.cache_service.cache_schema import (
     CreateRequest,
     CreateResponse,
+    ExtendResponse,
+    FreezeResponse,
     GetResponse,
     ListResponse,
 )
@@ -38,33 +40,146 @@ def get_service(
     response_model=CreateResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
+        400: {"description": "Validity period exceeds allowed schedule"},
         500: {"description": "Internal server error"},
         200: {"description": "item saved successfully"},
     },
-    description="Create a new item",
+    description="Create a visitor access code in Redis",
 )
 async def create(
     request: CreateRequest,
     service: Service = Depends(get_service),
 ) -> CreateResponse:
     """
-    Creates a new record in the database if it doesn't exist, otherwise
-    updates the existing record.
+    Cache a new visitor access code.
 
-    Arguments:
-        request: The request model to CREATE a new record.
-
-    Returns:
-        The response model to CREATE a new record.
+    Persists lifecycle fields, resolves optional ``validity_period`` and
+    ``validity_window``, and sets Redis TTL from the total period end.
+    The validity period may not start or end beyond the configured maximum
+    horizon (``VISITOR_CODE_MAX_VALIDITY_DAYS``).
 
     Raises:
-        HTTPException: If there is an internal server error
+        HTTPException: 400 if the validity period exceeds the configured
+            horizon; 500 otherwise.
     """
     try:
         return await service.create(request=request)
+    except ScheduleError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": ScheduleError.code, "message": str(e)},
+        ) from e
     except Exception as e:
         logger.exception(
             "An unexpected error happened while creating the item"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.get(
+    "/{code}/raw",
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Retrieved raw item"},
+    },
+    description="Get a cached item without validity filtering",
+)
+async def get_raw(
+    code: str,
+    service: Service = Depends(get_service),
+) -> dict:
+    """Return a cached visitor record without validity filtering."""
+    try:
+        record = await service.get_raw(code=code)
+        logger.info("API raw visitor code fetched code=%s", code)
+        return record
+    except NotFoundError as e:
+        logger.warning("API raw visitor code not found code=%s", code)
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception("An unexpected error happened while getting raw item")
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.patch(
+    "/{code}/extend",
+    response_model=ExtendResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Extend attempted"},
+    },
+    description="Add one hour to the visitor code total validity period end",
+)
+async def extend(
+    code: str,
+    service: Service = Depends(get_service),
+) -> ExtendResponse:
+    """
+    Extend a visitor code once by adding one hour to ``validity_period.end``.
+
+    Returns ``success=false`` when the code has already been extended.
+    """
+    try:
+        result = await service.extend(code=code)
+        logger.info(
+            "API extend completed code=%s success=%s", code, result.success
+        )
+        return result
+    except NotFoundError as e:
+        logger.warning("API extend not found code=%s", code)
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while extending the item"
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
+
+
+@router.patch(
+    "/{code}/freeze",
+    response_model=FreezeResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        500: {"description": "Internal server error"},
+        404: {"description": "Item not found"},
+        200: {"description": "Freeze toggled"},
+    },
+    description="Toggle freeze/pause on a visitor code",
+)
+async def freeze(
+    code: str,
+    service: Service = Depends(get_service),
+) -> FreezeResponse:
+    """
+    Toggle the frozen/paused state of a visitor access code.
+
+    Freeze does not change ``validity_period`` or ``validity_window``.
+    """
+    try:
+        result = await service.toggle_freeze(code=code)
+        logger.info(
+            "API freeze toggle completed code=%s frozen=%s is_valid=%s",
+            code,
+            result.frozen,
+            result.is_valid,
+        )
+        return result
+    except NotFoundError as e:
+        logger.warning("API freeze toggle not found code=%s", code)
+        raise HTTPException(status_code=404, detail="Item not found") from e
+    except Exception as e:
+        logger.exception(
+            "An unexpected error happened while freezing the item"
         )
         raise HTTPException(
             status_code=500, detail="Internal server error"
@@ -80,7 +195,7 @@ async def create(
         404: {"description": "Item not found"},
         200: {"description": "Retrieved the item"},
     },
-    description="Get an item by ID",
+    description="Validate a visitor access code",
 )
 async def get(
     code: str,

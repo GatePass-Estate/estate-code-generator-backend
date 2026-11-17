@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import UUID4, BaseModel, Field, field_serializer
@@ -11,6 +12,7 @@ from app.schemas.base import (
 )
 
 __all__ = [
+    "EstateType",
     "CreateRequest",
     "CreateResponse",
     "UpdateRequest",
@@ -20,6 +22,11 @@ __all__ = [
     "SearchRequest",
     "ListResponse",
 ]
+
+
+class EstateType(str, Enum):
+    HOUSING = "housing"
+    CORPORATE = "corporate"
 
 
 class EstateBase(BaseModel):
@@ -38,12 +45,16 @@ class EstateBase(BaseModel):
 
     name: str = Field(..., description="Estate name")
     location: str = Field(..., description="Estate location")
+    city: str = Field(..., description="City")
     lga: str | None = Field(default=None, description="Local Government Area")
     state: str | None = Field(default=None, description="State")
     country: str | None = Field(default=None, description="Country")
     postal_code: str | None = Field(default=None, description="Postal code")
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin (optional)"
+    )
+    estate_type: EstateType | None = Field(
+        default=None, description="Type of estate"
     )
 
     @field_serializer("primary_admin_id")
@@ -109,6 +120,7 @@ class UpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, description="Estate name")
     location: str | None = Field(default=None, description="Estate location")
+    city: str | None = Field(default=None, description="City")
     lga: str | None = Field(default=None, description="Local Government Area")
     state: str | None = Field(default=None, description="State")
     country: str | None = Field(default=None, description="Country")
@@ -116,10 +128,30 @@ class UpdateRequest(BaseModel):
     primary_admin_id: UUID4 | None = Field(
         default=None, description="Reference to the primary admin"
     )
+    estate_type: EstateType | None = Field(
+        default=None, description="Type of estate"
+    )
 
     @field_serializer("primary_admin_id")
     def serialize_primary_admin_id(self, value: UUID4 | None) -> str:
         return str(value) if value else None
+
+    is_active: bool | None = Field(
+        default=None, description="Whether the estate is active"
+    )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description="ID of the root user who deactivated this estate",
+    )
+
+    @field_serializer("deactivated_by")
+    def serialize_deactivated_by(self, value: UUID4 | None) -> Optional[str]:
+        return str(value) if value else None
+
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the estate was deactivated",
+    )
 
     model_config = model_config
 
@@ -165,7 +197,22 @@ class GetResponse(SharedModel, EstateBase):
         country (str): Country.
         postal_code (str): Postal code.
         primary_admin_id (UUID): Reference to the primary admin.
+        is_active (bool): Whether the estate is active.
+        deactivated_by (UUID): Who deactivated the estate.
+        deactivated_at (datetime): When the estate was deactivated.
     """
+
+    is_active: bool = Field(
+        default=True, description="Whether the estate is active"
+    )
+    deactivated_by: UUID4 | None = Field(
+        default=None,
+        description="ID of the root user who deactivated this estate",
+    )
+    deactivated_at: datetime | None = Field(
+        default=None,
+        description="When the estate was deactivated",
+    )
 
 
 class SearchRequest(BaseSearchRequest):
@@ -188,14 +235,24 @@ class SearchRequest(BaseSearchRequest):
         primary_admin_id (UUID): Reference to the primary admin.
     """
 
+    search_query: Optional[str] = Field(
+        None, description="Search across name and location"
+    )
     name: Optional[str] = Field(None, description="Estate name")
     location: Optional[str] = Field(None, description="Estate location")
+    city: Optional[str] = Field(None, description="City")
     lga: Optional[str] = Field(None, description="Local Government Area")
     state: Optional[str] = Field(None, description="State")
     country: Optional[str] = Field(None, description="Country")
     postal_code: Optional[str] = Field(None, description="Postal code")
     primary_admin_id: Optional[UUID4] = Field(
         None, description="Reference to the primary admin"
+    )
+    estate_type: Optional[EstateType] = Field(
+        None, description="Type of estate"
+    )
+    is_active: Optional[bool] = Field(
+        None, description="Filter by active/inactive status"
     )
 
 
