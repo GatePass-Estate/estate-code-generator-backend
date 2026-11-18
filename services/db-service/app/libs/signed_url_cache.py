@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import google.auth
 from cachetools import TTLCache
+from google.auth.transport import requests as auth_requests
 from google.cloud import storage
 
 from app.core.config import settings
 
 _cache: TTLCache = TTLCache(
     maxsize=10_000,
-    ttl=settings.GCS_SIGNED_URL_EXPIRY_SECONDS,
+    ttl=max(settings.GCS_SIGNED_URL_EXPIRY_SECONDS - 60, 60),
 )
+
+_credentials, _ = google.auth.default()
+_auth_request = auth_requests.Request()
 
 
 def _sign_gcs_url(
@@ -20,10 +25,26 @@ def _sign_gcs_url(
 ) -> str:
     gcs_client = client or storage.Client()
     blob = gcs_client.bucket(settings.GCS_DOCUMENTS_BUCKET).blob(object_path)
+
+    # Local dev with a JSON key: sign locally
+    if hasattr(_credentials, "sign_bytes"):
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=settings.GCS_SIGNED_URL_EXPIRY_SECONDS,
+            method="GET",
+            credentials=_credentials,
+        )
+
+    # Cloud Run: sign via IAM signBlob API
+    if not _credentials.valid:
+        _credentials.refresh(_auth_request)
+
     return blob.generate_signed_url(
         version="v4",
         expiration=settings.GCS_SIGNED_URL_EXPIRY_SECONDS,
         method="GET",
+        service_account_email=_credentials.service_account_email,
+        access_token=_credentials.token,
     )
 
 
