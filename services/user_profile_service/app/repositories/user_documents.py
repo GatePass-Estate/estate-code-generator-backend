@@ -228,6 +228,7 @@ class UserDocumentsRepository:
             response.raise_for_status()
             return DocumentStream(response=response, client=http_client)
         except httpx.HTTPStatusError as e:
+            await e.response.aread()
             await http_client.aclose()
             detail = e.response.text
             try:
