@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str | None = os.getenv("GCP_PROJECT_ID")
     GCP_VERTEX_LOCATION: str = os.getenv("GCP_VERTEX_LOCATION", "global")
     GCP_LLM_CHAT_MODEL: str = os.getenv(
-        "GCP_LLM_CHAT_MODEL", "google/gemini-2.5-flash"
+        "GCP_LLM_CHAT_MODEL", "google/gemini-3.1-flash-lite"
     )
 
     #: Non-prod ``gatepass_llm`` stream (OpenAI-compatible).
